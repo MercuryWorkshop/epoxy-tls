@@ -1,0 +1,16 @@
+[package]
+name = "wsproxy-rust"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bytes = "1.5.0"
+futures-util = "0.3.30"
+http-body-util = "0.1.0"
+hyper = { version = "1.1.0", features = ["server", "http1"] }
+hyper-util = { version = "0.1.2", features = ["tokio"] }
+tokio = { version = "1.5.1", features = ["rt-multi-thread", "macros"] }
+tokio-tungstenite = "0.20.1"
+tokio-util = { version = "0.7.10", features = ["codec"] }
