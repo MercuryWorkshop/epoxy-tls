@@ -41,7 +41,7 @@ async fn accept_http(mut req: Request<Incoming>, addr: String) -> Result<Respons
         let (res, fut) = upgrade::upgrade(&mut req)?;
 
         tokio::spawn(async move {
-            if let Err(e) = tokio::task::unconstrained(accept_ws(fut, uri.path().to_string(), addr.clone())).await
+            if let Err(e) = accept_ws(fut, uri.path().to_string(), addr.clone()).await
             {
                 println!("{:?}: error in ws: {:?}", addr, e);
             }
