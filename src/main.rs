@@ -11,7 +11,7 @@ use hyper::{
 };
 use hyper_util::rt::TokioIo;
 use tokio::net::{TcpListener, TcpStream};
-use tokio_native_tls::{native_tls, TlsAcceptor, TlsStream};
+use tokio_native_tls::{native_tls, TlsAcceptor};
 use tokio_util::codec::{BytesCodec, Framed};
 
 type HttpBody = http_body_util::Empty<hyper::body::Bytes>;
