@@ -1,7 +1,7 @@
 use std::io::Error;
 
 use bytes::Bytes;
-use fastwebsockets::{upgrade, FragmentCollector, Frame, OpCode, Payload, WebSocketError};
+use fastwebsockets::{upgrade, FragmentCollector, Frame, OpCode, Payload, WebSocketError, CloseCode};
 use futures_util::{SinkExt, StreamExt};
 use hyper::{
     body::Incoming, header::HeaderValue, server::conn::http1, service::service_fn, Request,
@@ -13,7 +13,7 @@ use tokio_util::codec::{BytesCodec, Framed};
 
 type HttpBody = http_body_util::Empty<hyper::body::Bytes>;
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 32)]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Error> {
     let socket = TcpListener::bind("0.0.0.0:4000")
         .await
@@ -46,7 +46,7 @@ async fn accept_http(
 
         tokio::spawn(async move {
             if let Err(e) = accept_ws(fut, uri.path().to_string(), addr.clone()).await {
-                println!("{:?}: error in ws: {:?}", addr, e);
+                println!("{:?}: error in ws handling: {:?}", addr, e);
             }
         });
 
@@ -83,7 +83,15 @@ async fn accept_ws(
     let mut incoming_uri_chars = incoming_uri.chars();
     incoming_uri_chars.next();
 
-    let tcp_stream = TcpStream::connect(incoming_uri_chars.as_str()).await?;
+    println!("{:?}: connected", addr);
+
+    let tcp_stream = match TcpStream::connect(incoming_uri_chars.as_str()).await {
+        Ok(stream) => stream,
+        Err(err) => {
+            ws_stream.write_frame(Frame::close(CloseCode::Away.into(), b"failed to connect")).await.unwrap();
+            return Err(Box::new(err));
+        }
+    };
     let mut tcp_stream_framed = Framed::new(tcp_stream, BytesCodec::new());
 
     loop {
@@ -136,7 +144,7 @@ async fn accept_ws(
                             }
                         }
                         Err(_) => {
-                            if ws_stream.write_frame(Frame::close(1001, b"tcp side is going away")).await.is_ok() {
+                            if ws_stream.write_frame(Frame::close(CloseCode::Away.into(), b"tcp side is going away")).await.is_ok() {
                                 println!("closed success");
                             } else {
                                 println!("closed FAILED");
