@@ -1437,6 +1437,7 @@ dependencies = [
  "tokio-rustls",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
  "webpki-roots",
  "ws_stream_wasm",
 ]

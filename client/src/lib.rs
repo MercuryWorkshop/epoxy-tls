@@ -11,7 +11,8 @@ use std::sync::Arc;
 use bytes::Bytes;
 use http::{uri, Request};
 use hyper::{body::Incoming, client::conn as hyper_conn};
-use js_sys::Object;
+use web_sys::TextEncoder;
+use js_sys::{Object, Reflect, Uint8Array};
 use penguin_mux_wasm::{Multiplexor, MuxStream, Role};
 use tokio_rustls::{client::TlsStream, rustls, rustls::RootCertStore, TlsConnector};
 use wasm_bindgen::prelude::*;
@@ -87,6 +88,30 @@ impl WsTcpWorker {
             }
         };
 
+        let req_method_string: String = match Reflect::get(&options, &JsValue::from_str("method")) {
+            Ok(val) => val.as_string().unwrap_or("GET".to_string()),
+            Err(_) => "GET".to_string(),
+        };
+        let req_method: http::Method =
+            http::Method::try_from(<String as AsRef<str>>::as_ref(&req_method_string))
+                .expect_throw("Invalid http method");
+
+        let body: Option<Vec<u8>> = Reflect::get(&options, &JsValue::from_str("body")).map(|val| {
+            if val.is_string() {
+                let str = val.as_string().expect_throw("Failed to encode body into uint8array");
+                let encoder = TextEncoder::new().expect_throw("Failed to encode body into uint8array");
+                let encoded = encoder.encode_with_input(str.as_ref());
+                Some(encoded)
+            } else {
+                Some(Uint8Array::new(&val).to_vec())
+            }
+        }).unwrap_or(None);
+
+        let body_bytes: Bytes = match body {
+            Some(vec) => Bytes::from(vec),
+            None => Bytes::new()
+        };
+
         let channel = self
             .mux
             .client_new_stream_channel(uri_host.as_bytes(), uri_port)
@@ -96,8 +121,8 @@ impl WsTcpWorker {
         let request = Request::builder()
             .header("Host", uri_host)
             .header("Connection", "close")
-            .method("GET")
-            .body(HttpBody::new(Bytes::new()))
+            .method(req_method)
+            .body(HttpBody::new(body_bytes))
             .expect_throw("Failed to create request");
 
         let resp: hyper::Response<Incoming>;
@@ -126,7 +151,10 @@ impl WsTcpWorker {
             });
 
             debug!("sending req tls");
-            resp = req_sender.send_request(request).await.expect_throw("Failed to send request");
+            resp = req_sender
+                .send_request(request)
+                .await
+                .expect_throw("Failed to send request");
             debug!("recieved resp");
         } else {
             let io = TokioIo::new(channel);
@@ -140,7 +168,10 @@ impl WsTcpWorker {
                 }
             });
             debug!("sending req");
-            resp = req_sender.send_request(request).await.expect_throw("Failed to send request");
+            resp = req_sender
+                .send_request(request)
+                .await
+                .expect_throw("Failed to send request");
             debug!("recieved resp");
         }
 
