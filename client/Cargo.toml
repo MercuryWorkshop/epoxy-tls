@@ -1,0 +1,34 @@
+[package]
+name = "wstcp-client"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["console_error_panic_hook"]
+
+[dependencies]
+bytes = "1.5.0"
+console_error_panic_hook = { version = "0.1.7", optional = true }
+http = "1.0.0"
+http-body-util = "0.1.0"
+hyper = { version = "1.1.0", features = ["client", "http1"] }
+pin-project-lite = "0.2.13"
+penguin-mux-wasm = { git = "https://github.com/r58Playz/penguin-mux-wasm" }
+tokio = { version = "1.35.1", default_features = false }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4.39"
+ws_stream_wasm = { version = "0.7.4", features = ["tokio_io"] }
+futures-util = "0.3.30"
+js-sys = "0.3.66"
+webpki-roots = "0.26.0"
+tokio-rustls = "0.25.0"
+
+[dependencies.getrandom]
+features = ["js"]
+
+[dependencies.ring]
+features = ["wasm32_unknown_unknown_js"]
+

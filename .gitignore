@@ -1,2 +1,4 @@
 /target
-src/*.pem
+server/src/*.pem
+client/pkg
+client/out
