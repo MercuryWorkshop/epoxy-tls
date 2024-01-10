@@ -22,7 +22,6 @@ impl WsStreamWrapper {
         protocols: impl Into<Option<Vec<&str>>>,
     ) -> Result<(Self, WsMeta), WsErr> {
         let (wsmeta, wsstream) = WsMeta::connect(url, protocols).await?;
-        debug!("readystate {:?}", wsstream.ready_state());
         Ok((WsStreamWrapper { ws: wsstream }, wsmeta))
     }
 }
@@ -30,7 +29,6 @@ impl WsStreamWrapper {
 impl Stream for WsStreamWrapper {
     type Item = Result<ws::Message, ws::Error>;
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        debug!("poll_next: {:?}", cx);
         let this = self.project();
         let ret = this.ws.poll_next(cx);
         match ret {
@@ -57,7 +55,6 @@ impl Sink<ws::Message> for WsStreamWrapper {
     type Error = ws::Error;
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        debug!("poll_ready: {:?}", cx);
         let this = self.project();
         let ret = this.ws.poll_ready(cx);
         match ret {
@@ -70,7 +67,6 @@ impl Sink<ws::Message> for WsStreamWrapper {
     }
 
     fn start_send(self: Pin<&mut Self>, item: ws::Message) -> Result<(), Self::Error> {
-        debug!("start_send: {:?}", item);
         use ws::Message::*;
         let item = match item {
             Text(txt) => WsMessage::Text(txt),
@@ -101,7 +97,6 @@ impl Sink<ws::Message> for WsStreamWrapper {
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        debug!("poll closing {:?}", cx);
         let this = self.project();
         let ret = this.ws.poll_close(cx);
         match ret {

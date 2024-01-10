@@ -9,17 +9,37 @@ use wsstreamwrapper::WsStreamWrapper;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use http::{uri, Request};
+use http::{uri, HeaderName, HeaderValue, Request, Response};
+use http_body_util::BodyExt;
 use hyper::{body::Incoming, client::conn as hyper_conn};
-use web_sys::TextEncoder;
 use js_sys::{Object, Reflect, Uint8Array};
-use penguin_mux_wasm::{Multiplexor, MuxStream, Role};
-use tokio_rustls::{client::TlsStream, rustls, rustls::RootCertStore, TlsConnector};
+use penguin_mux_wasm::{Multiplexor, Role};
+use tokio_rustls::{rustls, rustls::RootCertStore, TlsConnector};
 use wasm_bindgen::prelude::*;
+use web_sys::TextEncoder;
 
-type MuxIo = TokioIo<MuxStream<WsStreamWrapper>>;
-type MuxRustlsIo = TokioIo<TlsStream<MuxStream<WsStreamWrapper>>>;
 type HttpBody = http_body_util::Full<Bytes>;
+
+async fn send_req<T>(req: http::Request<HttpBody>, io: T) -> Response<Incoming>
+where
+    T: hyper::rt::Read + hyper::rt::Write + std::marker::Unpin + 'static,
+{
+    let (mut req_sender, conn) = hyper_conn::http1::handshake::<T, HttpBody>(io)
+        .await
+        .expect_throw("Failed to connect to host");
+
+    wasm_bindgen_futures::spawn_local(async move {
+        if let Err(e) = conn.await {
+            error!("wstcp: error in muxed hyper connection! {:?}", e);
+        }
+    });
+
+    debug!("sending req");
+    req_sender
+        .send_request(req)
+        .await
+        .expect_throw("Failed to send request")
+}
 
 #[wasm_bindgen(start)]
 async fn start() {
@@ -30,12 +50,13 @@ async fn start() {
 pub struct WsTcpWorker {
     rustls_config: Arc<rustls::ClientConfig>,
     mux: Multiplexor<WsStreamWrapper>,
+    useragent: String,
 }
 
 #[wasm_bindgen]
 impl WsTcpWorker {
     #[wasm_bindgen(constructor)]
-    pub async fn new(ws_url: String) -> Result<WsTcpWorker, JsValue> {
+    pub async fn new(ws_url: String, useragent: String) -> Result<WsTcpWorker, JsValue> {
         let ws_uri = ws_url
             .parse::<uri::Uri>()
             .expect_throw("Failed to parse websocket URL");
@@ -64,7 +85,11 @@ impl WsTcpWorker {
                 .with_no_client_auth(),
         );
 
-        Ok(WsTcpWorker { mux, rustls_config })
+        Ok(WsTcpWorker {
+            mux,
+            rustls_config,
+            useragent,
+        })
     }
 
     pub async fn fetch(&self, url: String, options: Object) -> Result<(), JsValue> {
@@ -92,25 +117,65 @@ impl WsTcpWorker {
             Ok(val) => val.as_string().unwrap_or("GET".to_string()),
             Err(_) => "GET".to_string(),
         };
+        debug!("method {:?}", req_method_string);
         let req_method: http::Method =
             http::Method::try_from(<String as AsRef<str>>::as_ref(&req_method_string))
                 .expect_throw("Invalid http method");
 
-        let body: Option<Vec<u8>> = Reflect::get(&options, &JsValue::from_str("body")).map(|val| {
-            if val.is_string() {
-                let str = val.as_string().expect_throw("Failed to encode body into uint8array");
-                let encoder = TextEncoder::new().expect_throw("Failed to encode body into uint8array");
-                let encoded = encoder.encode_with_input(str.as_ref());
-                Some(encoded)
-            } else {
-                Some(Uint8Array::new(&val).to_vec())
-            }
-        }).unwrap_or(None);
+        let body: Option<Vec<u8>> = Reflect::get(&options, &JsValue::from_str("body"))
+            .map(|val| {
+                if val.is_string() {
+                    let str = val
+                        .as_string()
+                        .expect_throw("Failed to encode body into uint8array");
+                    let encoder =
+                        TextEncoder::new().expect_throw("Failed to encode body into uint8array");
+                    let encoded = encoder.encode_with_input(str.as_ref());
+                    Some(encoded)
+                } else {
+                    Some(Uint8Array::new(&val).to_vec())
+                }
+            })
+            .unwrap_or(None);
 
         let body_bytes: Bytes = match body {
             Some(vec) => Bytes::from(vec),
-            None => Bytes::new()
+            None => Bytes::new(),
         };
+
+        let headers: Option<Vec<Vec<String>>> =
+            Reflect::get(&options, &JsValue::from_str("headers"))
+                .map(|val| {
+                    if val.is_truthy() {
+                        Some(utils::entries_of_object(&Object::from(val)))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(None);
+
+        let mut builder = Request::builder().uri(uri.clone()).method(req_method);
+
+        if let Some(headers) = headers {
+            let headers_map = builder.headers_mut().expect_throw("failed to get headers");
+            for hdr in headers {
+                headers_map.insert(
+                    HeaderName::from_bytes(hdr[0].as_bytes())
+                        .expect_throw("failed to get hdr name"),
+                    HeaderValue::from_str(hdr[1].clone().as_ref())
+                        .expect_throw("failed to get hdr value"),
+                );
+            }
+        }
+
+        builder = builder
+            .header("Host", uri_host)
+            .header("Connection", "close")
+            .header("User-Agent", self.useragent.clone());
+
+        let request = builder
+            .body(HttpBody::new(body_bytes))
+            .expect_throw("Failed to make request");
 
         let channel = self
             .mux
@@ -118,14 +183,7 @@ impl WsTcpWorker {
             .await
             .expect_throw("Failed to create multiplexor channel");
 
-        let request = Request::builder()
-            .header("Host", uri_host)
-            .header("Connection", "close")
-            .method(req_method)
-            .body(HttpBody::new(body_bytes))
-            .expect_throw("Failed to create request");
-
-        let resp: hyper::Response<Incoming>;
+        let mut resp: hyper::Response<Incoming>;
 
         if *uri_scheme == uri::Scheme::HTTPS {
             let cloned_uri = uri_host.to_string().clone();
@@ -139,43 +197,15 @@ impl WsTcpWorker {
                 )
                 .await
                 .expect_throw("Failed to perform TLS handshake");
-            let io = TokioIo::new(io);
-            let (mut req_sender, conn) = hyper_conn::http1::handshake::<MuxRustlsIo, HttpBody>(io)
-                .await
-                .expect_throw("Failed to connect to host");
-
-            wasm_bindgen_futures::spawn_local(async move {
-                if let Err(e) = conn.await {
-                    error!("wstcp: error in muxed hyper connection! {:?}", e);
-                }
-            });
-
-            debug!("sending req tls");
-            resp = req_sender
-                .send_request(request)
-                .await
-                .expect_throw("Failed to send request");
-            debug!("recieved resp");
+            resp = send_req(request, TokioIo::new(io)).await;
         } else {
-            let io = TokioIo::new(channel);
-            let (mut req_sender, conn) = hyper_conn::http1::handshake::<MuxIo, HttpBody>(io)
-                .await
-                .expect_throw("Failed to connect to host");
-
-            wasm_bindgen_futures::spawn_local(async move {
-                if let Err(e) = conn.await {
-                    error!("err in conn: {:?}", e);
-                }
-            });
-            debug!("sending req");
-            resp = req_sender
-                .send_request(request)
-                .await
-                .expect_throw("Failed to send request");
-            debug!("recieved resp");
+            resp = send_req(request, TokioIo::new(channel)).await;
         }
 
         log!("{:?}", resp);
+        let body = resp.body_mut().collect();
+        let body_bytes = body.await.expect_throw("Failed to get body").to_bytes();
+        log!("{}", std::str::from_utf8(&body_bytes).expect_throw("e"));
 
         Ok(())
     }
