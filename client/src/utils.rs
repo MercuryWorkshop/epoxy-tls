@@ -29,6 +29,10 @@ macro_rules! error {
     ($($t:tt)*) => (utils::console_error(&format_args!($($t)*).to_string()))
 }
 
+macro_rules! nerr {
+    ($expr:expr) => (JsError::new($expr))
+}
+
 pub fn entries_of_object(obj: &Object) -> Vec<Vec<String>> {
     js_sys::Object::entries(obj)
         .to_vec()
@@ -44,4 +48,26 @@ pub fn entries_of_object(obj: &Object) -> Vec<Vec<String>> {
                 .collect()
         })
         .collect::<Vec<Vec<_>>>()
+}
+
+pub trait ReplaceErr {
+    type Ok;
+
+    fn replace_err(self, err: &str) -> Result<Self::Ok, JsError>;
+}
+
+impl<T, E> ReplaceErr for Result<T, E> {
+    type Ok = T;
+
+    fn replace_err(self, err: &str) -> Result<<Self as ReplaceErr>::Ok, JsError> {
+        self.map_err(|_| JsError::new(err))
+    }
+}
+
+impl<T> ReplaceErr for Option<T> {
+    type Ok = T;
+
+    fn replace_err(self, err: &str) -> Result<<Self as ReplaceErr>::Ok, JsError> {
+        self.ok_or_else(|| JsError::new(err))
+    }
 }
