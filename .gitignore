@@ -2,3 +2,4 @@
 server/src/*.pem
 client/pkg
 client/out
+.direnv
