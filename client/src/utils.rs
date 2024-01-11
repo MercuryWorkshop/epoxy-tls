@@ -92,7 +92,7 @@ pub fn entries_of_object(obj: &Object) -> Vec<Vec<String>> {
 }
 
 pub fn define_property_obj(value: JsValue, writable: bool) -> Result<Object, JsValue> {
-    let entries: Array = vec![
+    let entries: Array = [
         Array::of2(&jval!("value"), &jval!(value)),
         Array::of2(&jval!("writable"), &jval!(writable)),
     ]

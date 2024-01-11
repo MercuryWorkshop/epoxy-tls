@@ -13,6 +13,7 @@
   const t1 = performance.now();
 
   console.warn(resp);
+  console.warn(await fetch("https://httpbin.org/post", { method: "POST", body: "test", headers: { "X-Header-One": "one", "x-header-one": "One", "X-Header-Two": "two" } }));
   console.warn(Object.fromEntries(resp.headers));
   console.warn(await resp.text());
   console.warn(`mux 1 took ${t1 - t0} ms or ${(t1 - t0) / 1000} s`);
