@@ -25,7 +25,8 @@ futures-util = "0.3.30"
 js-sys = "0.3.66"
 webpki-roots = "0.26.0"
 tokio-rustls = "0.25.0"
-web-sys = { version = "0.3.66", features = ["TextEncoder", "Navigator"] }
+web-sys = { version = "0.3.66", features = ["TextEncoder", "Navigator", "Response", "ResponseInit"] }
+wasm-streams = "0.4.0"
 
 [dependencies.getrandom]
 features = ["js"]

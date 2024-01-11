@@ -1,19 +1,18 @@
 #[macro_use]
 mod utils;
 mod tokioio;
-mod wsstreamwrapper;
+mod wrappers;
 
 use tokioio::TokioIo;
 use utils::ReplaceErr;
-use wsstreamwrapper::WsStreamWrapper;
+use wrappers::{IncomingBody, WsStreamWrapper};
 
 use std::sync::Arc;
 
 use bytes::Bytes;
 use http::{uri, HeaderName, HeaderValue, Request, Response};
-use http_body_util::BodyExt;
 use hyper::{body::Incoming, client::conn as hyper_conn};
-use js_sys::{Object, Reflect, Uint8Array};
+use js_sys::{Array, Object, Reflect, Uint8Array};
 use penguin_mux_wasm::{Multiplexor, Role};
 use tokio_rustls::{rustls, rustls::RootCertStore, TlsConnector};
 use wasm_bindgen::prelude::*;
@@ -35,7 +34,6 @@ where
         }
     });
 
-    debug!("sending req");
     req_sender
         .send_request(req)
         .await
@@ -48,16 +46,16 @@ async fn start() {
 }
 
 #[wasm_bindgen]
-pub struct WsTcpWorker {
+pub struct WsTcp {
     rustls_config: Arc<rustls::ClientConfig>,
     mux: Multiplexor<WsStreamWrapper>,
     useragent: String,
 }
 
 #[wasm_bindgen]
-impl WsTcpWorker {
+impl WsTcp {
     #[wasm_bindgen(constructor)]
-    pub async fn new(ws_url: String, useragent: String) -> Result<WsTcpWorker, JsError> {
+    pub async fn new(ws_url: String, useragent: String) -> Result<WsTcp, JsError> {
         let ws_uri = ws_url
             .parse::<uri::Uri>()
             .replace_err("Failed to parse websocket url")?;
@@ -70,13 +68,11 @@ impl WsTcpWorker {
         }
 
         debug!("connecting to ws {:?}", ws_url);
-        let (ws, wsmeta) = WsStreamWrapper::connect(ws_url, None)
+        let ws = WsStreamWrapper::connect(ws_url, None)
             .await
             .replace_err("Failed to connect to websocket")?;
         debug!("connected!");
         let mux = Multiplexor::new(ws, Role::Client, None, None);
-
-        debug!("wsmeta ready state: {:?}", wsmeta.ready_state());
 
         let mut certstore = RootCertStore::empty();
         certstore.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -87,18 +83,18 @@ impl WsTcpWorker {
                 .with_no_client_auth(),
         );
 
-        Ok(WsTcpWorker {
+        Ok(WsTcp {
             mux,
             rustls_config,
             useragent,
         })
     }
 
-    pub async fn fetch(&self, url: String, options: Object) -> Result<(), JsError> {
+    pub async fn fetch(&self, url: String, options: Object) -> Result<web_sys::Response, JsError> {
         let uri = url.parse::<uri::Uri>().replace_err("Failed to parse URL")?;
         let uri_scheme = uri.scheme().replace_err("URL must have a scheme")?;
         if *uri_scheme != uri::Scheme::HTTP && *uri_scheme != uri::Scheme::HTTPS {
-            return Err(nerr!("Scheme must be either `http` or `https`"));
+            return Err(jerr!("Scheme must be either `http` or `https`"));
         }
         let uri_host = uri.host().replace_err("URL must have a host")?;
         let uri_port = if let Some(port) = uri.port() {
@@ -111,20 +107,19 @@ impl WsTcpWorker {
             } else if *uri_scheme == uri::Scheme::HTTPS {
                 443
             } else {
-                return Err(nerr!("Failed to coerce port from scheme"));
+                return Err(jerr!("Failed to coerce port from scheme"));
             }
         };
 
-        let req_method_string: String = match Reflect::get(&options, &JsValue::from_str("method")) {
+        let req_method_string: String = match Reflect::get(&options, &jval!("method")) {
             Ok(val) => val.as_string().unwrap_or("GET".to_string()),
             Err(_) => "GET".to_string(),
         };
-        debug!("method {:?}", req_method_string);
         let req_method: http::Method =
             http::Method::try_from(<String as AsRef<str>>::as_ref(&req_method_string))
                 .replace_err("Invalid http method")?;
 
-        let body_jsvalue: Option<JsValue> = Reflect::get(&options, &JsValue::from_str("body")).ok();
+        let body_jsvalue: Option<JsValue> = Reflect::get(&options, &jval!("body")).ok();
         let body = if let Some(val) = body_jsvalue {
             if val.is_string() {
                 let str = val
@@ -146,16 +141,15 @@ impl WsTcpWorker {
             None => Bytes::new(),
         };
 
-        let headers: Option<Vec<Vec<String>>> =
-            Reflect::get(&options, &JsValue::from_str("headers"))
-                .map(|val| {
-                    if val.is_truthy() {
-                        Some(utils::entries_of_object(&Object::from(val)))
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(None);
+        let headers: Option<Vec<Vec<String>>> = Reflect::get(&options, &jval!("headers"))
+            .map(|val| {
+                if val.is_truthy() {
+                    Some(utils::entries_of_object(&Object::from(val)))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(None);
 
         let mut builder = Request::builder().uri(uri.clone()).method(req_method);
 
@@ -186,7 +180,7 @@ impl WsTcpWorker {
             .await
             .replace_err("Failed to create multiplexor channel")?;
 
-        let mut resp: hyper::Response<Incoming>;
+        let resp: hyper::Response<Incoming>;
 
         if *uri_scheme == uri::Scheme::HTTPS {
             let cloned_uri = uri_host.to_string().clone();
@@ -205,11 +199,42 @@ impl WsTcpWorker {
             resp = send_req(request, TokioIo::new(channel)).await?;
         }
 
-        log!("{:?}", resp);
-        let body = resp.body_mut().collect();
-        let body_bytes = body.await.replace_err("Failed to get body")?.to_bytes();
-        log!("{}", std::str::from_utf8(&body_bytes).replace_err("e")?);
+        let resp_headers_jsarray = resp
+            .headers()
+            .iter()
+            .filter_map(|val| {
+                Some(Array::of2(
+                    &jval!(val.0.as_str()),
+                    &jval!(val.1.to_str().ok()?),
+                ))
+            })
+            .collect::<Array>();
 
-        Ok(())
+        let resp_headers = Object::from_entries(&resp_headers_jsarray)
+            .replace_err("Failed to create response headers object")?;
+
+        let mut respinit = web_sys::ResponseInit::new();
+        respinit
+            .headers(&resp_headers)
+            .status(resp.status().as_u16())
+            .status_text(resp.status().canonical_reason().unwrap_or_default());
+
+        let body = IncomingBody::new(resp.into_body());
+        let stream = wasm_streams::ReadableStream::from_stream(body);
+
+        let resp = web_sys::Response::new_with_opt_readable_stream_and_init(
+            Some(&stream.into_raw()),
+            &respinit,
+        )
+        .replace_err("Failed to make response")?;
+
+        Object::define_property(
+            &resp,
+            &jval!("url"),
+            &utils::define_property_obj(jval!(url), false)
+                .replace_err("Failed to make define_property object for url")?,
+        );
+
+        Ok(resp)
     }
 }

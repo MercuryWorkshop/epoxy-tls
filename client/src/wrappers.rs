@@ -5,6 +5,7 @@ use std::{
 };
 
 use futures_util::{Sink, Stream};
+use hyper::body::Body;
 use penguin_mux_wasm::ws;
 use pin_project_lite::pin_project;
 use ws_stream_wasm::{WsErr, WsMessage, WsMeta, WsStream};
@@ -20,9 +21,9 @@ impl WsStreamWrapper {
     pub async fn connect(
         url: impl AsRef<str>,
         protocols: impl Into<Option<Vec<&str>>>,
-    ) -> Result<(Self, WsMeta), WsErr> {
-        let (wsmeta, wsstream) = WsMeta::connect(url, protocols).await?;
-        Ok((WsStreamWrapper { ws: wsstream }, wsmeta))
+    ) -> Result<Self, WsErr> {
+        let (_, wsstream) = WsMeta::connect(url, protocols).await?;
+        Ok(WsStreamWrapper { ws: wsstream })
     }
 }
 
@@ -79,7 +80,7 @@ impl Sink<ws::Message> for WsStreamWrapper {
                         "ws close err: {:?}",
                         err
                     )))),
-                }
+                };
             }
             Ping(_) | Pong(_) | Frame(_) => return Ok(()),
         };
@@ -112,5 +113,39 @@ impl Sink<ws::Message> for WsStreamWrapper {
 impl ws::WebSocketStream for WsStreamWrapper {
     fn ping_auto_pong(&self) -> bool {
         true
+    }
+}
+
+pin_project! {
+    pub struct IncomingBody {
+        #[pin]
+        incoming: hyper::body::Incoming,
+    }
+}
+
+impl IncomingBody {
+    pub fn new(incoming: hyper::body::Incoming) -> IncomingBody {
+        IncomingBody { incoming }
+    }
+}
+
+impl Stream for IncomingBody {
+    type Item = Result<JsValue, JsValue>;
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.project();
+        let ret = this.incoming.poll_frame(cx);
+        match ret {
+            Poll::Ready(item) => Poll::<Option<Self::Item>>::Ready(match item {
+                Some(frame) => frame
+                    .map(|x| {
+                        x.into_data()
+                            .map(|x| Uint8Array::from(x.as_ref()).into())
+                            .replace_err_jv("Error creating uint8array from http frame")
+                    })
+                    .ok(),
+                None => None,
+            }),
+            Poll::Pending => Poll::<Option<Self::Item>>::Pending,
+        }
     }
 }
