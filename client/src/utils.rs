@@ -1,5 +1,7 @@
 use wasm_bindgen::prelude::*;
 
+use hyper::{header::HeaderValue, Uri};
+use http::uri;
 use js_sys::{Array, Object};
 
 pub fn set_panic_hook() {
@@ -77,6 +79,29 @@ impl<T> ReplaceErr for Option<T> {
     }
 }
 
+pub trait UriExt {
+    fn get_redirect(&self, location: &HeaderValue) -> Result<Uri, JsError>;
+    fn is_same_host(&self, other: &Uri) -> bool;
+}
+
+impl UriExt for Uri {
+    fn get_redirect(&self, location: &HeaderValue) -> Result<Uri, JsError> {
+        let new_uri = location.to_str()?.parse::<hyper::Uri>()?;
+        let mut new_parts: http::uri::Parts = new_uri.into();
+        if new_parts.scheme.is_none() {
+            new_parts.scheme = self.scheme().cloned();
+        }
+        if new_parts.authority.is_none() {
+            new_parts.authority = self.authority().cloned();
+        }
+
+        Ok(Uri::from_parts(new_parts)?)
+    }
+    fn is_same_host(&self, other: &Uri) -> bool {
+        self.host() == other.host() && self.port() == other.port()
+    }
+}
+
 pub fn entries_of_object(obj: &Object) -> Vec<Vec<String>> {
     js_sys::Object::entries(obj)
         .to_vec()
@@ -96,6 +121,28 @@ pub fn define_property_obj(value: JsValue, writable: bool) -> Result<Object, JsV
         Array::of2(&jval!("value"), &jval!(value)),
         Array::of2(&jval!("writable"), &jval!(writable)),
     ]
-    .iter().collect::<Array>();
+    .iter()
+    .collect::<Array>();
     Object::from_entries(&entries)
+}
+
+pub fn is_redirect(code: u16) -> bool {
+    [301, 302, 303, 307, 308].contains(&code)
+}
+
+pub fn get_url_port(url: &Uri) -> Result<u16, JsError> {
+    let url_scheme = url.scheme().replace_err("URL must have a scheme")?;
+    if let Some(port) = url.port() {
+        Ok(port.as_u16())
+    } else {
+        // can't use match, compiler error
+        // error: to use a constant of type `Scheme` in a pattern, `Scheme` must be annotated with `#[derive(PartialEq, Eq)]`
+        if *url_scheme == uri::Scheme::HTTP {
+            Ok(80)
+        } else if *url_scheme == uri::Scheme::HTTPS {
+            Ok(443)
+        } else {
+            return Err(jerr!("Failed to coerce port from scheme"));
+        }
+    }
 }

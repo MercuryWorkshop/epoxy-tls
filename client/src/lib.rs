@@ -1,32 +1,42 @@
+#![feature(let_chains)]
 #[macro_use]
 mod utils;
 mod tokioio;
 mod wrappers;
 
 use tokioio::TokioIo;
-use utils::ReplaceErr;
+use utils::{ReplaceErr, UriExt};
 use wrappers::{IncomingBody, WsStreamWrapper};
 
 use std::sync::Arc;
 
 use bytes::Bytes;
 use http::{uri, HeaderName, HeaderValue, Request, Response};
-use hyper::{body::Incoming, client::conn as hyper_conn};
+use hyper::{body::Incoming, client::conn as hyper_conn, Uri};
 use js_sys::{Array, Object, Reflect, Uint8Array};
-use penguin_mux_wasm::{Multiplexor, Role};
-use tokio_rustls::{rustls, rustls::RootCertStore, TlsConnector};
+use penguin_mux_wasm::{Multiplexor, MuxStream, Role};
+use tokio_rustls::{client::TlsStream, rustls, rustls::RootCertStore, TlsConnector};
+use tokio_util::either::Either;
 use wasm_bindgen::prelude::*;
 use web_sys::TextEncoder;
 
 type HttpBody = http_body_util::Full<Bytes>;
 
-async fn send_req<T>(req: http::Request<HttpBody>, io: T) -> Result<Response<Incoming>, JsError>
-where
-    T: hyper::rt::Read + hyper::rt::Write + std::marker::Unpin + 'static,
-{
-    let (mut req_sender, conn) = hyper_conn::http1::handshake::<T, HttpBody>(io)
-        .await
-        .replace_err("Failed to connect to host")?;
+#[derive(Debug)]
+enum WsTcpResponse {
+    Success(Response<Incoming>),
+    Redirect((Response<Incoming>, http::Request<HttpBody>, Uri)),
+}
+
+type WsTcpTlsStream = TlsStream<MuxStream<WsStreamWrapper>>;
+type WsTcpUnencryptedStream = MuxStream<WsStreamWrapper>;
+type WsTcpStream = Either<WsTcpTlsStream, WsTcpUnencryptedStream>;
+
+async fn send_req(req: http::Request<HttpBody>, io: WsTcpStream) -> Result<WsTcpResponse, JsError> {
+    let (mut req_sender, conn) =
+        hyper_conn::http1::handshake::<TokioIo<WsTcpStream>, HttpBody>(TokioIo::new(io))
+            .await
+            .replace_err("Failed to connect to host")?;
 
     wasm_bindgen_futures::spawn_local(async move {
         if let Err(e) = conn.await {
@@ -34,10 +44,38 @@ where
         }
     });
 
-    req_sender
+    let mut new_req = req.clone();
+
+    let res = req_sender
         .send_request(req)
         .await
-        .replace_err("Failed to send request")
+        .replace_err("Failed to send request");
+    match res {
+        Ok(res) => {
+            if utils::is_redirect(res.status().as_u16())
+                && let Some(location) = res.headers().get("Location")
+                && let Ok(redirect_url) = new_req.uri().get_redirect(location)
+                && let Some(redirect_url_authority) = redirect_url.clone().authority().replace_err("Redirect URL must have an authority").ok()
+            {
+                let should_strip = new_req.uri().is_same_host(&redirect_url);
+                if should_strip {
+                    new_req.headers_mut().remove("authorization");
+                    new_req.headers_mut().remove("cookie");
+                    new_req.headers_mut().remove("www-authenticate");
+                }
+                let new_url = redirect_url.clone();
+                *new_req.uri_mut() = redirect_url;
+                new_req.headers_mut().remove("Host");
+                new_req
+                    .headers_mut()
+                    .insert("Host", HeaderValue::from_str(redirect_url_authority.as_str())?);
+                Ok(WsTcpResponse::Redirect((res, new_req, new_url)))
+            } else {
+                Ok(WsTcpResponse::Success(res))
+            }
+        }
+        Err(err) => Err(err),
+    }
 }
 
 #[wasm_bindgen(start)]
@@ -50,12 +88,13 @@ pub struct WsTcp {
     rustls_config: Arc<rustls::ClientConfig>,
     mux: Multiplexor<WsStreamWrapper>,
     useragent: String,
+    redirect_limit: usize,
 }
 
 #[wasm_bindgen]
 impl WsTcp {
     #[wasm_bindgen(constructor)]
-    pub async fn new(ws_url: String, useragent: String) -> Result<WsTcp, JsError> {
+    pub async fn new(ws_url: String, useragent: String, redirect_limit: usize) -> Result<WsTcp, JsError> {
         let ws_uri = ws_url
             .parse::<uri::Uri>()
             .replace_err("Failed to parse websocket url")?;
@@ -87,7 +126,58 @@ impl WsTcp {
             mux,
             rustls_config,
             useragent,
+            redirect_limit
         })
+    }
+
+    async fn get_http_io(&self, url: &Uri) -> Result<WsTcpStream, JsError> {
+        let url_host = url.host().replace_err("URL must have a host")?;
+        let url_port = utils::get_url_port(url)?;
+        let channel = self
+            .mux
+            .client_new_stream_channel(url_host.as_bytes(), url_port)
+            .await
+            .replace_err("Failed to create multiplexor channel")?;
+
+        if *url.scheme().replace_err("URL must have a scheme")? == uri::Scheme::HTTPS {
+            let cloned_uri = url_host.to_string().clone();
+            let connector = TlsConnector::from(self.rustls_config.clone());
+            let io = connector
+                .connect(
+                    cloned_uri
+                        .try_into()
+                        .replace_err("Failed to parse URL (rustls)")?,
+                    channel,
+                )
+                .await
+                .replace_err("Failed to perform TLS handshake")?;
+            Ok(WsTcpStream::Left(io))
+        } else {
+            Ok(WsTcpStream::Right(channel))
+        }
+    }
+
+    async fn send_req(
+        &self,
+        req: http::Request<HttpBody>,
+    ) -> Result<(hyper::Response<Incoming>, Uri, bool), JsError> {
+        let mut redirected = false;
+        let uri = req.uri().clone();
+        let mut current_resp: WsTcpResponse = send_req(req, self.get_http_io(&uri).await?).await?;
+        for _ in 0..self.redirect_limit-1 {
+            match current_resp {
+                WsTcpResponse::Success(_) => break,
+                WsTcpResponse::Redirect((_, req, new_url)) => {
+                    redirected = true;
+                    current_resp = send_req(req, self.get_http_io(&new_url).await?).await?
+                }
+            }
+        }
+
+        match current_resp {
+            WsTcpResponse::Success(resp) => Ok((resp, uri, redirected)),
+            WsTcpResponse::Redirect((resp, _, new_url)) => Ok((resp, new_url, redirected)),
+        }
     }
 
     pub async fn fetch(&self, url: String, options: Object) -> Result<web_sys::Response, JsError> {
@@ -97,19 +187,6 @@ impl WsTcp {
             return Err(jerr!("Scheme must be either `http` or `https`"));
         }
         let uri_host = uri.host().replace_err("URL must have a host")?;
-        let uri_port = if let Some(port) = uri.port() {
-            port.as_u16()
-        } else {
-            // can't use match, compiler error
-            // error: to use a constant of type `Scheme` in a pattern, `Scheme` must be annotated with `#[derive(PartialEq, Eq)]`
-            if *uri_scheme == uri::Scheme::HTTP {
-                80
-            } else if *uri_scheme == uri::Scheme::HTTPS {
-                443
-            } else {
-                return Err(jerr!("Failed to coerce port from scheme"));
-            }
-        };
 
         let req_method_string: String = match Reflect::get(&options, &jval!("method")) {
             Ok(val) => val.as_string().unwrap_or("GET".to_string()),
@@ -174,30 +251,7 @@ impl WsTcp {
             .body(HttpBody::new(body_bytes))
             .replace_err("Failed to make request")?;
 
-        let channel = self
-            .mux
-            .client_new_stream_channel(uri_host.as_bytes(), uri_port)
-            .await
-            .replace_err("Failed to create multiplexor channel")?;
-
-        let resp: hyper::Response<Incoming>;
-
-        if *uri_scheme == uri::Scheme::HTTPS {
-            let cloned_uri = uri_host.to_string().clone();
-            let connector = TlsConnector::from(self.rustls_config.clone());
-            let io = connector
-                .connect(
-                    cloned_uri
-                        .try_into()
-                        .replace_err("Failed to parse URL (rustls)")?,
-                    channel,
-                )
-                .await
-                .replace_err("Failed to perform TLS handshake")?;
-            resp = send_req(request, TokioIo::new(io)).await?;
-        } else {
-            resp = send_req(request, TokioIo::new(channel)).await?;
-        }
+        let (resp, last_url, req_redirected) = self.send_req(request).await?;
 
         let resp_headers_jsarray = resp
             .headers()
@@ -231,8 +285,15 @@ impl WsTcp {
         Object::define_property(
             &resp,
             &jval!("url"),
-            &utils::define_property_obj(jval!(url), false)
+            &utils::define_property_obj(jval!(last_url.to_string()), false)
                 .replace_err("Failed to make define_property object for url")?,
+        );
+
+        Object::define_property(
+            &resp,
+            &jval!("redirected"),
+            &utils::define_property_obj(jval!(req_redirected), false)
+                .replace_err("Failed to make define_property object for redirected")?,
         );
 
         Ok(resp)
