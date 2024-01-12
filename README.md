@@ -9,5 +9,5 @@
 
 ### Client
 
-1. Make sure you have the `wasm32-unknown-unknown` target installed, `wasm-bindgen` executable installed, and `bash`, `python3` packages (`python3` is used for `http.server` module)
-2. Run `bash build.sh` to build and start a webserver
+1. Make sure you have the `wasm32-unknown-unknown` target installed, `wasm-bindgen` executable installed (and optionally `wasm-opt`), and `bash`, `python3` packages (`python3` is used for `http.server` module)
+2. Run `bash build.sh` to build without wasm-opt and start a webserver, add any argument to call wasm-opt
