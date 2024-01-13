@@ -42,7 +42,7 @@ type WsTcpTlsStream = TlsStream<MuxStream<WsStreamWrapper>>;
 type WsTcpUnencryptedStream = MuxStream<WsStreamWrapper>;
 type WsTcpStream = Either<WsTcpTlsStream, WsTcpUnencryptedStream>;
 
-async fn send_req(req: http::Request<HttpBody>, io: WsTcpStream) -> Result<WsTcpResponse, JsError> {
+async fn send_req(req: http::Request<HttpBody>, should_redirect: bool, io: WsTcpStream) -> Result<WsTcpResponse, JsError> {
     let (mut req_sender, conn) = Builder::new()
         .title_case_headers(true)
         .preserve_header_case(true)
@@ -56,7 +56,7 @@ async fn send_req(req: http::Request<HttpBody>, io: WsTcpStream) -> Result<WsTcp
         }
     });
 
-    let mut new_req = req.clone();
+    let new_req = if should_redirect { Some(req.clone()) } else { None };
 
     let res = req_sender
         .send_request(req)
@@ -65,6 +65,7 @@ async fn send_req(req: http::Request<HttpBody>, io: WsTcpStream) -> Result<WsTcp
     match res {
         Ok(res) => {
             if utils::is_redirect(res.status().as_u16())
+                && let Some(mut new_req) = new_req
                 && let Some(location) = res.headers().get("Location")
                 && let Ok(redirect_url) = new_req.uri().get_redirect(location)
                 && let Some(redirect_url_authority) = redirect_url
@@ -181,16 +182,17 @@ impl WsTcp {
     async fn send_req(
         &self,
         req: http::Request<HttpBody>,
+        should_redirect: bool
     ) -> Result<(hyper::Response<Incoming>, Uri, bool), JsError> {
         let mut redirected = false;
         let uri = req.uri().clone();
-        let mut current_resp: WsTcpResponse = send_req(req, self.get_http_io(&uri).await?).await?;
+        let mut current_resp: WsTcpResponse = send_req(req, should_redirect, self.get_http_io(&uri).await?).await?;
         for _ in 0..self.redirect_limit - 1 {
             match current_resp {
                 WsTcpResponse::Success(_) => break,
                 WsTcpResponse::Redirect((_, req, new_url)) => {
                     redirected = true;
-                    current_resp = send_req(req, self.get_http_io(&new_url).await?).await?
+                    current_resp = send_req(req, should_redirect, self.get_http_io(&new_url).await?).await?
                 }
             }
         }
@@ -216,6 +218,11 @@ impl WsTcp {
         let req_method: http::Method =
             http::Method::try_from(<String as AsRef<str>>::as_ref(&req_method_string))
                 .replace_err("Invalid http method")?;
+
+        let req_should_redirect = match Reflect::get(&options, &jval!("redirect")) {
+            Ok(val) => !matches!(val.as_string().unwrap_or_default().as_str(), "error" | "manual"),
+            Err(_) => true,
+        };
 
         let body_jsvalue: Option<JsValue> = Reflect::get(&options, &jval!("body")).ok();
         let body = if let Some(val) = body_jsvalue {
@@ -275,7 +282,7 @@ impl WsTcp {
             .body(HttpBody::new(body_bytes))
             .replace_err("Failed to make request")?;
 
-        let (resp, last_url, req_redirected) = self.send_req(request).await?;
+        let (resp, last_url, req_redirected) = self.send_req(request, req_should_redirect).await?;
 
         let resp_headers_jsarray = resp
             .headers()
