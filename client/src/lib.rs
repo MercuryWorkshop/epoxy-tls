@@ -12,7 +12,11 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use http::{uri, HeaderName, HeaderValue, Request, Response};
-use hyper::{body::Incoming, client::conn as hyper_conn, Uri};
+use hyper::{
+    body::Incoming,
+    client::conn::{self as hyper_conn, http1::Builder},
+    Uri,
+};
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use penguin_mux_wasm::{Multiplexor, MuxStream, Role};
 use tokio_rustls::{client::TlsStream, rustls, rustls::RootCertStore, TlsConnector};
@@ -33,10 +37,12 @@ type WsTcpUnencryptedStream = MuxStream<WsStreamWrapper>;
 type WsTcpStream = Either<WsTcpTlsStream, WsTcpUnencryptedStream>;
 
 async fn send_req(req: http::Request<HttpBody>, io: WsTcpStream) -> Result<WsTcpResponse, JsError> {
-    let (mut req_sender, conn) =
-        hyper_conn::http1::handshake::<TokioIo<WsTcpStream>, HttpBody>(TokioIo::new(io))
-            .await
-            .replace_err("Failed to connect to host")?;
+    let (mut req_sender, conn) = Builder::new()
+        .title_case_headers(true)
+        .preserve_header_case(true)
+        .handshake(TokioIo::new(io))
+        .await
+        .replace_err("Failed to connect to host")?;
 
     wasm_bindgen_futures::spawn_local(async move {
         if let Err(e) = conn.await {
@@ -55,7 +61,11 @@ async fn send_req(req: http::Request<HttpBody>, io: WsTcpStream) -> Result<WsTcp
             if utils::is_redirect(res.status().as_u16())
                 && let Some(location) = res.headers().get("Location")
                 && let Ok(redirect_url) = new_req.uri().get_redirect(location)
-                && let Some(redirect_url_authority) = redirect_url.clone().authority().replace_err("Redirect URL must have an authority").ok()
+                && let Some(redirect_url_authority) = redirect_url
+                    .clone()
+                    .authority()
+                    .replace_err("Redirect URL must have an authority")
+                    .ok()
             {
                 let should_strip = new_req.uri().is_same_host(&redirect_url);
                 if should_strip {
@@ -66,9 +76,10 @@ async fn send_req(req: http::Request<HttpBody>, io: WsTcpStream) -> Result<WsTcp
                 let new_url = redirect_url.clone();
                 *new_req.uri_mut() = redirect_url;
                 new_req.headers_mut().remove("Host");
-                new_req
-                    .headers_mut()
-                    .insert("Host", HeaderValue::from_str(redirect_url_authority.as_str())?);
+                new_req.headers_mut().insert(
+                    "Host",
+                    HeaderValue::from_str(redirect_url_authority.as_str())?,
+                );
                 Ok(WsTcpResponse::Redirect((res, new_req, new_url)))
             } else {
                 Ok(WsTcpResponse::Success(res))
@@ -94,7 +105,11 @@ pub struct WsTcp {
 #[wasm_bindgen]
 impl WsTcp {
     #[wasm_bindgen(constructor)]
-    pub async fn new(ws_url: String, useragent: String, redirect_limit: usize) -> Result<WsTcp, JsError> {
+    pub async fn new(
+        ws_url: String,
+        useragent: String,
+        redirect_limit: usize,
+    ) -> Result<WsTcp, JsError> {
         let ws_uri = ws_url
             .parse::<uri::Uri>()
             .replace_err("Failed to parse websocket url")?;
@@ -126,7 +141,7 @@ impl WsTcp {
             mux,
             rustls_config,
             useragent,
-            redirect_limit
+            redirect_limit,
         })
     }
 
@@ -164,7 +179,7 @@ impl WsTcp {
         let mut redirected = false;
         let uri = req.uri().clone();
         let mut current_resp: WsTcpResponse = send_req(req, self.get_http_io(&uri).await?).await?;
-        for _ in 0..self.redirect_limit-1 {
+        for _ in 0..self.redirect_limit - 1 {
             match current_resp {
                 WsTcpResponse::Success(_) => break,
                 WsTcpResponse::Redirect((_, req, new_url)) => {
@@ -243,9 +258,13 @@ impl WsTcp {
         }
 
         builder = builder
-            .header("Host", uri_host)
-            .header("Connection", "close")
-            .header("User-Agent", self.useragent.clone());
+            // this breaks a shit ton of things
+            // .header("Host", uri_host)
+            // .header("User-Agent", self.useragent.clone())
+            .header("Connection", "close");
+        if body_bytes.len() == 0 {
+            builder = builder.header("Content-Length", 0);
+        }
 
         let request = builder
             .body(HttpBody::new(body_bytes))
