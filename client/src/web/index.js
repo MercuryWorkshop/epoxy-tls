@@ -28,8 +28,6 @@
       console.warn(url, resp, Object.fromEntries(resp.headers));
       console.warn(await resp.text());
     }
-
-    alert("you can open console now");
   } else if (should_perf_test) {
     const test_mux = async (url) => {
       const t0 = performance.now();
@@ -62,11 +60,10 @@
     console.warn(`avg mux (10) took ${total_mux} ms or ${total_mux / 1000} s`);
     console.warn(`avg native (10) took ${total_native} ms or ${total_native / 1000} s`);
     console.warn(`mux - native: ${total_mux - total_native} ms or ${(total_mux - total_native) / 1000} s`);
-
-    alert("you can open console now");
   } else {
     let resp = await wstcp.fetch("https://httpbin.org/get");
     console.warn(resp, Object.fromEntries(resp.headers));
     console.warn(await resp.text());
   }
+  alert("you can open console now");
 })();

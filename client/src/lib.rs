@@ -82,7 +82,6 @@ async fn send_req(req: http::Request<HttpBody>, should_redirect: bool, io: WsTcp
                 }
                 let new_url = redirect_url.clone();
                 *new_req.uri_mut() = redirect_url;
-                new_req.headers_mut().remove("Host");
                 new_req.headers_mut().insert(
                     "Host",
                     HeaderValue::from_str(redirect_url_authority.as_str())?,
