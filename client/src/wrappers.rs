@@ -130,7 +130,7 @@ impl IncomingBody {
 }
 
 impl Stream for IncomingBody {
-    type Item = Result<JsValue, JsValue>;
+    type Item = std::io::Result<Bytes>;
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
         let ret = this.incoming.poll_frame(cx);
@@ -138,9 +138,7 @@ impl Stream for IncomingBody {
             Poll::Ready(item) => Poll::<Option<Self::Item>>::Ready(match item {
                 Some(frame) => frame
                     .map(|x| {
-                        x.into_data()
-                            .map(|x| Uint8Array::from(x.as_ref()).into())
-                            .replace_err_jv("Error creating uint8array from http frame")
+                        x.into_data().map_err(|_| std::io::Error::other("not data frame"))
                     })
                     .ok(),
                 None => None,

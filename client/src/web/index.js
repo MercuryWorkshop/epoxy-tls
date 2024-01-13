@@ -14,10 +14,12 @@
   const tconn1 = performance.now();
   console.warn(`conn establish took ${tconn1 - tconn0} ms or ${(tconn1 - tconn0) / 1000} s`);
 
-  let resp = await wstcp.fetch("http://httpbin.org/post", {method: "POST", body: "wstcp", headers: {"User-Agent": "wstcp"}});
-  console.warn(resp);
-  console.warn(Object.fromEntries(resp.headers));
-  console.warn(await resp.text());
+  for (const url of ["https://httpbin.org/get", "https://httpbin.org/gzip", "https://httpbin.org/brotli"]) {
+    let resp = await wstcp.fetch(url);
+    console.warn(resp);
+    console.warn(Object.fromEntries(resp.headers));
+    console.warn(await resp.text());
+  }
 
   if (should_test) {
     const test_mux = async (url) => {
@@ -38,13 +40,13 @@
 
     let total_mux = 0;
     for (const _ of Array(num_tests).keys()) {
-      total_mux += await test_mux("https://httpbin.org/get");
+      total_mux += await test_mux("https://httpbin.org/gzip");
     }
     total_mux = total_mux / num_tests;
 
     let total_native = 0;
     for (const _ of Array(num_tests).keys()) {
-      total_native += await test_native("https://httpbin.org/get");
+      total_native += await test_native("https://httpbin.org/gzip");
     }
     total_native = total_native / num_tests;
 

@@ -10,17 +10,18 @@ use wrappers::{IncomingBody, WsStreamWrapper};
 
 use std::sync::Arc;
 
+use async_compression::tokio::bufread as async_comp;
 use bytes::Bytes;
+use futures_util::StreamExt;
 use http::{uri, HeaderName, HeaderValue, Request, Response};
-use hyper::{
-    body::Incoming,
-    client::conn::http1::Builder,
-    Uri,
-};
+use hyper::{body::Incoming, client::conn::http1::Builder, Uri};
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use penguin_mux_wasm::{Multiplexor, MuxStream, Role};
 use tokio_rustls::{client::TlsStream, rustls, rustls::RootCertStore, TlsConnector};
-use tokio_util::either::Either;
+use tokio_util::{
+    either::Either,
+    io::{ReaderStream, StreamReader},
+};
 use wasm_bindgen::prelude::*;
 use web_sys::TextEncoder;
 
@@ -30,6 +31,11 @@ type HttpBody = http_body_util::Full<Bytes>;
 enum WsTcpResponse {
     Success(Response<Incoming>),
     Redirect((Response<Incoming>, http::Request<HttpBody>, Uri)),
+}
+
+enum WsTcpCompression {
+    Brotli,
+    Gzip,
 }
 
 type WsTcpTlsStream = TlsStream<MuxStream<WsStreamWrapper>>;
@@ -246,6 +252,7 @@ impl WsTcp {
         let mut builder = Request::builder().uri(uri.clone()).method(req_method);
 
         let headers_map = builder.headers_mut().replace_err("Failed to get headers")?;
+        headers_map.insert("Accept-Encoding", HeaderValue::from_str("gzip, br")?);
         headers_map.insert("Connection", HeaderValue::from_str("close")?);
         headers_map.insert("User-Agent", HeaderValue::from_str(&self.useragent)?);
         headers_map.insert("Host", HeaderValue::from_str(uri_host)?);
@@ -290,8 +297,36 @@ impl WsTcp {
             .status(resp.status().as_u16())
             .status_text(resp.status().canonical_reason().unwrap_or_default());
 
-        let body = IncomingBody::new(resp.into_body());
-        let stream = wasm_streams::ReadableStream::from_stream(body);
+        let compression = match resp
+            .headers()
+            .get("Content-Encoding")
+            .and_then(|val| val.to_str().ok())
+            .unwrap_or_default()
+        {
+            "gzip" => Some(WsTcpCompression::Gzip),
+            "br" => Some(WsTcpCompression::Brotli),
+            _ => None,
+        };
+
+        let incoming_body = IncomingBody::new(resp.into_body());
+        let decompressed_body = match compression {
+            Some(alg) => match alg {
+                WsTcpCompression::Gzip => Either::Left(Either::Left(ReaderStream::new(
+                    async_comp::GzipDecoder::new(StreamReader::new(incoming_body)),
+                ))),
+                WsTcpCompression::Brotli => Either::Left(Either::Right(ReaderStream::new(
+                    async_comp::BrotliDecoder::new(StreamReader::new(incoming_body)),
+                ))),
+            },
+            None => Either::Right(incoming_body),
+        };
+        let stream = wasm_streams::ReadableStream::from_stream(decompressed_body.map(|x| {
+            Ok(Uint8Array::from(
+                x.replace_err_jv("Failed to get frame from response")?
+                    .as_ref(),
+            )
+            .into())
+        }));
 
         let resp = web_sys::Response::new_with_opt_readable_stream_and_init(
             Some(&stream.into_raw()),
