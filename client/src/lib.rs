@@ -14,7 +14,7 @@ use bytes::Bytes;
 use http::{uri, HeaderName, HeaderValue, Request, Response};
 use hyper::{
     body::Incoming,
-    client::conn::{self as hyper_conn, http1::Builder},
+    client::conn::http1::Builder,
     Uri,
 };
 use js_sys::{Array, Object, Reflect, Uint8Array};
@@ -245,8 +245,15 @@ impl WsTcp {
 
         let mut builder = Request::builder().uri(uri.clone()).method(req_method);
 
+        let headers_map = builder.headers_mut().replace_err("Failed to get headers")?;
+        headers_map.insert("Connection", HeaderValue::from_str("close")?);
+        headers_map.insert("User-Agent", HeaderValue::from_str(&self.useragent)?);
+        headers_map.insert("Host", HeaderValue::from_str(uri_host)?);
+        if body_bytes.is_empty() {
+            headers_map.insert("Content-Length", HeaderValue::from_str("0")?);
+        }
+
         if let Some(headers) = headers {
-            let headers_map = builder.headers_mut().replace_err("Failed to get headers")?;
             for hdr in headers {
                 headers_map.insert(
                     HeaderName::from_bytes(hdr[0].as_bytes())
@@ -255,15 +262,6 @@ impl WsTcp {
                         .replace_err("Failed to get hdr value")?,
                 );
             }
-        }
-
-        builder = builder
-            // this breaks a shit ton of things
-            // .header("Host", uri_host)
-            // .header("User-Agent", self.useragent.clone())
-            .header("Connection", "close");
-        if body_bytes.len() == 0 {
-            builder = builder.header("Content-Length", 0);
         }
 
         let request = builder
