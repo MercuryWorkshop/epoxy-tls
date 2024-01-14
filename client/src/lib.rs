@@ -42,7 +42,11 @@ type WsTcpTlsStream = TlsStream<MuxStream<WsStreamWrapper>>;
 type WsTcpUnencryptedStream = MuxStream<WsStreamWrapper>;
 type WsTcpStream = Either<WsTcpTlsStream, WsTcpUnencryptedStream>;
 
-async fn send_req(req: http::Request<HttpBody>, should_redirect: bool, io: WsTcpStream) -> Result<WsTcpResponse, JsError> {
+async fn send_req(
+    req: http::Request<HttpBody>,
+    should_redirect: bool,
+    io: WsTcpStream,
+) -> Result<WsTcpResponse, JsError> {
     let (mut req_sender, conn) = Builder::new()
         .title_case_headers(true)
         .preserve_header_case(true)
@@ -56,7 +60,11 @@ async fn send_req(req: http::Request<HttpBody>, should_redirect: bool, io: WsTcp
         }
     });
 
-    let new_req = if should_redirect { Some(req.clone()) } else { None };
+    let new_req = if should_redirect {
+        Some(req.clone())
+    } else {
+        None
+    };
 
     let res = req_sender
         .send_request(req)
@@ -181,17 +189,19 @@ impl WsTcp {
     async fn send_req(
         &self,
         req: http::Request<HttpBody>,
-        should_redirect: bool
+        should_redirect: bool,
     ) -> Result<(hyper::Response<Incoming>, Uri, bool), JsError> {
         let mut redirected = false;
         let uri = req.uri().clone();
-        let mut current_resp: WsTcpResponse = send_req(req, should_redirect, self.get_http_io(&uri).await?).await?;
+        let mut current_resp: WsTcpResponse =
+            send_req(req, should_redirect, self.get_http_io(&uri).await?).await?;
         for _ in 0..self.redirect_limit - 1 {
             match current_resp {
                 WsTcpResponse::Success(_) => break,
                 WsTcpResponse::Redirect((_, req, new_url)) => {
                     redirected = true;
-                    current_resp = send_req(req, should_redirect, self.get_http_io(&new_url).await?).await?
+                    current_resp =
+                        send_req(req, should_redirect, self.get_http_io(&new_url).await?).await?
                 }
             }
         }
@@ -219,7 +229,10 @@ impl WsTcp {
                 .replace_err("Invalid http method")?;
 
         let req_should_redirect = match Reflect::get(&options, &jval!("redirect")) {
-            Ok(val) => !matches!(val.as_string().unwrap_or_default().as_str(), "error" | "manual"),
+            Ok(val) => !matches!(
+                val.as_string().unwrap_or_default().as_str(),
+                "error" | "manual"
+            ),
             Err(_) => true,
         };
 
@@ -282,6 +295,8 @@ impl WsTcp {
             .replace_err("Failed to make request")?;
 
         let (resp, last_url, req_redirected) = self.send_req(request, req_should_redirect).await?;
+
+        let resp_headers_raw = resp.headers().clone();
 
         let resp_headers_jsarray = resp
             .headers()
@@ -352,6 +367,33 @@ impl WsTcp {
             &jval!("redirected"),
             &utils::define_property_obj(jval!(req_redirected), false)
                 .replace_err("Failed to make define_property object for redirected")?,
+        );
+
+        let rawHeaders = Object::new();
+        for (k, v) in resp_headers_raw.iter() {
+            if let Ok(jv) = Reflect::get(&rawHeaders, &jval!(k.to_string())) {
+                if jv.is_array() {
+                    let arr = Array::from(&jv);
+                    arr.push(&jval!(v.to_str().unwrap().to_string()));
+                    Reflect::set(&rawHeaders, &jval!(k.to_string()), &arr);
+                } else if !jv.is_falsy() {
+                    let arr = Array::new();
+                    arr.push(&jv);
+                    arr.push(&jval!(v.to_str().unwrap().to_string()));
+                    Reflect::set(&rawHeaders, &jval!(k.to_string()), &arr);
+                } else {
+                    Reflect::set(
+                        &rawHeaders,
+                        &jval!(k.to_string()),
+                        &jval!(v.to_str().unwrap().to_string()),
+                    );
+                }
+            }
+        }
+        Object::define_property(
+            &resp,
+            &jval!("rawHeaders"),
+            &utils::define_property_obj(jval!(&rawHeaders), false).replace_err("wjat!!")?,
         );
 
         Ok(resp)
