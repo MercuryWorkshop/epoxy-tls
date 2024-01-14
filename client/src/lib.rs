@@ -369,21 +369,21 @@ impl WsTcp {
                 .replace_err("Failed to make define_property object for redirected")?,
         );
 
-        let rawHeaders = Object::new();
+        let raw_headers = Object::new();
         for (k, v) in resp_headers_raw.iter() {
-            if let Ok(jv) = Reflect::get(&rawHeaders, &jval!(k.to_string())) {
+            if let Ok(jv) = Reflect::get(&raw_headers, &jval!(k.to_string())) {
                 if jv.is_array() {
                     let arr = Array::from(&jv);
                     arr.push(&jval!(v.to_str().unwrap().to_string()));
-                    Reflect::set(&rawHeaders, &jval!(k.to_string()), &arr);
+                    let _=Reflect::set(&raw_headers, &jval!(k.to_string()), &arr);
                 } else if !jv.is_falsy() {
                     let arr = Array::new();
                     arr.push(&jv);
                     arr.push(&jval!(v.to_str().unwrap().to_string()));
-                    Reflect::set(&rawHeaders, &jval!(k.to_string()), &arr);
+                    let _=Reflect::set(&raw_headers, &jval!(k.to_string()), &arr);
                 } else {
-                    Reflect::set(
-                        &rawHeaders,
+                    let _=Reflect::set(
+                        &raw_headers,
                         &jval!(k.to_string()),
                         &jval!(v.to_str().unwrap().to_string()),
                     );
@@ -393,7 +393,7 @@ impl WsTcp {
         Object::define_property(
             &resp,
             &jval!("rawHeaders"),
-            &utils::define_property_obj(jval!(&rawHeaders), false).replace_err("wjat!!")?,
+            &utils::define_property_obj(jval!(&raw_headers), false).replace_err("wjat!!")?,
         );
 
         Ok(resp)
