@@ -374,18 +374,19 @@ impl WsTcp {
             if let Ok(jv) = Reflect::get(&raw_headers, &jval!(k.to_string())) {
                 if jv.is_array() {
                     let arr = Array::from(&jv);
-                    arr.push(&jval!(v.to_str().unwrap().to_string()));
-                    let _=Reflect::set(&raw_headers, &jval!(k.to_string()), &arr);
-                } else if !jv.is_falsy() {
-                    let arr = Array::new();
-                    arr.push(&jv);
-                    arr.push(&jval!(v.to_str().unwrap().to_string()));
-                    let _=Reflect::set(&raw_headers, &jval!(k.to_string()), &arr);
-                } else {
-                    let _=Reflect::set(
+                    arr.push(&jval!(v.to_str()?.to_string()));
+                    let _ = Reflect::set(&raw_headers, &jval!(k.to_string()), &arr);
+                } else if jv.is_truthy() {
+                    let _ = Reflect::set(
                         &raw_headers,
                         &jval!(k.to_string()),
-                        &jval!(v.to_str().unwrap().to_string()),
+                        &Array::of2(&jv, &jval!(v.to_str()?.to_string())),
+                    );
+                } else {
+                    let _ = Reflect::set(
+                        &raw_headers,
+                        &jval!(k.to_string()),
+                        &jval!(v.to_str()?.to_string()),
                     );
                 }
             }
