@@ -128,11 +128,12 @@ async fn wtf(iop: *mut WsTcpStream) {
     let mut t = false;
     unsafe {
         let io = &mut *iop;
+        let mut v = vec![];
         loop {
             let r = io.read_u8().await;
 
             if let Ok(u) = r {
-                // log!("{}", u as char);
+                v.push(u);
                 if t && u as char == '\r' {
                     let r = io.read_u8().await;
                     break;
@@ -146,6 +147,7 @@ async fn wtf(iop: *mut WsTcpStream) {
                 break;
             }
         }
+        log!("{}", &from_utf8(&v).unwrap().to_string());
     }
 }
 
@@ -173,7 +175,7 @@ impl WsWebSocket {
         tcp: &mut WsTcp,
         url: String,
         protocols: Vec<String>,
-        host: String,
+        origin: String,
     ) -> Result<(), JsError> {
         self.onopen.call0(&Object::default());
         let uri = url.parse::<uri::Uri>().replace_err("Failed to parse URL")?;
@@ -182,13 +184,22 @@ impl WsWebSocket {
         let r: [u8; 16] = rand::random();
         let key = STANDARD.encode(&r);
 
-        io.write(b"GET / HTTP/1.1\r\n").await;
+        let pathstr = if let Some(p) = uri.path_and_query() {
+            p.to_string()
+        } else {
+            uri.path().to_string()
+        };
+
+        io.write(format!("GET {} HTTP/1.1\r\n", pathstr).as_bytes())
+            .await;
         io.write(b"Sec-WebSocket-Version: 13\r\n").await;
         io.write(format!("Sec-WebSocket-Key: {}\r\n", key).as_bytes())
             .await;
         io.write(b"Connection: Upgrade\r\n").await;
         io.write(b"Upgrade: websocket\r\n").await;
-        io.write(format!("Host: {}\r\n", host).as_bytes()).await;
+        io.write(format!("Origin: {}\r\n", origin).as_bytes()).await;
+        io.write(format!("Host: {}\r\n", uri.host().unwrap()).as_bytes())
+            .await;
         io.write(b"\r\n").await;
 
         let iop: *mut WsTcpStream = &mut io;
@@ -221,7 +232,8 @@ impl WsWebSocket {
             Payload::Owned(payload.as_bytes().to_vec()),
         ))
         .await
-        .replace_err("Failed to send WsWebSocket payload")?;
+        .unwrap();
+        // .replace_err("Failed to send WsWebSocket payload")?;
         Ok(())
     }
 
@@ -235,19 +247,24 @@ impl WsWebSocket {
                 break;
             };
 
-            if frame.opcode == OpCode::Text {
-                if let Ok(str) = from_utf8(&frame.payload) {
+            match frame.opcode {
+                OpCode::Text => {
+                    if let Ok(str) = from_utf8(&frame.payload) {
+                        self.onmessage
+                            .call1(&JsValue::null(), &jval!(str))
+                            .replace_err("missing onmessage handler")?;
+                    }
+                }
+                OpCode::Binary => {
                     self.onmessage
-                        .call1(&JsValue::null(), &jval!(str))
+                        .call1(
+                            &JsValue::null(),
+                            &jval!(Uint8Array::from(frame.payload.to_vec().as_slice())),
+                        )
                         .replace_err("missing onmessage handler")?;
                 }
-            } else if frame.opcode == OpCode::Binary {
-                self.onmessage
-                    .call1(
-                        &JsValue::null(),
-                        &jval!(Uint8Array::from(frame.payload.to_vec().as_slice())),
-                    )
-                    .replace_err("missing onmessage handler")?;
+
+                _ => panic!("unknown opcode {:?}", frame.opcode),
             }
         }
         self.onclose
