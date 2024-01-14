@@ -4,6 +4,8 @@ mod utils;
 mod tokioio;
 mod wrappers;
 
+use fastwebsockets::{Frame, OpCode, Payload, Role, WebSocket};
+use tokio::io::AsyncWriteExt;
 use tokioio::TokioIo;
 use utils::{ReplaceErr, UriExt};
 use wrappers::{IncomingBody, WsStreamWrapper};
@@ -14,9 +16,13 @@ use async_compression::tokio::bufread as async_comp;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use http::{uri, HeaderName, HeaderValue, Request, Response};
-use hyper::{body::Incoming, client::conn::http1::Builder, Uri};
-use js_sys::{Array, Object, Reflect, Uint8Array};
-use penguin_mux_wasm::{Multiplexor, MuxStream, Role};
+use hyper::{
+    body::Incoming,
+    client::conn::http1::{handshake, Builder},
+    Uri,
+};
+use js_sys::{Array, Function, Object, Reflect, Uint8Array};
+use penguin_mux_wasm::{Multiplexor, MuxStream};
 use tokio_rustls::{client::TlsStream, rustls, rustls::RootCertStore, TlsConnector};
 use tokio_util::{
     either::Either,
@@ -140,7 +146,7 @@ impl WsTcp {
             .await
             .replace_err("Failed to connect to websocket")?;
         debug!("connected!");
-        let mux = Multiplexor::new(ws, Role::Client, None, None);
+        let mux = Multiplexor::new(ws, penguin_mux_wasm::Role::Client, None, None);
 
         let mut certstore = RootCertStore::empty();
         certstore.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -186,6 +192,41 @@ impl WsTcp {
         }
     }
 
+    #[wasm_bindgen]
+    pub async fn connect_ws(
+        &self,
+        url: String,
+        protocols: Vec<String>,
+        onopen: Function,
+        onclose: Function,
+        onmessage: Function,
+        onerror: Function,
+        host: String,
+    ) -> Result<JsValue, JsError> {
+        onopen.call0(&Object::default());
+        let uri = url.parse::<uri::Uri>().replace_err("Failed to parse URL")?;
+        let mut io = self.get_http_io(&uri).await?;
+
+        let mut a = WebSocket::after_handshake(io, fastwebsockets::Role::Client);
+        a.set_writev(false);
+        a.set_auto_close(true);
+        a.set_auto_pong(true);
+        a.write_frame(Frame::new(
+            true,
+            OpCode::Text,
+            None,
+            Payload::Owned(b"aasdfdfhsdfhkadfhsdfkhjasfkajdfhaksjhfkadhfkashdfkhsd".to_vec()),
+        ))
+        .await;
+
+        // .await
+        // .replace_err("Failed to connect to host")?;
+
+        let closure = Closure::<dyn FnMut(JsValue)>::new(move |data: JsValue| {
+            log!("WaeASDASd");
+        });
+        Ok(closure.into_js_value())
+    }
     async fn send_req(
         &self,
         req: http::Request<HttpBody>,
@@ -375,14 +416,14 @@ impl WsTcp {
                 if jv.is_array() {
                     let arr = Array::from(&jv);
                     arr.push(&jval!(v.to_str().unwrap().to_string()));
-                    let _=Reflect::set(&raw_headers, &jval!(k.to_string()), &arr);
+                    let _ = Reflect::set(&raw_headers, &jval!(k.to_string()), &arr);
                 } else if !jv.is_falsy() {
                     let arr = Array::new();
                     arr.push(&jv);
                     arr.push(&jval!(v.to_str().unwrap().to_string()));
-                    let _=Reflect::set(&raw_headers, &jval!(k.to_string()), &arr);
+                    let _ = Reflect::set(&raw_headers, &jval!(k.to_string()), &arr);
                 } else {
-                    let _=Reflect::set(
+                    let _ = Reflect::set(
                         &raw_headers,
                         &jval!(k.to_string()),
                         &jval!(v.to_str().unwrap().to_string()),
