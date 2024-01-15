@@ -2,12 +2,13 @@
 #[macro_use]
 mod utils;
 mod tokioio;
-mod wrappers;
 mod websocket;
+mod wrappers;
 
 use tokioio::TokioIo;
 use utils::{ReplaceErr, UriExt};
 use wrappers::{IncomingBody, WsStreamWrapper};
+use websocket::EpxWebSocket;
 
 use std::sync::Arc;
 
@@ -15,12 +16,8 @@ use async_compression::tokio::bufread as async_comp;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use http::{uri, HeaderName, HeaderValue, Request, Response};
-use hyper::{
-    body::Incoming,
-    client::conn::http1::Builder,
-    Uri,
-};
-use js_sys::{Array,  Object, Reflect, Uint8Array};
+use hyper::{body::Incoming, client::conn::http1::Builder, Uri};
+use js_sys::{Function, Array, Object, Reflect, Uint8Array};
 use penguin_mux_wasm::{Multiplexor, MuxStream};
 use tokio_rustls::{client::TlsStream, rustls, rustls::RootCertStore, TlsConnector};
 use tokio_util::{
@@ -163,10 +160,6 @@ impl EpoxyClient {
             redirect_limit,
         })
     }
-    #[wasm_bindgen]
-    pub fn ptr(&mut self) -> *mut EpoxyClient {
-        self as *mut Self
-    }
 
     async fn get_http_io(&self, url: &Uri) -> Result<EpxStream, JsError> {
         let url_host = url.host().replace_err("URL must have a host")?;
@@ -219,6 +212,21 @@ impl EpoxyClient {
             EpxResponse::Success(resp) => Ok((resp, uri, redirected)),
             EpxResponse::Redirect((resp, _, new_url)) => Ok((resp, new_url, redirected)),
         }
+    }
+
+    // shut up
+    #[allow(clippy::too_many_arguments)]
+    pub async fn connect_ws(
+        &self,
+        onopen: Function,
+        onclose: Function,
+        onerror: Function,
+        onmessage: Function,
+        url: String,
+        protocols: Vec<String>,
+        origin: String,
+    ) -> Result<EpxWebSocket, JsError> {
+        EpxWebSocket::connect(self, onopen, onclose, onerror, onmessage, url, protocols, origin).await
     }
 
     pub async fn fetch(&self, url: String, options: Object) -> Result<web_sys::Response, JsError> {

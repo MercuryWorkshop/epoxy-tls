@@ -12,7 +12,7 @@
 
     const tconn0 = performance.now();
     // args: websocket url, user agent, redirect limit 
-    let wstcp = await new wasm_bindgen.WsTcp("wss://localhost:4000", navigator.userAgent, 10);
+    let epoxy = await new wasm_bindgen.EpoxyClient("wss://localhost:4000", navigator.userAgent, 10);
     const tconn1 = performance.now();
     console.warn(`conn establish took ${tconn1 - tconn0} ms or ${(tconn1 - tconn0) / 1000} s`);
 
@@ -25,14 +25,14 @@
             ["https://httpbin.org/redirect/11", {}],
             ["https://httpbin.org/redirect/1", { redirect: "manual" }]
         ]) {
-            let resp = await wstcp.fetch(url[0], url[1]);
+            let resp = await epoxy.fetch(url[0], url[1]);
             console.warn(url, resp, Object.fromEntries(resp.headers));
             console.warn(await resp.text());
         }
     } else if (should_perf_test) {
         const test_mux = async (url) => {
             const t0 = performance.now();
-            await wstcp.fetch(url);
+            await epoxy.fetch(url);
             const t1 = performance.now();
             return t1 - t0;
         };
@@ -62,10 +62,18 @@
         console.warn(`avg native (10) took ${total_native} ms or ${total_native / 1000} s`);
         console.warn(`mux - native: ${total_mux - total_native} ms or ${(total_mux - total_native) / 1000} s`);
     } else if (should_ws_test) {
-        let ws = await new wasm_bindgen.WsWebSocket(() => console.log("opened"), () => console.log("closed"), msg => console.log(msg), wstcp, "ws://localhost:9000", [], "localhost");
+        let ws = await epoxy.connect_ws(
+            () => console.log("opened"),
+            () => console.log("closed"),
+            err => console.error(err),
+            msg => console.log(msg),
+            "ws://localhost:9000",
+            [],
+            "localhost"
+        );
         await ws.send("data");
     } else {
-        let resp = await wstcp.fetch("https://httpbin.org/get");
+        let resp = await epoxy.fetch("https://httpbin.org/get");
         console.warn(resp, Object.fromEntries(resp.headers));
         console.warn(await resp.text());
     }
