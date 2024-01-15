@@ -51,15 +51,9 @@ impl EpxWebSocket {
             let key = STANDARD.encode(rand);
 
 
-            let pathstr = if let Some(p) = url.path_and_query() {
-                p.to_string()
-            } else {
-                url.path().to_string()
-            };
-
             let mut builder = Request::builder()
                 .method("GET")
-                .uri(pathstr)
+                .uri(url.clone())
                 .header("Host", host)
                 .header("Origin", origin)
                 .header(UPGRADE, "websocket")

@@ -170,7 +170,7 @@ impl EpoxyClient {
             .await
             .replace_err("Failed to create multiplexor channel")?;
 
-        if *url.scheme().replace_err("URL must have a scheme")? == uri::Scheme::HTTPS {
+        if utils::get_is_secure(url)? {
             let cloned_uri = url_host.to_string().clone();
             let connector = TlsConnector::from(self.rustls_config.clone());
             let io = connector

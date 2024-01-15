@@ -130,8 +130,27 @@ pub fn is_redirect(code: u16) -> bool {
     [301, 302, 303, 307, 308].contains(&code)
 }
 
+pub fn get_is_secure(url: &Uri) -> Result<bool, JsError> {
+    let url_scheme = url.scheme().replace_err("URL must have a scheme")?;
+    let url_scheme_str = url.scheme_str().replace_err("URL must have a scheme")?;
+    // can't use match, compiler error
+    // error: to use a constant of type `Scheme` in a pattern, `Scheme` must be annotated with `#[derive(PartialEq, Eq)]`
+    if *url_scheme == uri::Scheme::HTTP {
+        Ok(false)
+    } else if *url_scheme == uri::Scheme::HTTPS {
+        Ok(true)
+    } else if url_scheme_str == "ws" {
+        Ok(false)
+    } else if url_scheme_str == "wss" {
+        Ok(true)
+    } else {
+        return Ok(false);
+    }
+}
+
 pub fn get_url_port(url: &Uri) -> Result<u16, JsError> {
     let url_scheme = url.scheme().replace_err("URL must have a scheme")?;
+    let url_scheme_str = url.scheme_str().replace_err("URL must have a scheme")?;
     if let Some(port) = url.port() {
         Ok(port.as_u16())
     } else {
@@ -140,6 +159,10 @@ pub fn get_url_port(url: &Uri) -> Result<u16, JsError> {
         if *url_scheme == uri::Scheme::HTTP {
             Ok(80)
         } else if *url_scheme == uri::Scheme::HTTPS {
+            Ok(443)
+        } else if url_scheme_str == "ws" {
+            Ok(80)
+        } else if url_scheme_str == "wss" {
             Ok(443)
         } else {
             return Err(jerr!("Failed to coerce port from scheme"));

@@ -67,11 +67,13 @@
             () => console.log("closed"),
             err => console.error(err),
             msg => console.log(msg),
-            "ws://localhost:9000",
+            "wss://echo.websocket.events",
             [],
             "localhost"
         );
-        await ws.send("data");
+        while (true) {
+            await ws.send("data");
+        }
     } else {
         let resp = await epoxy_client.fetch("https://httpbin.org/get");
         console.warn(resp, Object.fromEntries(resp.headers));
