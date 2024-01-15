@@ -26,7 +26,6 @@ pub struct EpxWebSocket {
 #[wasm_bindgen]
 impl EpxWebSocket {
     #[wasm_bindgen(constructor)]
-    /// DO NOT CALL THIS!!!!!!!!!!!!!!!!!!!
     pub fn new() -> Result<EpxWebSocket, JsError> {
         Err(jerr!("Use EpoxyClient.connect_ws() instead."))
     }
@@ -51,9 +50,16 @@ impl EpxWebSocket {
             let rand: [u8; 16] = rand::random();
             let key = STANDARD.encode(rand);
 
+
+            let pathstr = if let Some(p) = url.path_and_query() {
+                p.to_string()
+            } else {
+                url.path().to_string()
+            };
+
             let mut builder = Request::builder()
                 .method("GET")
-                .uri(url.clone())
+                .uri(pathstr)
                 .header("Host", host)
                 .header("Origin", origin)
                 .header(UPGRADE, "websocket")
@@ -69,8 +75,9 @@ impl EpxWebSocket {
 
             let stream = tcp.get_http_io(&url).await?;
 
-            let (mut sender, conn) =
-                hyper_conn::handshake::<TokioIo<EpxStream>, Empty<Bytes>>(TokioIo::new(stream))
+            let (mut sender, conn) = Builder::new()
+                .title_case_headers(true)
+                .preserve_header_case(true).handshake::<TokioIo<EpxStream>, Empty<Bytes>>(TokioIo::new(stream))
                     .await?;
 
             wasm_bindgen_futures::spawn_local(async move {
