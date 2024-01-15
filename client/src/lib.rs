@@ -3,15 +3,13 @@
 mod utils;
 mod tokioio;
 mod wrappers;
+mod websocket;
 
-use base64::{engine::general_purpose::STANDARD, Engine};
-use fastwebsockets::{Frame, OpCode, Payload, Role, WebSocket};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokioio::TokioIo;
 use utils::{ReplaceErr, UriExt};
 use wrappers::{IncomingBody, WsStreamWrapper};
 
-use std::{io::Read, ptr::null_mut, str::from_utf8, sync::Arc};
+use std::sync::Arc;
 
 use async_compression::tokio::bufread as async_comp;
 use bytes::Bytes;
@@ -19,10 +17,10 @@ use futures_util::StreamExt;
 use http::{uri, HeaderName, HeaderValue, Request, Response};
 use hyper::{
     body::Incoming,
-    client::conn::http1::{handshake, Builder},
+    client::conn::http1::Builder,
     Uri,
 };
-use js_sys::{Array, Function, Object, Reflect, Uint8Array};
+use js_sys::{Array,  Object, Reflect, Uint8Array};
 use penguin_mux_wasm::{Multiplexor, MuxStream};
 use tokio_rustls::{client::TlsStream, rustls, rustls::RootCertStore, TlsConnector};
 use tokio_util::{
@@ -47,7 +45,7 @@ enum EpxCompression {
 
 type EpxTlsStream = TlsStream<MuxStream<WsStreamWrapper>>;
 type EpxUnencryptedStream = MuxStream<WsStreamWrapper>;
-type EpxStream = Either<WsTcpTlsStream, WsTcpUnencryptedStream>;
+type EpxStream = Either<EpxTlsStream, EpxUnencryptedStream>;
 
 async fn send_req(
     req: http::Request<HttpBody>,
@@ -113,171 +111,6 @@ async fn send_req(
 #[wasm_bindgen(start)]
 async fn start() {
     utils::set_panic_hook();
-}
-
-#[wasm_bindgen]
-pub struct WsWebSocket {
-    onopen: Function,
-    onclose: Function,
-    onerror: Function,
-    onmessage: Function,
-    ws: Option<WebSocket<EpxStream>>,
-}
-
-async fn wtf(iop: *mut EpxStream) {
-    let mut t = false;
-    unsafe {
-        let io = &mut *iop;
-        let mut v = vec![];
-        loop {
-            let r = io.read_u8().await;
-
-            if let Ok(u) = r {
-                v.push(u);
-                if t && u as char == '\r' {
-                    let r = io.read_u8().await;
-                    break;
-                }
-                if u as char == '\n' {
-                    t = true;
-                } else {
-                    t = false;
-                }
-            } else {
-                break;
-            }
-        }
-        log!("{}", &from_utf8(&v).unwrap().to_string());
-    }
-}
-
-#[wasm_bindgen]
-impl WsWebSocket {
-    #[wasm_bindgen(constructor)]
-    pub fn new(
-        onopen: Function,
-        onclose: Function,
-        onmessage: Function,
-        onerror: Function,
-    ) -> Result<WsWebSocket, JsError> {
-        Ok(Self {
-            onopen,
-            onclose,
-            onerror,
-            onmessage,
-            ws: None,
-        })
-    }
-
-    #[wasm_bindgen]
-    pub async fn connect(
-        &mut self,
-        tcp: &mut EpoxyClient,
-        url: String,
-        protocols: Vec<String>,
-        origin: String,
-    ) -> Result<(), JsError> {
-        self.onopen.call0(&Object::default());
-        let uri = url.parse::<uri::Uri>().replace_err("Failed to parse URL")?;
-        let mut io = tcp.get_http_io(&uri).await?;
-
-        let r: [u8; 16] = rand::random();
-        let key = STANDARD.encode(&r);
-
-        let pathstr = if let Some(p) = uri.path_and_query() {
-            p.to_string()
-        } else {
-            uri.path().to_string()
-        };
-
-        io.write(format!("GET {} HTTP/1.1\r\n", pathstr).as_bytes())
-            .await;
-        io.write(b"Sec-WebSocket-Version: 13\r\n").await;
-        io.write(format!("Sec-WebSocket-Key: {}\r\n", key).as_bytes())
-            .await;
-        io.write(b"Connection: Upgrade\r\n").await;
-        io.write(b"Upgrade: websocket\r\n").await;
-        io.write(format!("Origin: {}\r\n", origin).as_bytes()).await;
-        io.write(format!("Host: {}\r\n", uri.host().unwrap()).as_bytes())
-            .await;
-        io.write(b"\r\n").await;
-
-        let iop: *mut EpxStream = &mut io;
-        wtf(iop).await;
-
-        let mut ws = WebSocket::after_handshake(io, fastwebsockets::Role::Client);
-        ws.set_writev(false);
-        ws.set_auto_close(true);
-        ws.set_auto_pong(true);
-
-        self.ws = Some(ws);
-
-        Ok(())
-    }
-
-    #[wasm_bindgen]
-    pub fn ptr(&mut self) -> *mut WsWebSocket {
-        self
-    }
-
-    #[wasm_bindgen]
-    pub async fn send(&mut self, payload: String) -> Result<(), JsError> {
-        let Some(ws) = self.ws.as_mut() else {
-            return Err(JsError::new("Tried to send() before handshake!"));
-        };
-        ws.write_frame(Frame::new(
-            true,
-            OpCode::Text,
-            None,
-            Payload::Owned(payload.as_bytes().to_vec()),
-        ))
-        .await
-        .unwrap();
-        // .replace_err("Failed to send WsWebSocket payload")?;
-        Ok(())
-    }
-
-    #[wasm_bindgen]
-    pub async fn recv(&mut self) -> Result<(), JsError> {
-        let Some(ws) = self.ws.as_mut() else {
-            return Err(JsError::new("Tried to recv() before handshake!"));
-        };
-        loop {
-            let Ok(frame) = ws.read_frame().await else {
-                break;
-            };
-
-            match frame.opcode {
-                OpCode::Text => {
-                    if let Ok(str) = from_utf8(&frame.payload) {
-                        self.onmessage
-                            .call1(&JsValue::null(), &jval!(str))
-                            .replace_err("missing onmessage handler")?;
-                    }
-                }
-                OpCode::Binary => {
-                    self.onmessage
-                        .call1(
-                            &JsValue::null(),
-                            &jval!(Uint8Array::from(frame.payload.to_vec().as_slice())),
-                        )
-                        .replace_err("missing onmessage handler")?;
-                }
-
-                _ => panic!("unknown opcode {:?}", frame.opcode),
-            }
-        }
-        self.onclose
-            .call0(&JsValue::null())
-            .replace_err("missing onclose handler")?;
-        Ok(())
-    }
-}
-
-#[wasm_bindgen]
-pub async fn send(pointer: *mut WsWebSocket, payload: String) -> Result<(), JsError> {
-    let tcp = unsafe { &mut *pointer };
-    tcp.send(payload).await
 }
 
 #[wasm_bindgen]
