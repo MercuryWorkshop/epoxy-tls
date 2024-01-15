@@ -1,18 +1,18 @@
 (async () => {
     console.log(
         "%cWASM is significantly slower with DevTools open!",
-        "color:red;font-size:2rem;font-weight:bold"
+        "color:red;font-size:3rem;font-weight:bold"
     );
 
     const should_feature_test = (new URL(window.location.href)).searchParams.has("feature_test");
     const should_perf_test = (new URL(window.location.href)).searchParams.has("perf_test");
     const should_ws_test = (new URL(window.location.href)).searchParams.has("ws_test");
 
-    await wasm_bindgen("./wstcp_client_bg.wasm");
+    await epoxy();
 
     const tconn0 = performance.now();
     // args: websocket url, user agent, redirect limit 
-    let epoxy = await new wasm_bindgen.EpoxyClient("wss://localhost:4000", navigator.userAgent, 10);
+    let epoxy_client = await new epoxy.EpoxyClient("wss://localhost:4000", navigator.userAgent, 10);
     const tconn1 = performance.now();
     console.warn(`conn establish took ${tconn1 - tconn0} ms or ${(tconn1 - tconn0) / 1000} s`);
 
@@ -25,14 +25,14 @@
             ["https://httpbin.org/redirect/11", {}],
             ["https://httpbin.org/redirect/1", { redirect: "manual" }]
         ]) {
-            let resp = await epoxy.fetch(url[0], url[1]);
+            let resp = await epoxy_client.fetch(url[0], url[1]);
             console.warn(url, resp, Object.fromEntries(resp.headers));
             console.warn(await resp.text());
         }
     } else if (should_perf_test) {
         const test_mux = async (url) => {
             const t0 = performance.now();
-            await epoxy.fetch(url);
+            await epoxy_client.fetch(url);
             const t1 = performance.now();
             return t1 - t0;
         };
@@ -62,7 +62,7 @@
         console.warn(`avg native (10) took ${total_native} ms or ${total_native / 1000} s`);
         console.warn(`mux - native: ${total_mux - total_native} ms or ${(total_mux - total_native) / 1000} s`);
     } else if (should_ws_test) {
-        let ws = await epoxy.connect_ws(
+        let ws = await epoxy_client.connect_ws(
             () => console.log("opened"),
             () => console.log("closed"),
             err => console.error(err),
@@ -73,7 +73,7 @@
         );
         await ws.send("data");
     } else {
-        let resp = await epoxy.fetch("https://httpbin.org/get");
+        let resp = await epoxy_client.fetch("https://httpbin.org/get");
         console.warn(resp, Object.fromEntries(resp.headers));
         console.warn(await resp.text());
     }

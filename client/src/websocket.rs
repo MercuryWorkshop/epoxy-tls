@@ -30,7 +30,6 @@ impl EpxWebSocket {
         Err(jerr!("Use EpoxyClient.connect_ws() instead."))
     }
 
-
     // shut up
     #[allow(clippy::too_many_arguments)]
     pub async fn connect(
@@ -75,7 +74,7 @@ impl EpxWebSocket {
 
             wasm_bindgen_futures::spawn_local(async move {
                 if let Err(e) = conn.with_upgrades().await {
-                    error!("wstcp: error in muxed hyper connection (ws)! {:?}", e);
+                    error!("epoxy: error in muxed hyper connection (ws)! {:?}", e);
                 }
             });
 
@@ -176,7 +175,7 @@ impl EpxWebSocket {
 // https://github.com/snapview/tungstenite-rs/blob/314feea3055a93e585882fb769854a912a7e6dae/src/handshake/client.rs#L189
 fn verify(response: &Response<Incoming>) -> Result<(), JsError> {
     if response.status() != StatusCode::SWITCHING_PROTOCOLS {
-        return Err(jerr!("wstcpws connect: Invalid status code"));
+        return Err(jerr!("epoxy ws connect: Invalid status code"));
     }
 
     let headers = response.headers();
@@ -187,7 +186,7 @@ fn verify(response: &Response<Incoming>) -> Result<(), JsError> {
         .map(|h| h.eq_ignore_ascii_case("websocket"))
         .unwrap_or(false)
     {
-        return Err(jerr!("wstcpws connect: Invalid upgrade header"));
+        return Err(jerr!("epoxy ws connect: Invalid upgrade header"));
     }
 
     if !headers
@@ -196,7 +195,7 @@ fn verify(response: &Response<Incoming>) -> Result<(), JsError> {
         .map(|h| h.eq_ignore_ascii_case("Upgrade"))
         .unwrap_or(false)
     {
-        return Err(jerr!("wstcpws connect: Invalid upgrade header"));
+        return Err(jerr!("epoxy ws connect: Invalid upgrade header"));
     }
 
     Ok(())

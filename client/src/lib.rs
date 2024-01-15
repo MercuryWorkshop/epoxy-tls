@@ -58,7 +58,7 @@ async fn send_req(
 
     wasm_bindgen_futures::spawn_local(async move {
         if let Err(e) = conn.await {
-            error!("wstcp: error in muxed hyper connection! {:?}", e);
+            error!("epoxy: error in muxed hyper connection! {:?}", e);
         }
     });
 
