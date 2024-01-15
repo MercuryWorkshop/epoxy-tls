@@ -35,25 +35,25 @@ use web_sys::TextEncoder;
 type HttpBody = http_body_util::Full<Bytes>;
 
 #[derive(Debug)]
-enum WsTcpResponse {
+enum EpxResponse {
     Success(Response<Incoming>),
     Redirect((Response<Incoming>, http::Request<HttpBody>, Uri)),
 }
 
-enum WsTcpCompression {
+enum EpxCompression {
     Brotli,
     Gzip,
 }
 
-type WsTcpTlsStream = TlsStream<MuxStream<WsStreamWrapper>>;
-type WsTcpUnencryptedStream = MuxStream<WsStreamWrapper>;
-type WsTcpStream = Either<WsTcpTlsStream, WsTcpUnencryptedStream>;
+type EpxTlsStream = TlsStream<MuxStream<WsStreamWrapper>>;
+type EpxUnencryptedStream = MuxStream<WsStreamWrapper>;
+type EpxStream = Either<WsTcpTlsStream, WsTcpUnencryptedStream>;
 
 async fn send_req(
     req: http::Request<HttpBody>,
     should_redirect: bool,
-    io: WsTcpStream,
-) -> Result<WsTcpResponse, JsError> {
+    io: EpxStream,
+) -> Result<EpxResponse, JsError> {
     let (mut req_sender, conn) = Builder::new()
         .title_case_headers(true)
         .preserve_header_case(true)
@@ -101,9 +101,9 @@ async fn send_req(
                     "Host",
                     HeaderValue::from_str(redirect_url_authority.as_str())?,
                 );
-                Ok(WsTcpResponse::Redirect((res, new_req, new_url)))
+                Ok(EpxResponse::Redirect((res, new_req, new_url)))
             } else {
-                Ok(WsTcpResponse::Success(res))
+                Ok(EpxResponse::Success(res))
             }
         }
         Err(err) => Err(err),
@@ -121,10 +121,10 @@ pub struct WsWebSocket {
     onclose: Function,
     onerror: Function,
     onmessage: Function,
-    ws: Option<WebSocket<WsTcpStream>>,
+    ws: Option<WebSocket<EpxStream>>,
 }
 
-async fn wtf(iop: *mut WsTcpStream) {
+async fn wtf(iop: *mut EpxStream) {
     let mut t = false;
     unsafe {
         let io = &mut *iop;
@@ -172,7 +172,7 @@ impl WsWebSocket {
     #[wasm_bindgen]
     pub async fn connect(
         &mut self,
-        tcp: &mut WsTcp,
+        tcp: &mut EpoxyClient,
         url: String,
         protocols: Vec<String>,
         origin: String,
@@ -202,7 +202,7 @@ impl WsWebSocket {
             .await;
         io.write(b"\r\n").await;
 
-        let iop: *mut WsTcpStream = &mut io;
+        let iop: *mut EpxStream = &mut io;
         wtf(iop).await;
 
         let mut ws = WebSocket::after_handshake(io, fastwebsockets::Role::Client);
@@ -281,7 +281,7 @@ pub async fn send(pointer: *mut WsWebSocket, payload: String) -> Result<(), JsEr
 }
 
 #[wasm_bindgen]
-pub struct WsTcp {
+pub struct EpoxyClient {
     rustls_config: Arc<rustls::ClientConfig>,
     mux: Multiplexor<WsStreamWrapper>,
     useragent: String,
@@ -289,13 +289,13 @@ pub struct WsTcp {
 }
 
 #[wasm_bindgen]
-impl WsTcp {
+impl EpoxyClient {
     #[wasm_bindgen(constructor)]
     pub async fn new(
         ws_url: String,
         useragent: String,
         redirect_limit: usize,
-    ) -> Result<WsTcp, JsError> {
+    ) -> Result<EpoxyClient, JsError> {
         let ws_uri = ws_url
             .parse::<uri::Uri>()
             .replace_err("Failed to parse websocket url")?;
@@ -323,7 +323,7 @@ impl WsTcp {
                 .with_no_client_auth(),
         );
 
-        Ok(WsTcp {
+        Ok(EpoxyClient {
             mux,
             rustls_config,
             useragent,
@@ -331,11 +331,11 @@ impl WsTcp {
         })
     }
     #[wasm_bindgen]
-    pub fn ptr(&mut self) -> *mut WsTcp {
+    pub fn ptr(&mut self) -> *mut EpoxyClient {
         self as *mut Self
     }
 
-    async fn get_http_io(&self, url: &Uri) -> Result<WsTcpStream, JsError> {
+    async fn get_http_io(&self, url: &Uri) -> Result<EpxStream, JsError> {
         let url_host = url.host().replace_err("URL must have a host")?;
         let url_port = utils::get_url_port(url)?;
         let channel = self
@@ -356,9 +356,9 @@ impl WsTcp {
                 )
                 .await
                 .replace_err("Failed to perform TLS handshake")?;
-            Ok(WsTcpStream::Left(io))
+            Ok(EpxStream::Left(io))
         } else {
-            Ok(WsTcpStream::Right(channel))
+            Ok(EpxStream::Right(channel))
         }
     }
 
@@ -369,12 +369,12 @@ impl WsTcp {
     ) -> Result<(hyper::Response<Incoming>, Uri, bool), JsError> {
         let mut redirected = false;
         let uri = req.uri().clone();
-        let mut current_resp: WsTcpResponse =
+        let mut current_resp: EpxResponse =
             send_req(req, should_redirect, self.get_http_io(&uri).await?).await?;
         for _ in 0..self.redirect_limit - 1 {
             match current_resp {
-                WsTcpResponse::Success(_) => break,
-                WsTcpResponse::Redirect((_, req, new_url)) => {
+                EpxResponse::Success(_) => break,
+                EpxResponse::Redirect((_, req, new_url)) => {
                     redirected = true;
                     current_resp =
                         send_req(req, should_redirect, self.get_http_io(&new_url).await?).await?
@@ -383,8 +383,8 @@ impl WsTcp {
         }
 
         match current_resp {
-            WsTcpResponse::Success(resp) => Ok((resp, uri, redirected)),
-            WsTcpResponse::Redirect((resp, _, new_url)) => Ok((resp, new_url, redirected)),
+            EpxResponse::Success(resp) => Ok((resp, uri, redirected)),
+            EpxResponse::Redirect((resp, _, new_url)) => Ok((resp, new_url, redirected)),
         }
     }
 
@@ -500,18 +500,18 @@ impl WsTcp {
             .and_then(|val| val.to_str().ok())
             .unwrap_or_default()
         {
-            "gzip" => Some(WsTcpCompression::Gzip),
-            "br" => Some(WsTcpCompression::Brotli),
+            "gzip" => Some(EpxCompression::Gzip),
+            "br" => Some(EpxCompression::Brotli),
             _ => None,
         };
 
         let incoming_body = IncomingBody::new(resp.into_body());
         let decompressed_body = match compression {
             Some(alg) => match alg {
-                WsTcpCompression::Gzip => Either::Left(Either::Left(ReaderStream::new(
+                EpxCompression::Gzip => Either::Left(Either::Left(ReaderStream::new(
                     async_comp::GzipDecoder::new(StreamReader::new(incoming_body)),
                 ))),
-                WsTcpCompression::Brotli => Either::Left(Either::Right(ReaderStream::new(
+                EpxCompression::Brotli => Either::Left(Either::Right(ReaderStream::new(
                     async_comp::BrotliDecoder::new(StreamReader::new(incoming_body)),
                 ))),
             },
