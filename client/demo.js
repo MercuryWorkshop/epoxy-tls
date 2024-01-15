@@ -8,11 +8,11 @@
     const should_perf_test = (new URL(window.location.href)).searchParams.has("perf_test");
     const should_ws_test = (new URL(window.location.href)).searchParams.has("ws_test");
 
-    await epoxy();
+    let { EpoxyClient } = await epoxy();
 
     const tconn0 = performance.now();
     // args: websocket url, user agent, redirect limit 
-    let epoxy_client = await new epoxy.EpoxyClient("wss://localhost:4000", navigator.userAgent, 10);
+    let epoxy_client = await new EpoxyClient("wss://localhost:4000", navigator.userAgent, 10);
     const tconn1 = performance.now();
     console.warn(`conn establish took ${tconn1 - tconn0} ms or ${(tconn1 - tconn0) / 1000} s`);
 

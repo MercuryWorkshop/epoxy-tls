@@ -3,3 +3,7 @@ server/src/*.pem
 client/pkg
 client/out
 .direnv
+client/index.js
+client/module.js
+client/module.d.ts
+pnpm-lock.yaml

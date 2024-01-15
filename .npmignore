@@ -1,0 +1,14 @@
+/target
+server/
+out/
+client/src
+client/pkg
+client/out
+client/demo.js
+client/index.html
+client/build.sh
+client/Cargo.toml
+.direnv
+Cargo.toml
+Cargo.lock
+pnpm-lock.yaml

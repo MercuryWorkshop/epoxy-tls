@@ -26,6 +26,7 @@ pub struct EpxWebSocket {
 #[wasm_bindgen]
 impl EpxWebSocket {
     #[wasm_bindgen(constructor)]
+    /// DO NOT CALL THIS!!!!!!!!!!!!!!!!!!!
     pub fn new() -> Result<EpxWebSocket, JsError> {
         Err(jerr!("Use EpoxyClient.connect_ws() instead."))
     }
@@ -156,7 +157,8 @@ impl EpxWebSocket {
             let (tx, rx) = oneshot::channel();
             self.msg_sender.send(EpxMsg::SendText(payload, tx)).await?;
             Ok(rx.await??)
-        }.await;
+        }
+        .await;
         if let Err(ret) = ret {
             let _ = onerr.call1(&JsValue::null(), &jval!(ret.clone()));
             Err(ret)
