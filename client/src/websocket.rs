@@ -1,25 +1,22 @@
 use crate::*;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use fastwebsockets::{CloseCode, Frame, OpCode, Payload, Role, WebSocket, WebSocketError};
+use fastwebsockets::{
+    CloseCode, FragmentCollectorRead, Frame, OpCode, Payload, Role, WebSocket, WebSocketWrite,
+};
 use http_body_util::Empty;
 use hyper::{
-    client::conn::http1 as hyper_conn,
     header::{CONNECTION, UPGRADE},
+    upgrade::Upgraded,
     StatusCode,
 };
 use js_sys::Function;
 use std::str::from_utf8;
-use tokio::sync::{mpsc, oneshot};
-
-enum EpxMsg {
-    SendText(String, oneshot::Sender<Result<(), WebSocketError>>),
-    Close,
-}
+use tokio::io::WriteHalf;
 
 #[wasm_bindgen]
 pub struct EpxWebSocket {
-    msg_sender: mpsc::Sender<EpxMsg>,
+    tx: WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>,
     onerror: Function,
 }
 
@@ -43,13 +40,12 @@ impl EpxWebSocket {
         origin: String,
     ) -> Result<EpxWebSocket, JsError> {
         let onerr = onerror.clone();
-        let ret: Result<EpxWebSocket, JsError>  = async move {
+        let ret: Result<EpxWebSocket, JsError> = async move {
             let url = Uri::try_from(url).replace_err("Failed to parse URL")?;
             let host = url.host().replace_err("URL must have a host")?;
 
             let rand: [u8; 16] = rand::random();
             let key = STANDARD.encode(rand);
-
 
             let mut builder = Request::builder()
                 .method("GET")
@@ -71,8 +67,9 @@ impl EpxWebSocket {
 
             let (mut sender, conn) = Builder::new()
                 .title_case_headers(true)
-                .preserve_header_case(true).handshake::<TokioIo<EpxStream>, Empty<Bytes>>(TokioIo::new(stream))
-                    .await?;
+                .preserve_header_case(true)
+                .handshake::<TokioIo<EpxStream>, Empty<Bytes>>(TokioIo::new(stream))
+                .await?;
 
             wasm_bindgen_futures::spawn_local(async move {
                 if let Err(e) = conn.with_upgrades().await {
@@ -83,81 +80,52 @@ impl EpxWebSocket {
             let mut response = sender.send_request(req).await?;
             verify(&response)?;
 
-            let mut ws = WebSocket::after_handshake(
+            let ws = WebSocket::after_handshake(
                 TokioIo::new(hyper::upgrade::on(&mut response).await?),
                 Role::Client,
             );
 
-            let (msg_sender, mut rx) = mpsc::channel(1);
+            let (rx, tx) = ws.split(tokio::io::split);
+
+            let mut rx = FragmentCollectorRead::new(rx);
 
             wasm_bindgen_futures::spawn_local(async move {
-                loop {
-                    tokio::select! {
-                        frame = ws.read_frame() => {
-                            if let Ok(frame) = frame {
-                                match frame.opcode {
-                                    OpCode::Text => {
-                                        if let Ok(str) = from_utf8(&frame.payload) {
-                                            let _ = onmessage.call1(&JsValue::null(), &jval!(str));
-                                        }
-                                    }
-                                    OpCode::Binary => {
-                                        let _ = onmessage.call1(
-                                            &JsValue::null(),
-                                            &jval!(Uint8Array::from(frame.payload.to_vec().as_slice())),
-                                        );
-                                    }
-                                    OpCode::Close => {
-                                        let _ = onclose.call0(&JsValue::null());
-                                        break;
-                                    }
-                                    _ => panic!("unknown opcode {:?}", frame.opcode),
-                                }
+                while let Ok(frame) = rx
+                    .read_frame(&mut |arg| async move {
+                        error!(
+                            "wtf is an obligated write {:?}, {:?}, {:?}",
+                            arg.fin, arg.opcode, arg.payload
+                        );
+                        Ok::<(), std::io::Error>(())
+                    })
+                    .await
+                {
+                    match frame.opcode {
+                        OpCode::Text => {
+                            if let Ok(str) = from_utf8(&frame.payload) {
+                                let _ = onmessage.call1(&JsValue::null(), &jval!(str));
                             }
                         }
-                        msg = rx.recv() => {
-                            if let Some(msg) = msg {
-                                match msg {
-                                    EpxMsg::SendText(payload, err) => {
-                                        let _ = err.send(ws.write_frame(Frame::text(
-                                            Payload::Owned(payload.as_bytes().to_vec()),
-                                        ))
-                                        .await);
-                                    }
-                                    EpxMsg::Close => break,
-                                }
-                            } else {
-                                break;
-                            }
+                        OpCode::Binary => {
+                            let _ = onmessage.call1(
+                                &JsValue::null(),
+                                &jval!(Uint8Array::from(frame.payload.to_vec().as_slice())),
+                            );
                         }
+                        OpCode::Close => {
+                            let _ = onclose.call0(&JsValue::null());
+                            break;
+                        }
+                        _ => panic!("unknown opcode {:?}", frame.opcode),
                     }
                 }
-                let _ = ws
-                    .write_frame(Frame::close(CloseCode::Normal.into(), b""))
-                    .await;
             });
 
             onopen
                 .call0(&Object::default())
                 .replace_err("Failed to call onopen")?;
 
-            Ok(Self { msg_sender, onerror })
-        }.await;
-        if let Err(ret) = ret {
-            let _ = onerr.call1(&JsValue::null(), &jval!(ret.clone()));
-            Err(ret)
-        } else {
-            ret
-        }
-    }
-
-    #[wasm_bindgen]
-    pub async fn send(&mut self, payload: String) -> Result<(), JsError> {
-        let onerr = self.onerror.clone();
-        let ret: Result<(), JsError> = async move {
-            let (tx, rx) = oneshot::channel();
-            self.msg_sender.send(EpxMsg::SendText(payload, tx)).await?;
-            Ok(rx.await??)
+            Ok(Self { tx, onerror })
         }
         .await;
         if let Err(ret) = ret {
@@ -169,8 +137,25 @@ impl EpxWebSocket {
     }
 
     #[wasm_bindgen]
+    pub async fn send(&mut self, payload: String) -> Result<(), JsError> {
+        let onerr = self.onerror.clone();
+        let ret = self
+            .tx
+            .write_frame(Frame::text(Payload::Owned(payload.as_bytes().to_vec())))
+            .await;
+        if let Err(ret) = ret {
+            let _ = onerr.call1(&JsValue::null(), &jval!(format!("{}", ret)));
+            Err(ret.into())
+        } else {
+            Ok(ret?)
+        }
+    }
+
+    #[wasm_bindgen]
     pub async fn close(&mut self) -> Result<(), JsError> {
-        self.msg_sender.send(EpxMsg::Close).await?;
+        self.tx
+            .write_frame(Frame::close(CloseCode::Normal.into(), b""))
+            .await?;
         Ok(())
     }
 }

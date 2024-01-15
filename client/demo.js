@@ -73,6 +73,7 @@
         );
         while (true) {
             await ws.send("data");
+            await (new Promise((res, _) => setTimeout(res, 100)));
         }
     } else {
         let resp = await epoxy_client.fetch("https://httpbin.org/get");
