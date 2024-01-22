@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["server", "client"]
+members = ["server", "client", "wisp"]
 
 [patch.crates-io]
 rustls-pki-types = { git = "https://github.com/r58Playz/rustls-pki-types" }
