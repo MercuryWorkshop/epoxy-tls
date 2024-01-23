@@ -4,9 +4,9 @@ use bytes::{Buf, BufMut, Bytes};
 
 #[derive(Debug)]
 pub struct ConnectPacket {
-    stream_type: u8,
-    destination_port: u16,
-    destination_hostname: String,
+    pub stream_type: u8,
+    pub destination_port: u16,
+    pub destination_hostname: String,
 }
 
 impl ConnectPacket {

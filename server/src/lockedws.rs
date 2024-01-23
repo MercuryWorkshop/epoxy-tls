@@ -6,6 +6,7 @@ use tokio::sync::Mutex;
 
 type Ws = FragmentCollector<TokioIo<Upgraded>>;
 
+#[derive(Clone)]
 pub struct LockedWebSocket(Arc<Mutex<Ws>>);
 
 impl LockedWebSocket {

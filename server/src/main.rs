@@ -12,8 +12,10 @@ use hyper::{
     Response, StatusCode,
 };
 use hyper_util::rt::TokioIo;
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::mpsc,
+};
 use tokio_native_tls::{native_tls, TlsAcceptor};
 use tokio_util::codec::{BytesCodec, Framed};
 
@@ -120,35 +122,120 @@ async fn accept_ws(
     fut: upgrade::UpgradeFut,
     addr: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let ws_stream = lockedws::LockedWebSocket::new(FragmentCollector::new(fut.await?));
+    let ws_stream = FragmentCollector::new(fut.await?);
+    let ws_stream = lockedws::LockedWebSocket::new(ws_stream);
 
     let stream_map = Arc::new(dashmap::DashMap::<u32, mpsc::UnboundedSender<WsEvent>>::new());
 
     println!("{:?}: connected", addr);
 
-    while let Ok(mut frame) = ws_stream.read_frame().await {
-        use fastwebsockets::OpCode::*;
-        let frame = match frame.opcode {
-            Continuation => unreachable!(),
-            Text => ws::Frame::text(Bytes::copy_from_slice(frame.payload.to_mut())),
-            Binary => ws::Frame::binary(Bytes::copy_from_slice(frame.payload.to_mut())),
-            Close => ws::Frame::close(Bytes::copy_from_slice(frame.payload.to_mut())),
-            Ping => continue,
-            Pong => continue,
-        };
-        if let Ok(packet) = Packet::try_from(frame) {
+    ws_stream
+        .write_frame(ws::Frame::from(Packet::new_continue(0, u32::MAX)).into())
+        .await?;
+
+    while let Ok(frame) = ws_stream.read_frame().await {
+        if let Ok(packet) = Packet::try_from(ws::Frame::try_from(frame)?) {
             use PacketType::*;
             match packet.packet {
                 Connect(inner_packet) => {
-                    let (ch_tx, ch_rx) = mpsc::unbounded_channel::<WsEvent>();
+                    let (ch_tx, mut ch_rx) = mpsc::unbounded_channel::<WsEvent>();
                     stream_map.clone().insert(packet.stream_id, ch_tx);
+                    let ws_stream_cloned = ws_stream.clone();
                     tokio::spawn(async move {
-                        
+                        let tcp_stream = match TcpStream::connect(format!(
+                            "{}:{}",
+                            inner_packet.destination_hostname, inner_packet.destination_port
+                        ))
+                        .await
+                        {
+                            Ok(stream) => stream,
+                            Err(err) => {
+                                ws_stream_cloned
+                                    .write_frame(
+                                        ws::Frame::from(Packet::new_close(packet.stream_id, 0x03))
+                                            .into(),
+                                    )
+                                    .await
+                                    .map_err(std::io::Error::other)?;
+                                return Err(Box::new(err));
+                            }
+                        };
+                        println!("muxing");
+                        let mut tcp_stream = Framed::new(tcp_stream, BytesCodec::new());
+                        loop {
+                            tokio::select! {
+                                event = tcp_stream.next() => {
+                                    println!("recvd");
+                                    if let Some(res) = event {
+                                        match res {
+                                            Ok(buf) => {
+                                                ws_stream_cloned.write_frame(
+                                                    ws::Frame::from(
+                                                        Packet::new_data(
+                                                            packet.stream_id,
+                                                            buf.to_vec()
+                                                        )
+                                                    ).into()
+                                                ).await.map_err(std::io::Error::other)?;
+                                            }
+                                            Err(err) => {
+                                                ws_stream_cloned
+                                                    .write_frame(
+                                                        ws::Frame::from(Packet::new_close(
+                                                            packet.stream_id,
+                                                            0x03,
+                                                        ))
+                                                        .into(),
+                                                    )
+                                                    .await
+                                                    .map_err(std::io::Error::other)?;
+                                                return Err(Box::new(err));
+                                            }
+                                        }
+                                    }
+                                }
+                                event = ch_rx.recv() => {
+                                    if let Some(event) = event {
+                                        match event {
+                                            WsEvent::Send(buf) => {
+                                                tcp_stream.send(buf).await?;
+                                                println!("sending");
+                                                ws_stream_cloned
+                                                    .write_frame(
+                                                        ws::Frame::from(
+                                                            Packet::new_continue(
+                                                                packet.stream_id,
+                                                                u32::MAX
+                                                            )
+                                                        ).into()
+                                                    ).await.map_err(std::io::Error::other)?;
+                                                println!("sent");
+                                            }
+                                            WsEvent::Close => {
+                                                break;
+                                            }
+                                        }
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            };
+                        }
+                        Ok(())
                     });
                 }
-                Data(inner_packet) => {}
+                Data(inner_packet) => {
+                    println!("recieved data for {:?}", packet.stream_id);
+                    if let Some(stream) = stream_map.clone().get(&packet.stream_id) {
+                        let _ = stream.send(WsEvent::Send(inner_packet.into()));
+                    }
+                }
                 Continue(_) => unreachable!(),
-                Close(inner_packet) => {}
+                Close(_) => {
+                    if let Some(stream) = stream_map.clone().get(&packet.stream_id) {
+                        let _ = stream.send(WsEvent::Close);
+                    }
+                }
             }
         }
     }

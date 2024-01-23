@@ -1530,6 +1530,7 @@ name = "wisp-mux"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "fastwebsockets",
  "futures",
  "futures-util",
 ]
