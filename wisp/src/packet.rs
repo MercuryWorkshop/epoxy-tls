@@ -139,8 +139,8 @@ impl From<PacketType> for Vec<u8> {
 
 #[derive(Debug)]
 pub struct Packet {
-    stream_id: u32,
-    packet: PacketType,
+    pub stream_id: u32,
+    pub packet: PacketType,
 }
 
 impl Packet {

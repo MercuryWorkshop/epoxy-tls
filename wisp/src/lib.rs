@@ -1,5 +1,5 @@
 mod packet;
-mod ws;
+pub mod ws;
 
 pub use crate::packet::*;
 

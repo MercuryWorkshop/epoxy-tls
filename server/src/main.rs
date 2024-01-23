@@ -1,4 +1,6 @@
-use std::io::Error;
+mod lockedws;
+
+use std::{io::Error, sync::Arc};
 
 use bytes::Bytes;
 use fastwebsockets::{
@@ -11,8 +13,11 @@ use hyper::{
 };
 use hyper_util::rt::TokioIo;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc;
 use tokio_native_tls::{native_tls, TlsAcceptor};
 use tokio_util::codec::{BytesCodec, Framed};
+
+use wisp_mux::{ws, Packet, PacketType};
 
 type HttpBody = http_body_util::Empty<hyper::body::Bytes>;
 
@@ -47,7 +52,8 @@ async fn main() -> Result<(), Error> {
         tokio::spawn(async move {
             let stream = acceptor_cloned.accept(stream).await.expect("not tls");
             let io = TokioIo::new(stream);
-            let service = service_fn(move |res| accept_http(res, addr.to_string(), prefix_cloned.clone()));
+            let service =
+                service_fn(move |res| accept_http(res, addr.to_string(), prefix_cloned.clone()));
             let conn = http1::Builder::new()
                 .serve_connection(io, service)
                 .with_upgrades();
@@ -72,10 +78,13 @@ async fn accept_http(
         tokio::spawn(async move {
             if *uri.path() != prefix {
                 if let Err(e) =
-                    accept_wsproxy(fut, uri.path().to_string(), addr.clone(), prefix).await
+                    accept_wsproxy(fut, uri.path().strip_prefix(&prefix).unwrap(), addr.clone())
+                        .await
                 {
                     println!("{:?}: error in ws handling: {:?}", addr, e);
                 }
+            } else if let Err(e) = accept_ws(fut, addr.clone()).await {
+                println!("{:?}: error in ws handling: {:?}", addr, e);
             }
         });
 
@@ -102,18 +111,60 @@ async fn accept_http(
     }
 }
 
+enum WsEvent {
+    Send(Bytes),
+    Close,
+}
+
+async fn accept_ws(
+    fut: upgrade::UpgradeFut,
+    addr: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ws_stream = lockedws::LockedWebSocket::new(FragmentCollector::new(fut.await?));
+
+    let stream_map = Arc::new(dashmap::DashMap::<u32, mpsc::UnboundedSender<WsEvent>>::new());
+
+    println!("{:?}: connected", addr);
+
+    while let Ok(mut frame) = ws_stream.read_frame().await {
+        use fastwebsockets::OpCode::*;
+        let frame = match frame.opcode {
+            Continuation => unreachable!(),
+            Text => ws::Frame::text(Bytes::copy_from_slice(frame.payload.to_mut())),
+            Binary => ws::Frame::binary(Bytes::copy_from_slice(frame.payload.to_mut())),
+            Close => ws::Frame::close(Bytes::copy_from_slice(frame.payload.to_mut())),
+            Ping => continue,
+            Pong => continue,
+        };
+        if let Ok(packet) = Packet::try_from(frame) {
+            use PacketType::*;
+            match packet.packet {
+                Connect(inner_packet) => {
+                    let (ch_tx, ch_rx) = mpsc::unbounded_channel::<WsEvent>();
+                    stream_map.clone().insert(packet.stream_id, ch_tx);
+                    tokio::spawn(async move {
+                        
+                    });
+                }
+                Data(inner_packet) => {}
+                Continue(_) => unreachable!(),
+                Close(inner_packet) => {}
+            }
+        }
+    }
+
+    println!("{:?}: disconnected", addr);
+    Ok(())
+}
+
 async fn accept_wsproxy(
     fut: upgrade::UpgradeFut,
-    incoming_uri: String,
+    incoming_uri: &str,
     addr: String,
-    prefix: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut ws_stream = FragmentCollector::new(fut.await?);
 
-    // should always have prefix
-    let incoming_uri = incoming_uri.strip_prefix(&prefix).unwrap();
-
-    println!("{:?}: connected", addr);
+    println!("{:?}: connected (wsproxy)", addr);
 
     let tcp_stream = match TcpStream::connect(incoming_uri).await {
         Ok(stream) => stream,
@@ -132,56 +183,33 @@ async fn accept_wsproxy(
             event = ws_stream.read_frame() => {
                 match event {
                     Ok(frame) => {
-                        print!("{:?}: event ws - ", addr);
                         match frame.opcode {
                             OpCode::Text | OpCode::Binary => {
-                                if tcp_stream_framed.send(Bytes::from(frame.payload.to_vec())).await.is_ok() {
-                                    println!("sent success");
-                                } else {
-                                    println!("sent FAILED");
-                                }
+                                let _ = tcp_stream_framed.send(Bytes::from(frame.payload.to_vec())).await;
                             }
                             OpCode::Close => {
-                                if <Framed<tokio::net::TcpStream, BytesCodec> as SinkExt<Bytes>>::close(&mut tcp_stream_framed).await.is_ok() {
-                                    println!("closed success");
-                                } else {
-                                    println!("closed FAILED");
-                                }
+                                // tokio closes the stream for us
+                                drop(tcp_stream_framed);
                                 break;
                             }
-                            _ => {
-                                println!("ignored");
-                            }
+                            _ => {}
                         }
                     },
-                    Err(err) => {
-                        print!("{:?}: err in ws: {:?} - ", addr, err);
-                        if <Framed<tokio::net::TcpStream, BytesCodec> as SinkExt<Bytes>>::close(&mut tcp_stream_framed).await.is_ok() {
-                            println!("closed tcp success");
-                        } else {
-                            println!("closed tcp FAILED");
-                        }
+                    Err(_) => {
+                        // tokio closes the stream for us
+                        drop(tcp_stream_framed);
                         break;
                     }
                 }
             },
             event = tcp_stream_framed.next() => {
                 if let Some(res) = event {
-                    print!("{:?}: event tcp - ", addr);
                     match res {
                         Ok(buf) => {
-                            if ws_stream.write_frame(Frame::binary(Payload::Owned(buf.to_vec()))).await.is_ok() {
-                                println!("sent success");
-                            } else {
-                                println!("sent FAILED");
-                            }
+                            let _ = ws_stream.write_frame(Frame::binary(Payload::Borrowed(&buf))).await;
                         }
                         Err(_) => {
-                            if ws_stream.write_frame(Frame::close(CloseCode::Away.into(), b"tcp side is going away")).await.is_ok() {
-                                println!("closed success");
-                            } else {
-                                println!("closed FAILED");
-                            }
+                            let _ = ws_stream.write_frame(Frame::close(CloseCode::Away.into(), b"tcp side is going away")).await;
                         }
                     }
                 }
@@ -189,8 +217,7 @@ async fn accept_wsproxy(
         }
     }
 
-    println!("\"{}\": connection closed", addr);
+    println!("{:?}: disconnected (wsproxy)", addr);
 
     Ok(())
 }
-
