@@ -1,21 +1,17 @@
-use fastwebsockets::{FragmentCollector, Frame, WebSocketError};
+use fastwebsockets::{WebSocketWrite, Frame, WebSocketError};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::{io::WriteHalf, sync::Mutex};
 
-type Ws = FragmentCollector<TokioIo<Upgraded>>;
+type Ws = WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>;
 
 #[derive(Clone)]
-pub struct LockedWebSocket(Arc<Mutex<Ws>>);
+pub struct LockedWebSocketWrite(Arc<Mutex<Ws>>);
 
-impl LockedWebSocket {
+impl LockedWebSocketWrite {
     pub fn new(ws: Ws) -> Self {
         Self(Arc::new(Mutex::new(ws)))
-    }
-
-    pub async fn read_frame(&self) -> Result<Frame, WebSocketError> {
-        self.0.lock().await.read_frame().await
     }
 
     pub async fn write_frame(&self, frame: Frame<'_>) -> Result<(), WebSocketError> {
