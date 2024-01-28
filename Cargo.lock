@@ -1530,9 +1530,11 @@ name = "wisp-mux"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "dashmap",
  "fastwebsockets",
  "futures",
  "futures-util",
+ "tokio",
 ]
 
 [[package]]

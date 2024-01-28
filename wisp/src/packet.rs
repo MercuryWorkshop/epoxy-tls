@@ -3,14 +3,32 @@ use crate::WispError;
 use bytes::{Buf, BufMut, Bytes};
 
 #[derive(Debug)]
+pub enum StreamType {
+    Tcp = 0x01,
+    Udp = 0x02,
+}
+
+impl TryFrom<u8> for StreamType {
+    type Error = WispError;
+    fn try_from(stream_type: u8) -> Result<Self, Self::Error> {
+        use StreamType::*;
+        match stream_type {
+            0x01 => Ok(Tcp),
+            0x02 => Ok(Udp),
+            _ => Err(Self::Error::InvalidStreamType),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct ConnectPacket {
-    pub stream_type: u8,
+    pub stream_type: StreamType,
     pub destination_port: u16,
     pub destination_hostname: String,
 }
 
 impl ConnectPacket {
-    pub fn new(stream_type: u8, destination_port: u16, destination_hostname: String) -> Self {
+    pub fn new(stream_type: StreamType, destination_port: u16, destination_hostname: String) -> Self {
         Self {
             stream_type,
             destination_port,
@@ -26,7 +44,7 @@ impl TryFrom<Bytes> for ConnectPacket {
             return Err(Self::Error::PacketTooSmall);
         }
         Ok(Self {
-            stream_type: bytes.get_u8(),
+            stream_type: bytes.get_u8().try_into()?,
             destination_port: bytes.get_u16_le(),
             destination_hostname: std::str::from_utf8(&bytes)?.to_string(),
         })
@@ -36,7 +54,7 @@ impl TryFrom<Bytes> for ConnectPacket {
 impl From<ConnectPacket> for Vec<u8> {
     fn from(packet: ConnectPacket) -> Self {
         let mut encoded = Self::with_capacity(1 + 2 + packet.destination_hostname.len());
-        encoded.put_u8(packet.stream_type);
+        encoded.put_u8(packet.stream_type as u8);
         encoded.put_u16_le(packet.destination_port);
         encoded.extend(packet.destination_hostname.bytes());
         encoded
@@ -108,7 +126,7 @@ impl From<ClosePacket> for Vec<u8> {
 #[derive(Debug)]
 pub enum PacketType {
     Connect(ConnectPacket),
-    Data(Vec<u8>),
+    Data(Bytes),
     Continue(ContinuePacket),
     Close(ClosePacket),
 }
@@ -130,7 +148,7 @@ impl From<PacketType> for Vec<u8> {
         use PacketType::*;
         match packet {
             Connect(x) => x.into(),
-            Data(x) => x,
+            Data(x) => x.to_vec(),
             Continue(x) => x.into(),
             Close(x) => x.into(),
         }
@@ -150,7 +168,7 @@ impl Packet {
 
     pub fn new_connect(
         stream_id: u32,
-        stream_type: u8,
+        stream_type: StreamType,
         destination_port: u16,
         destination_hostname: String,
     ) -> Self {
@@ -164,7 +182,7 @@ impl Packet {
         }
     }
 
-    pub fn new_data(stream_id: u32, data: Vec<u8>) -> Self {
+    pub fn new_data(stream_id: u32, data: Bytes) -> Self {
         Self {
             stream_id,
             packet: PacketType::Data(data),
@@ -198,7 +216,7 @@ impl TryFrom<Bytes> for Packet {
             stream_id: bytes.get_u32_le(),
             packet: match packet_type {
                 0x01 => Connect(ConnectPacket::try_from(bytes)?),
-                0x02 => Data(bytes.to_vec()),
+                0x02 => Data(bytes),
                 0x03 => Continue(ContinuePacket::try_from(bytes)?),
                 0x04 => Close(ClosePacket::try_from(bytes)?),
                 _ => return Err(Self::Error::InvalidPacketType),
