@@ -30,7 +30,7 @@ async fn main() -> Result<(), Error> {
     } else {
         "/".to_string()
     };
-    let port = if let Some(prefix) = std::env::args().nth(1) {
+    let port = if let Some(prefix) = std::env::args().nth(2) {
         prefix
     } else {
         "4000".to_string()
