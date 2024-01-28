@@ -10,6 +10,8 @@ fastwebsockets = { version = "0.6.0", features = ["unstable-split"], optional = 
 futures = "0.3.30"
 futures-util = "0.3.30"
 tokio = { version = "1.35.1", optional = true }
+ws_stream_wasm = { version = "0.7.4", optional = true }
 
 [features]
 fastwebsockets = ["dep:fastwebsockets", "dep:tokio"]
+ws_stream_wasm = ["dep:ws_stream_wasm"]

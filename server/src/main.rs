@@ -16,7 +16,7 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio_native_tls::{native_tls, TlsAcceptor};
 use tokio_util::codec::{BytesCodec, Framed};
 
-use wisp_mux::{ws, ConnectPacket, MuxStream, Packet, ServerMux, StreamType, WispError, WsEvent};
+use wisp_mux::{ws, ConnectPacket, MuxStream, ServerMux, StreamType, WispError, WsEvent};
 
 type HttpBody = http_body_util::Empty<hyper::body::Bytes>;
 
@@ -162,7 +162,7 @@ async fn handle_mux(
             }
         }
     }
-    Ok(false)
+    Ok(true)
 }
 
 async fn accept_ws(
@@ -177,22 +177,17 @@ async fn accept_ws(
     let mut mux = ServerMux::new(rx, tx);
 
     mux.server_loop(&mut |packet, stream| async move {
-        let tx_cloned_err = stream.get_write_half();
-        let tx_cloned_ok = stream.get_write_half();
-        let stream_id = stream.stream_id;
+        let mut close_err = stream.get_close_handle();
+        let mut close_ok = stream.get_close_handle();
         tokio::spawn(async move {
             let _ = handle_mux(packet, stream)
                 .or_else(|err| async move {
-                    let _ = tx_cloned_err
-                        .write_frame(ws::Frame::from(Packet::new_close(stream_id, 0x03)))
-                        .await;
+                    let _ = close_err.close(0x03).await;
                     Err(err)
                 })
                 .and_then(|should_send| async move {
                     if should_send {
-                        tx_cloned_ok
-                            .write_frame(ws::Frame::from(Packet::new_close(stream_id, 0x02)))
-                            .await
+                        close_ok.close(0x02).await
                     } else {
                         Ok(())
                     }

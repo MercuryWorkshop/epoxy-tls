@@ -271,6 +271,7 @@ dependencies = [
  "wasm-streams",
  "web-sys",
  "webpki-roots",
+ "wisp-mux",
  "ws_stream_wasm",
 ]
 
@@ -1535,6 +1536,7 @@ dependencies = [
  "futures",
  "futures-util",
  "tokio",
+ "ws_stream_wasm",
 ]
 
 [[package]]

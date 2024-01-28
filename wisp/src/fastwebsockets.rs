@@ -28,10 +28,11 @@ impl From<Frame<'_>> for crate::ws::Frame {
     }
 }
 
-impl From<crate::ws::Frame> for Frame<'_> {
-    fn from(frame: crate::ws::Frame) -> Self {
+impl TryFrom<crate::ws::Frame> for Frame<'_> {
+    type Error = crate::WispError;
+    fn try_from(frame: crate::ws::Frame) -> Result<Self, Self::Error> {
         use crate::ws::OpCode::*;
-        match frame.opcode {
+        Ok(match frame.opcode {
             Text => Self::text(Payload::Owned(frame.payload.to_vec())),
             Binary => Self::binary(Payload::Owned(frame.payload.to_vec())),
             Close => Self::close_raw(Payload::Owned(frame.payload.to_vec())),
@@ -42,7 +43,7 @@ impl From<crate::ws::Frame> for Frame<'_> {
                 Payload::Owned(frame.payload.to_vec()),
             ),
             Pong => Self::pong(Payload::Owned(frame.payload.to_vec())),
-        }
+        })
     }
 }
 
@@ -66,6 +67,6 @@ impl<S: AsyncRead + Unpin> crate::ws::WebSocketRead for FragmentCollectorRead<S>
 
 impl<S: AsyncWrite + Unpin> crate::ws::WebSocketWrite for WebSocketWrite<S> {
     async fn wisp_write_frame(&mut self, frame: crate::ws::Frame) -> Result<(), crate::WispError> {
-        self.write_frame(frame.into()).await.map_err(|e| e.into())
+        self.write_frame(frame.try_into()?).await.map_err(|e| e.into())
     }
 }
