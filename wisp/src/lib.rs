@@ -1,15 +1,16 @@
 #[cfg(feature = "fastwebsockets")]
 mod fastwebsockets;
 mod packet;
+mod stream;
 pub mod ws;
 #[cfg(feature = "ws_stream_wasm")]
 mod ws_stream_wasm;
 
 pub use crate::packet::*;
+pub use crate::stream::*;
 
-use bytes::Bytes;
 use dashmap::DashMap;
-use futures::{channel::mpsc, channel::oneshot, SinkExt, StreamExt};
+use futures::{channel::mpsc, StreamExt};
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
     Arc,
@@ -66,94 +67,6 @@ impl std::fmt::Display for WispError {
 }
 
 impl std::error::Error for WispError {}
-
-pub enum WsEvent {
-    Send(Bytes),
-    Close(ClosePacket),
-}
-
-pub enum MuxEvent {
-    Close(u32, u8, oneshot::Sender<Result<(), WispError>>),
-}
-
-pub struct MuxStream<W>
-where
-    W: ws::WebSocketWrite,
-{
-    pub stream_id: u32,
-    rx: mpsc::UnboundedReceiver<WsEvent>,
-    tx: ws::LockedWebSocketWrite<W>,
-    close_channel: mpsc::UnboundedSender<MuxEvent>,
-    is_closed: Arc<AtomicBool>,
-}
-
-impl<W: ws::WebSocketWrite> MuxStream<W> {
-    pub async fn read(&mut self) -> Option<WsEvent> {
-        if self.is_closed.load(Ordering::Acquire) {
-            return None;
-        }
-        match self.rx.next().await? {
-            WsEvent::Send(bytes) => Some(WsEvent::Send(bytes)),
-            WsEvent::Close(packet) => {
-                self.is_closed.store(true, Ordering::Release);
-                Some(WsEvent::Close(packet))
-            }
-        }
-    }
-
-    pub async fn write(&mut self, data: Bytes) -> Result<(), WispError> {
-        if self.is_closed.load(Ordering::Acquire) {
-            return Err(WispError::StreamAlreadyClosed);
-        }
-        self.tx
-            .write_frame(Packet::new_data(self.stream_id, data).into())
-            .await
-    }
-
-    pub fn get_close_handle(&self) -> MuxStreamCloser {
-        MuxStreamCloser {
-            stream_id: self.stream_id,
-            close_channel: self.close_channel.clone(),
-            is_closed: self.is_closed.clone(),
-        }
-    }
-
-    pub async fn close(&mut self, reason: u8) -> Result<(), WispError> {
-        if self.is_closed.load(Ordering::Acquire) {
-            return Err(WispError::StreamAlreadyClosed);
-        }
-        let (tx, rx) = oneshot::channel::<Result<(), WispError>>();
-        self.close_channel
-            .send(MuxEvent::Close(self.stream_id, reason, tx))
-            .await
-            .map_err(|x| WispError::Other(Box::new(x)))?;
-        rx.await.map_err(|x| WispError::Other(Box::new(x)))??;
-        self.is_closed.store(true, Ordering::Release);
-        Ok(())
-    }
-}
-
-pub struct MuxStreamCloser {
-    stream_id: u32,
-    close_channel: mpsc::UnboundedSender<MuxEvent>,
-    is_closed: Arc<AtomicBool>,
-}
-
-impl MuxStreamCloser {
-    pub async fn close(&mut self, reason: u8) -> Result<(), WispError> {
-        if self.is_closed.load(Ordering::Acquire) {
-            return Err(WispError::StreamAlreadyClosed);
-        }
-        let (tx, rx) = oneshot::channel::<Result<(), WispError>>();
-        self.close_channel
-            .send(MuxEvent::Close(self.stream_id, reason, tx))
-            .await
-            .map_err(|x| WispError::Other(Box::new(x)))?;
-        rx.await.map_err(|x| WispError::Other(Box::new(x)))??;
-        self.is_closed.store(true, Ordering::Release);
-        Ok(())
-    }
-}
 
 pub struct ServerMux<R, W>
 where
@@ -217,13 +130,13 @@ impl<R: ws::WebSocketRead, W: ws::WebSocketWrite> ServerMux<R, W> {
                         self.stream_map.clone().insert(packet.stream_id, ch_tx);
                         let _ = handler_fn(
                             inner_packet,
-                            MuxStream {
-                                stream_id: packet.stream_id,
-                                rx: ch_rx,
-                                tx: self.tx.clone(),
-                                close_channel: self.close_tx.clone(),
-                                is_closed: AtomicBool::new(false).into(),
-                            },
+                            MuxStream::new(
+                                packet.stream_id,
+                                ch_rx,
+                                self.tx.clone(),
+                                self.close_tx.clone(),
+                                AtomicBool::new(false).into(),
+                            ),
                         )
                         .await;
                     }
@@ -335,12 +248,12 @@ impl<R: ws::WebSocketRead, W: ws::WebSocketWrite> ClientMux<R, W> {
             Ordering::Release,
         );
         self.stream_map.clone().insert(stream_id, ch_tx);
-        Ok(MuxStream {
+        Ok(MuxStream::new(
             stream_id,
-            rx: ch_rx,
-            tx: self.tx.clone(),
-            close_channel: self.close_tx.clone(),
-            is_closed: AtomicBool::new(false).into(),
-        })
+            ch_rx,
+            self.tx.clone(),
+            self.close_tx.clone(),
+            AtomicBool::new(false).into(),
+        ))
     }
 }
