@@ -1,11 +1,18 @@
+use async_io_stream::IoStream;
 use bytes::Bytes;
 use futures::{
     channel::{mpsc, oneshot},
-    StreamExt,
+    sink, stream,
+    task::{Context, Poll},
+    AsyncRead, AsyncWrite, Sink, Stream, StreamExt,
 };
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
+use pin_project_lite::pin_project;
+use std::{
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 pub enum WsEvent {
@@ -35,6 +42,19 @@ impl MuxStreamRead {
                 Some(WsEvent::Close(packet))
             }
         }
+    }
+
+    pub(crate) fn into_stream(self) -> Pin<Box<dyn Stream<Item = Bytes>>> {
+        Box::pin(stream::unfold(self, |mut rx| async move {
+            let evt = rx.read().await?;
+            Some((
+                match evt {
+                    WsEvent::Send(bytes) => bytes,
+                    WsEvent::Close(_) => return None,
+                },
+                rx,
+            ))
+        }))
     }
 }
 
@@ -79,6 +99,16 @@ impl<W: crate::ws::WebSocketWrite> MuxStreamWrite<W> {
 
         self.is_closed.store(true, Ordering::Release);
         Ok(())
+    }
+
+    pub(crate) fn into_sink<'a>(self) -> Pin<Box<dyn Sink<Bytes, Error = crate::WispError> + 'a>>
+    where
+        W: 'a,
+    {
+        Box::pin(sink::unfold(self, |mut tx, data| async move {
+            tx.write(data).await?;
+            Ok(tx)
+        }))
     }
 }
 
@@ -143,6 +173,16 @@ impl<W: crate::ws::WebSocketWrite> MuxStream<W> {
     pub fn into_split(self) -> (MuxStreamRead, MuxStreamWrite<W>) {
         (self.rx, self.tx)
     }
+
+    pub fn into_io<'a>(self) -> MuxStreamIo<'a>
+    where
+        W: 'a,
+    {
+        MuxStreamIo {
+            rx: self.rx.into_stream(),
+            tx: self.tx.into_sink(),
+        }
+    }
 }
 
 pub struct MuxStreamCloser {
@@ -164,5 +204,59 @@ impl MuxStreamCloser {
             .map_err(|x| crate::WispError::Other(Box::new(x)))??;
         self.is_closed.store(true, Ordering::Release);
         Ok(())
+    }
+}
+
+pin_project! {
+    pub struct MuxStreamIo<'a> {
+        #[pin]
+        rx: Pin<Box<dyn Stream<Item = Bytes> + 'a>>,
+        #[pin]
+        tx: Pin<Box<dyn Sink<Bytes, Error = crate::WispError> + 'a>>,
+    }
+}
+
+impl<'a> MuxStreamIo<'a> {
+    pub fn into_asyncrw(self) -> impl AsyncRead + AsyncWrite + 'a {
+        IoStream::new(self.map(|x| Ok::<Vec<u8>, std::io::Error>(x.to_vec())))
+    }
+}
+
+impl Stream for MuxStreamIo<'_> {
+    type Item = Bytes;
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.project().rx.poll_next(cx)
+    }
+}
+
+impl Sink<Bytes> for MuxStreamIo<'_> {
+    type Error = crate::WispError;
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project().tx.poll_ready(cx)
+    }
+    fn start_send(self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
+        self.project().tx.start_send(item)
+    }
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project().tx.poll_flush(cx)
+    }
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project().tx.poll_close(cx)
+    }
+}
+
+impl Sink<Vec<u8>> for MuxStreamIo<'_> {
+    type Error = std::io::Error;
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project().tx.poll_ready(cx).map_err(std::io::Error::other)
+    }
+    fn start_send(self: Pin<&mut Self>, item: Vec<u8>) -> Result<(), Self::Error> {
+        self.project().tx.start_send(item.into()).map_err(std::io::Error::other)
+    }
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project().tx.poll_flush(cx).map_err(std::io::Error::other)
+    }
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project().tx.poll_close(cx).map_err(std::io::Error::other)
     }
 }

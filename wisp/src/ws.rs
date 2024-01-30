@@ -57,9 +57,7 @@ pub trait WebSocketWrite {
     ) -> impl std::future::Future<Output = Result<(), crate::WispError>>;
 }
 
-pub struct LockedWebSocketWrite<S>(Arc<Mutex<S>>)
-where
-    S: WebSocketWrite;
+pub struct LockedWebSocketWrite<S>(Arc<Mutex<S>>);
 
 impl<S: WebSocketWrite> LockedWebSocketWrite<S> {
     pub fn new(ws: S) -> Self {
