@@ -117,6 +117,7 @@ async fn handle_mux(
             loop {
                 tokio::select! {
                     event = stream.read() => {
+                        println!("ws rx");
                         match event {
                             Some(event) => match event {
                                 WsEvent::Send(data) => {
@@ -128,6 +129,7 @@ async fn handle_mux(
                         }
                     },
                     event = tcp_stream_framed.next() => {
+                        println!("tcp rx");
                         match event.and_then(|x| x.ok()) {
                             Some(event) => stream.write(event.into()).await?,
                             None => return Ok(true),
@@ -175,8 +177,8 @@ async fn accept_ws(
     println!("{:?}: connected", addr);
 
     ServerMux::handle(rx, tx, &mut |packet, stream| async move {
-        let mut close_err = stream.get_close_handle();
-        let mut close_ok = stream.get_close_handle();
+        let close_err = stream.get_close_handle();
+        let close_ok = stream.get_close_handle();
         tokio::spawn(async move {
             let _ = handle_mux(packet, stream)
                 .or_else(|err| async move {

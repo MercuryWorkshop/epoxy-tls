@@ -10,7 +10,7 @@ pub use crate::packet::*;
 pub use crate::stream::*;
 
 use dashmap::DashMap;
-use futures::{channel::mpsc, Future, StreamExt};
+use futures::{channel::mpsc, Future, FutureExt, StreamExt};
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
     Arc,
@@ -109,11 +109,10 @@ impl<W: ws::WebSocketWrite + Send + 'static> ServerMux<W> {
         R: ws::WebSocketRead,
         FR: std::future::Future<Output = Result<(), WispError>>,
     {
-        futures::try_join! {
-            self.server_close_loop(close_rx, self.stream_map.clone(), self.tx.clone()),
-            self.server_msg_loop(rx, handler_fn)
+        futures::select! {
+            x = self.server_close_loop(close_rx, self.stream_map.clone(), self.tx.clone()).fuse() => x,
+            x = self.server_msg_loop(rx, handler_fn).fuse() => x
         }
-        .map(|_| ())
     }
 
     async fn server_close_loop(
@@ -299,7 +298,7 @@ impl<W: ws::WebSocketWrite + Send + 'static> ClientMux<W> {
     }
 
     pub async fn client_new_stream(
-        &mut self,
+        &self,
         stream_type: StreamType,
         host: String,
         port: u16,

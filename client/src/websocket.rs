@@ -30,7 +30,7 @@ impl EpxWebSocket {
     // shut up
     #[allow(clippy::too_many_arguments)]
     pub async fn connect(
-        tcp: &mut EpoxyClient,
+        tcp: &EpoxyClient,
         onopen: Function,
         onclose: Function,
         onerror: Function,

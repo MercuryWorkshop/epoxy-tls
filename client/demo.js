@@ -5,6 +5,7 @@
     );
 
     const should_feature_test = (new URL(window.location.href)).searchParams.has("feature_test");
+    const should_parallel_test = (new URL(window.location.href)).searchParams.has("parallel_test");
     const should_perf_test = (new URL(window.location.href)).searchParams.has("perf_test");
     const should_ws_test = (new URL(window.location.href)).searchParams.has("ws_test");
 
@@ -36,6 +37,40 @@
             console.warn(url, resp, Object.fromEntries(resp.headers));
             console.warn(await resp.text());
         }
+    } else if (should_parallel_test) {
+        const test_mux = async (url) => {
+            const t0 = performance.now();
+            await epoxy_client.fetch(url);
+            const t1 = performance.now();
+            return t1 - t0;
+        };
+
+        const test_native = async (url) => {
+            const t0 = performance.now();
+            await fetch(url);
+            const t1 = performance.now();
+            return t1 - t0;
+        };
+
+        const num_tests = 10;
+
+        let total_mux = 0;
+        await Promise.all([...Array(num_tests).keys()].map(async i=>{
+            log(`running mux test ${i}`);
+            return await test_mux("https://httpbin.org/get");
+        })).then((vals)=>{total_mux = vals.reduce((acc, x) => acc + x, 0)});
+        total_mux = total_mux / num_tests;
+
+        let total_native = 0;
+        await Promise.all([...Array(num_tests).keys()].map(async i=>{
+            log(`running native test ${i}`);
+            return await test_native("https://httpbin.org/get");
+        })).then((vals)=>{total_native = vals.reduce((acc, x) => acc + x, 0)});
+        total_native = total_native / num_tests;
+
+        log(`avg mux (10) took ${total_mux} ms or ${total_mux / 1000} s`);
+        log(`avg native (10) took ${total_native} ms or ${total_native / 1000} s`);
+        log(`mux - native: ${total_mux - total_native} ms or ${(total_mux - total_native) / 1000} s`);
     } else if (should_perf_test) {
         const test_mux = async (url) => {
             const t0 = performance.now();

@@ -69,7 +69,7 @@ where
 }
 
 impl<W: crate::ws::WebSocketWrite + Send + 'static> MuxStreamWrite<W> {
-    pub async fn write(&mut self, data: Bytes) -> Result<(), crate::WispError> {
+    pub async fn write(&self, data: Bytes) -> Result<(), crate::WispError> {
         if self.is_closed.load(Ordering::Acquire) {
             return Err(crate::WispError::StreamAlreadyClosed);
         }
@@ -86,7 +86,7 @@ impl<W: crate::ws::WebSocketWrite + Send + 'static> MuxStreamWrite<W> {
         }
     }
 
-    pub async fn close(&mut self, reason: u8) -> Result<(), crate::WispError> {
+    pub async fn close(&self, reason: u8) -> Result<(), crate::WispError> {
         if self.is_closed.load(Ordering::Acquire) {
             return Err(crate::WispError::StreamAlreadyClosed);
         }
@@ -102,7 +102,7 @@ impl<W: crate::ws::WebSocketWrite + Send + 'static> MuxStreamWrite<W> {
     }
 
     pub(crate) fn into_sink(self) -> Pin<Box<dyn Sink<Bytes, Error = crate::WispError> + Send>> {
-        Box::pin(sink::unfold(self, |mut tx, data| async move {
+        Box::pin(sink::unfold(self, |tx, data| async move {
             tx.write(data).await?;
             Ok(tx)
         }))
@@ -155,7 +155,7 @@ impl<W: crate::ws::WebSocketWrite + Send + 'static> MuxStream<W> {
         self.rx.read().await
     }
 
-    pub async fn write(&mut self, data: Bytes) -> Result<(), crate::WispError> {
+    pub async fn write(&self, data: Bytes) -> Result<(), crate::WispError> {
         self.tx.write(data).await
     }
 
@@ -163,7 +163,7 @@ impl<W: crate::ws::WebSocketWrite + Send + 'static> MuxStream<W> {
         self.tx.get_close_handle()
     }
 
-    pub async fn close(&mut self, reason: u8) -> Result<(), crate::WispError> {
+    pub async fn close(&self, reason: u8) -> Result<(), crate::WispError> {
         self.tx.close(reason).await
     }
 
@@ -186,7 +186,7 @@ pub struct MuxStreamCloser {
 }
 
 impl MuxStreamCloser {
-    pub async fn close(&mut self, reason: u8) -> Result<(), crate::WispError> {
+    pub async fn close(&self, reason: u8) -> Result<(), crate::WispError> {
         if self.is_closed.load(Ordering::Acquire) {
             return Err(crate::WispError::StreamAlreadyClosed);
         }

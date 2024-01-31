@@ -173,7 +173,7 @@ impl EpoxyClient {
         })
     }
 
-    async fn get_http_io(&mut self, url: &Uri) -> Result<EpxStream, JsError> {
+    async fn get_http_io(&self, url: &Uri) -> Result<EpxStream, JsError> {
         let url_host = url.host().replace_err("URL must have a host")?;
         let url_port = utils::get_url_port(url)?;
         let channel = self
@@ -203,7 +203,7 @@ impl EpoxyClient {
     }
 
     async fn send_req(
-        &mut self,
+        &self,
         req: http::Request<HttpBody>,
         should_redirect: bool,
     ) -> Result<(hyper::Response<Incoming>, Uri, bool), JsError> {
@@ -231,7 +231,7 @@ impl EpoxyClient {
     // shut up
     #[allow(clippy::too_many_arguments)]
     pub async fn connect_ws(
-        &mut self,
+        &self,
         onopen: Function,
         onclose: Function,
         onerror: Function,
@@ -247,7 +247,7 @@ impl EpoxyClient {
     }
 
     pub async fn fetch(
-        &mut self,
+        &self,
         url: String,
         options: Object,
     ) -> Result<web_sys::Response, JsError> {
