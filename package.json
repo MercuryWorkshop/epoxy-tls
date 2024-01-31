@@ -16,8 +16,8 @@
   "author": "MercuryWorkshop",
   "repository": "https://github.com/MercuryWorkshop/epoxy-tls",
   "license": "MIT",
-  "browser": "./client/module.js",
-  "module": "./client/module.js",
-  "main": "./client/module.js",
-  "types": "./client/module.d.ts"
+  "browser": "./client/epoxy-module-bundled.js",
+  "module": "./client/epoxy-module-bundled.js",
+  "main": "./client/epoxy-module-bundled.js",
+  "types": "./client/epoxy-module-bundled.d.ts"
 }
