@@ -101,7 +101,7 @@ async fn accept_http(
 
 async fn handle_mux(
     packet: ConnectPacket,
-    mut stream: MuxStream<impl ws::WebSocketWrite>,
+    mut stream: MuxStream<impl ws::WebSocketWrite + Send + 'static>,
 ) -> Result<bool, WispError> {
     let uri = format!(
         "{}:{}",
@@ -174,9 +174,7 @@ async fn accept_ws(
 
     println!("{:?}: connected", addr);
 
-    let mut mux = ServerMux::new(rx, tx);
-
-    mux.server_loop(&mut |packet, stream| async move {
+    ServerMux::handle(rx, tx, &mut |packet, stream| async move {
         let mut close_err = stream.get_close_handle();
         let mut close_ok = stream.get_close_handle();
         tokio::spawn(async move {

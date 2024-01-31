@@ -8,17 +8,20 @@ mod wrappers;
 use tokioio::TokioIo;
 use utils::{ReplaceErr, UriExt};
 use websocket::EpxWebSocket;
-use wrappers::{IncomingBody, WsStreamWrapper};
+use wrappers::IncomingBody;
 
 use std::sync::Arc;
 
 use async_compression::tokio::bufread as async_comp;
+use async_io_stream::IoStream;
 use bytes::Bytes;
-use futures_util::StreamExt;
+use futures_util::{
+    stream::SplitSink,
+    StreamExt,
+};
 use http::{uri, HeaderName, HeaderValue, Request, Response};
 use hyper::{body::Incoming, client::conn::http1::Builder, Uri};
 use js_sys::{Array, Function, Object, Reflect, Uint8Array};
-use penguin_mux_wasm::{Multiplexor, MuxStream};
 use tokio_rustls::{client::TlsStream, rustls, rustls::RootCertStore, TlsConnector};
 use tokio_util::{
     either::Either,
@@ -26,6 +29,8 @@ use tokio_util::{
 };
 use wasm_bindgen::prelude::*;
 use web_sys::TextEncoder;
+use wisp_mux::{ClientMux, MuxStreamIo, StreamType};
+use ws_stream_wasm::{WsMeta, WsStream, WsMessage};
 
 type HttpBody = http_body_util::Full<Bytes>;
 
@@ -40,8 +45,8 @@ enum EpxCompression {
     Gzip,
 }
 
-type EpxTlsStream = TlsStream<MuxStream<WsStreamWrapper>>;
-type EpxUnencryptedStream = MuxStream<WsStreamWrapper>;
+type EpxTlsStream = TlsStream<IoStream<MuxStreamIo, Vec<u8>>>;
+type EpxUnencryptedStream = IoStream<MuxStreamIo, Vec<u8>>;
 type EpxStream = Either<EpxTlsStream, EpxUnencryptedStream>;
 
 async fn send_req(
@@ -113,7 +118,7 @@ async fn start() {
 #[wasm_bindgen]
 pub struct EpoxyClient {
     rustls_config: Arc<rustls::ClientConfig>,
-    mux: Multiplexor<WsStreamWrapper>,
+    mux: ClientMux<SplitSink<WsStream, WsMessage>>,
     useragent: String,
     redirect_limit: usize,
 }
@@ -138,11 +143,18 @@ impl EpoxyClient {
         }
 
         debug!("connecting to ws {:?}", ws_url);
-        let ws = WsStreamWrapper::connect(ws_url, None)
+        let (_, ws) = WsMeta::connect(ws_url, vec!["wisp-v1"])
             .await
             .replace_err("Failed to connect to websocket")?;
         debug!("connected!");
-        let mux = Multiplexor::new(ws, penguin_mux_wasm::Role::Client, None, None);
+        let (wtx, wrx) = ws.split();
+        let (mux, fut) = ClientMux::new(wrx, wtx);
+
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Err(err) = fut.await {
+                error!("epoxy: error in mux future! {:?}", err);
+            }
+        });
 
         let mut certstore = RootCertStore::empty();
         certstore.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -161,14 +173,16 @@ impl EpoxyClient {
         })
     }
 
-    async fn get_http_io(&self, url: &Uri) -> Result<EpxStream, JsError> {
+    async fn get_http_io(&mut self, url: &Uri) -> Result<EpxStream, JsError> {
         let url_host = url.host().replace_err("URL must have a host")?;
         let url_port = utils::get_url_port(url)?;
         let channel = self
             .mux
-            .client_new_stream_channel(url_host.as_bytes(), url_port)
+            .client_new_stream(StreamType::Tcp, url_host.to_string(), url_port)
             .await
-            .replace_err("Failed to create multiplexor channel")?;
+            .replace_err("Failed to create multiplexor channel")?
+            .into_io()
+            .into_asyncrw();
 
         if utils::get_is_secure(url)? {
             let cloned_uri = url_host.to_string().clone();
@@ -189,7 +203,7 @@ impl EpoxyClient {
     }
 
     async fn send_req(
-        &self,
+        &mut self,
         req: http::Request<HttpBody>,
         should_redirect: bool,
     ) -> Result<(hyper::Response<Incoming>, Uri, bool), JsError> {
@@ -217,7 +231,7 @@ impl EpoxyClient {
     // shut up
     #[allow(clippy::too_many_arguments)]
     pub async fn connect_ws(
-        &self,
+        &mut self,
         onopen: Function,
         onclose: Function,
         onerror: Function,
@@ -232,7 +246,11 @@ impl EpoxyClient {
         .await
     }
 
-    pub async fn fetch(&self, url: String, options: Object) -> Result<web_sys::Response, JsError> {
+    pub async fn fetch(
+        &mut self,
+        url: String,
+        options: Object,
+    ) -> Result<web_sys::Response, JsError> {
         let uri = url.parse::<uri::Uri>().replace_err("Failed to parse URL")?;
         let uri_scheme = uri.scheme().replace_err("URL must have a scheme")?;
         if *uri_scheme != uri::Scheme::HTTP && *uri_scheme != uri::Scheme::HTTPS {

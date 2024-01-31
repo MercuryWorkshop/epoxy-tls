@@ -17,3 +17,4 @@ ws_stream_wasm = { version = "0.7.4", optional = true }
 [features]
 fastwebsockets = ["dep:fastwebsockets", "dep:tokio"]
 ws_stream_wasm = ["dep:ws_stream_wasm"]
+tokio_io = ["async_io_stream/tokio_io"]

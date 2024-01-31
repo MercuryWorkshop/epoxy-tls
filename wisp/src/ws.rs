@@ -46,20 +46,20 @@ impl Frame {
 pub trait WebSocketRead {
     fn wisp_read_frame(
         &mut self,
-        tx: &mut crate::ws::LockedWebSocketWrite<impl crate::ws::WebSocketWrite>,
-    ) -> impl std::future::Future<Output = Result<Frame, crate::WispError>>;
+        tx: &crate::ws::LockedWebSocketWrite<impl crate::ws::WebSocketWrite + Send>,
+    ) -> impl std::future::Future<Output = Result<Frame, crate::WispError>> + Send;
 }
 
 pub trait WebSocketWrite {
     fn wisp_write_frame(
         &mut self,
         frame: Frame,
-    ) -> impl std::future::Future<Output = Result<(), crate::WispError>>;
+    ) -> impl std::future::Future<Output = Result<(), crate::WispError>> + Send;
 }
 
 pub struct LockedWebSocketWrite<S>(Arc<Mutex<S>>);
 
-impl<S: WebSocketWrite> LockedWebSocketWrite<S> {
+impl<S: WebSocketWrite + Send> LockedWebSocketWrite<S> {
     pub fn new(ws: S) -> Self {
         Self(Arc::new(Mutex::new(ws)))
     }

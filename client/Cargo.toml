@@ -16,7 +16,6 @@ http = "1.0.0"
 http-body-util = "0.1.0"
 hyper = { version = "1.1.0", features = ["client", "http1"] }
 pin-project-lite = "0.2.13"
-penguin-mux-wasm = { git = "https://github.com/r58Playz/penguin-mux-wasm" }
 tokio = { version = "1.35.1", default_features = false }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4.39"
@@ -33,7 +32,8 @@ async-compression = { version = "0.4.5", features = ["tokio", "gzip", "brotli"] 
 fastwebsockets = { version = "0.6.0", features = ["simdutf8", "unstable-split"] }
 rand = "0.8.5"
 base64 = "0.21.7"
-wisp-mux = { path = "../wisp", features = ["ws_stream_wasm"] }
+wisp-mux = { path = "../wisp", features = ["ws_stream_wasm", "tokio_io"] }
+async_io_stream = { version = "0.3.3", features = ["tokio_io"] }
 
 [dependencies.getrandom]
 features = ["js"]

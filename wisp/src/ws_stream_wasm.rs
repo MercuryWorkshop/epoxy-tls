@@ -1,4 +1,4 @@
-use futures::{SinkExt, StreamExt};
+use futures::{stream::{SplitStream, SplitSink}, SinkExt, StreamExt};
 use ws_stream_wasm::{WsErr, WsMessage, WsStream};
 
 impl From<WsMessage> for crate::ws::Frame {
@@ -37,10 +37,10 @@ impl From<WsErr> for crate::WispError {
     }
 }
 
-impl crate::ws::WebSocketRead for WsStream {
+impl crate::ws::WebSocketRead for SplitStream<WsStream> {
     async fn wisp_read_frame(
         &mut self,
-        _: &mut crate::ws::LockedWebSocketWrite<impl crate::ws::WebSocketWrite>,
+        _: &crate::ws::LockedWebSocketWrite<impl crate::ws::WebSocketWrite>,
     ) -> Result<crate::ws::Frame, crate::WispError> {
         Ok(self
             .next()
@@ -50,8 +50,11 @@ impl crate::ws::WebSocketRead for WsStream {
     }
 }
 
-impl crate::ws::WebSocketWrite for WsStream {
+impl crate::ws::WebSocketWrite for SplitSink<WsStream, WsMessage> {
     async fn wisp_write_frame(&mut self, frame: crate::ws::Frame) -> Result<(), crate::WispError> {
-        self.send(frame.try_into()?).await.map_err(|e| e.into())
+        self
+            .send(frame.try_into()?)
+            .await
+            .map_err(|e| e.into())
     }
 }

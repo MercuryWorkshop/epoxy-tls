@@ -4,7 +4,7 @@ use futures::{
     channel::{mpsc, oneshot},
     sink, stream,
     task::{Context, Poll},
-    AsyncRead, AsyncWrite, Sink, Stream, StreamExt,
+    Sink, Stream, StreamExt,
 };
 use pin_project_lite::pin_project;
 use std::{
@@ -44,7 +44,7 @@ impl MuxStreamRead {
         }
     }
 
-    pub(crate) fn into_stream(self) -> Pin<Box<dyn Stream<Item = Bytes>>> {
+    pub(crate) fn into_stream(self) -> Pin<Box<dyn Stream<Item = Bytes> + Send>> {
         Box::pin(stream::unfold(self, |mut rx| async move {
             let evt = rx.read().await?;
             Some((
@@ -68,7 +68,7 @@ where
     is_closed: Arc<AtomicBool>,
 }
 
-impl<W: crate::ws::WebSocketWrite> MuxStreamWrite<W> {
+impl<W: crate::ws::WebSocketWrite + Send + 'static> MuxStreamWrite<W> {
     pub async fn write(&mut self, data: Bytes) -> Result<(), crate::WispError> {
         if self.is_closed.load(Ordering::Acquire) {
             return Err(crate::WispError::StreamAlreadyClosed);
@@ -101,10 +101,7 @@ impl<W: crate::ws::WebSocketWrite> MuxStreamWrite<W> {
         Ok(())
     }
 
-    pub(crate) fn into_sink<'a>(self) -> Pin<Box<dyn Sink<Bytes, Error = crate::WispError> + 'a>>
-    where
-        W: 'a,
-    {
+    pub(crate) fn into_sink(self) -> Pin<Box<dyn Sink<Bytes, Error = crate::WispError> + Send>> {
         Box::pin(sink::unfold(self, |mut tx, data| async move {
             tx.write(data).await?;
             Ok(tx)
@@ -130,7 +127,7 @@ where
     tx: MuxStreamWrite<W>,
 }
 
-impl<W: crate::ws::WebSocketWrite> MuxStream<W> {
+impl<W: crate::ws::WebSocketWrite + Send + 'static> MuxStream<W> {
     pub(crate) fn new(
         stream_id: u32,
         rx: mpsc::UnboundedReceiver<WsEvent>,
@@ -174,10 +171,7 @@ impl<W: crate::ws::WebSocketWrite> MuxStream<W> {
         (self.rx, self.tx)
     }
 
-    pub fn into_io<'a>(self) -> MuxStreamIo<'a>
-    where
-        W: 'a,
-    {
+    pub fn into_io(self) -> MuxStreamIo {
         MuxStreamIo {
             rx: self.rx.into_stream(),
             tx: self.tx.into_sink(),
@@ -208,55 +202,54 @@ impl MuxStreamCloser {
 }
 
 pin_project! {
-    pub struct MuxStreamIo<'a> {
+    pub struct MuxStreamIo {
         #[pin]
-        rx: Pin<Box<dyn Stream<Item = Bytes> + 'a>>,
+        rx: Pin<Box<dyn Stream<Item = Bytes> + Send>>,
         #[pin]
-        tx: Pin<Box<dyn Sink<Bytes, Error = crate::WispError> + 'a>>,
+        tx: Pin<Box<dyn Sink<Bytes, Error = crate::WispError> + Send>>,
     }
 }
 
-impl<'a> MuxStreamIo<'a> {
-    pub fn into_asyncrw(self) -> impl AsyncRead + AsyncWrite + 'a {
-        IoStream::new(self.map(|x| Ok::<Vec<u8>, std::io::Error>(x.to_vec())))
+impl MuxStreamIo {
+    pub fn into_asyncrw(self) -> IoStream<MuxStreamIo, Vec<u8>> {
+        IoStream::new(self)
     }
 }
 
-impl Stream for MuxStreamIo<'_> {
-    type Item = Bytes;
+impl Stream for MuxStreamIo {
+    type Item = Result<Vec<u8>, std::io::Error>;
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.project().rx.poll_next(cx)
+        self.project()
+            .rx
+            .poll_next(cx)
+            .map(|x| x.map(|x| Ok(x.to_vec())))
     }
 }
 
-impl Sink<Bytes> for MuxStreamIo<'_> {
-    type Error = crate::WispError;
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.project().tx.poll_ready(cx)
-    }
-    fn start_send(self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
-        self.project().tx.start_send(item)
-    }
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.project().tx.poll_flush(cx)
-    }
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.project().tx.poll_close(cx)
-    }
-}
-
-impl Sink<Vec<u8>> for MuxStreamIo<'_> {
+impl Sink<Vec<u8>> for MuxStreamIo {
     type Error = std::io::Error;
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.project().tx.poll_ready(cx).map_err(std::io::Error::other)
+        self.project()
+            .tx
+            .poll_ready(cx)
+            .map_err(std::io::Error::other)
     }
     fn start_send(self: Pin<&mut Self>, item: Vec<u8>) -> Result<(), Self::Error> {
-        self.project().tx.start_send(item.into()).map_err(std::io::Error::other)
+        self.project()
+            .tx
+            .start_send(item.into())
+            .map_err(std::io::Error::other)
     }
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.project().tx.poll_flush(cx).map_err(std::io::Error::other)
+        self.project()
+            .tx
+            .poll_flush(cx)
+            .map_err(std::io::Error::other)
     }
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.project().tx.poll_close(cx).map_err(std::io::Error::other)
+        self.project()
+            .tx
+            .poll_close(cx)
+            .map_err(std::io::Error::other)
     }
 }

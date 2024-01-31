@@ -10,7 +10,7 @@ pub use crate::packet::*;
 pub use crate::stream::*;
 
 use dashmap::DashMap;
-use futures::{channel::mpsc, StreamExt};
+use futures::{channel::mpsc, Future, StreamExt};
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
     Arc,
@@ -68,38 +68,66 @@ impl std::fmt::Display for WispError {
 
 impl std::error::Error for WispError {}
 
-pub struct ServerMux<R, W>
+pub struct ServerMux<W>
 where
-    R: ws::WebSocketRead,
     W: ws::WebSocketWrite,
 {
-    rx: R,
     tx: ws::LockedWebSocketWrite<W>,
     stream_map: Arc<DashMap<u32, mpsc::UnboundedSender<WsEvent>>>,
-    close_rx: mpsc::UnboundedReceiver<MuxEvent>,
     close_tx: mpsc::UnboundedSender<MuxEvent>,
 }
 
-impl<R: ws::WebSocketRead, W: ws::WebSocketWrite> ServerMux<R, W> {
-    pub fn new(read: R, write: W) -> Self {
+impl<W: ws::WebSocketWrite + Send + 'static> ServerMux<W> {
+    pub fn handle<'a, FR, R>(
+        read: R,
+        write: W,
+        handler_fn: &'a mut impl Fn(ConnectPacket, MuxStream<W>) -> FR,
+    ) -> impl Future<Output = Result<(), WispError>> + 'a
+    where
+        FR: std::future::Future<Output = Result<(), WispError>> + 'a,
+        R: ws::WebSocketRead + 'a,
+        W: ws::WebSocketWrite + 'a,
+    {
         let (tx, rx) = mpsc::unbounded::<MuxEvent>();
-        Self {
-            rx: read,
-            tx: ws::LockedWebSocketWrite::new(write),
-            stream_map: Arc::new(DashMap::new()),
-            close_rx: rx,
+        let write = ws::LockedWebSocketWrite::new(write);
+        let map = Arc::new(DashMap::new());
+        let inner = ServerMux {
+            stream_map: map.clone(),
+            tx: write.clone(),
             close_tx: tx,
-        }
+        };
+        inner.into_future(read, rx, handler_fn)
     }
 
-    pub async fn server_bg_loop(&mut self) {
-        while let Some(msg) = self.close_rx.next().await {
+    async fn into_future<R, FR>(
+        self,
+        rx: R,
+        close_rx: mpsc::UnboundedReceiver<MuxEvent>,
+        handler_fn: &mut impl Fn(ConnectPacket, MuxStream<W>) -> FR,
+    ) -> Result<(), WispError>
+    where
+        R: ws::WebSocketRead,
+        FR: std::future::Future<Output = Result<(), WispError>>,
+    {
+        futures::try_join! {
+            self.server_close_loop(close_rx, self.stream_map.clone(), self.tx.clone()),
+            self.server_msg_loop(rx, handler_fn)
+        }
+        .map(|_| ())
+    }
+
+    async fn server_close_loop(
+        &self,
+        mut close_rx: mpsc::UnboundedReceiver<MuxEvent>,
+        stream_map: Arc<DashMap<u32, mpsc::UnboundedSender<WsEvent>>>,
+        tx: ws::LockedWebSocketWrite<W>,
+    ) -> Result<(), WispError> {
+        while let Some(msg) = close_rx.next().await {
             match msg {
                 MuxEvent::Close(stream_id, reason, channel) => {
-                    if self.stream_map.clone().remove(&stream_id).is_some() {
+                    if stream_map.clone().remove(&stream_id).is_some() {
                         let _ = channel.send(
-                            self.tx
-                                .write_frame(Packet::new_close(stream_id, reason).into())
+                            tx.write_frame(Packet::new_close(stream_id, reason).into())
                                 .await,
                         );
                     } else {
@@ -108,20 +136,23 @@ impl<R: ws::WebSocketRead, W: ws::WebSocketWrite> ServerMux<R, W> {
                 }
             }
         }
+        Ok(())
     }
 
-    pub async fn server_loop<FR>(
-        &mut self,
+    async fn server_msg_loop<R, FR>(
+        &self,
+        mut rx: R,
         handler_fn: &mut impl Fn(ConnectPacket, MuxStream<W>) -> FR,
     ) -> Result<(), WispError>
     where
-        FR: std::future::Future<Output = Result<(), crate::WispError>>,
+        R: ws::WebSocketRead,
+        FR: std::future::Future<Output = Result<(), WispError>>,
     {
         self.tx
             .write_frame(Packet::new_continue(0, u32::MAX).into())
             .await?;
 
-        while let Ok(frame) = self.rx.wisp_read_frame(&mut self.tx).await {
+        while let Ok(frame) = rx.wisp_read_frame(&self.tx).await {
             if let Ok(packet) = Packet::try_from(frame) {
                 use PacketType::*;
                 match packet.packet {
@@ -164,34 +195,31 @@ impl<R: ws::WebSocketRead, W: ws::WebSocketWrite> ServerMux<R, W> {
     }
 }
 
-pub struct ClientMux<R, W>
+pub struct ClientMuxInner<W>
 where
-    R: ws::WebSocketRead,
     W: ws::WebSocketWrite,
 {
-    rx: R,
     tx: ws::LockedWebSocketWrite<W>,
     stream_map: Arc<DashMap<u32, mpsc::UnboundedSender<WsEvent>>>,
-    next_free_stream_id: AtomicU32,
-    close_rx: mpsc::UnboundedReceiver<MuxEvent>,
-    close_tx: mpsc::UnboundedSender<MuxEvent>,
 }
 
-impl<R: ws::WebSocketRead, W: ws::WebSocketWrite> ClientMux<R, W> {
-    pub fn new(read: R, write: W) -> Self {
-        let (tx, rx) = mpsc::unbounded::<MuxEvent>();
-        Self {
-            rx: read,
-            tx: ws::LockedWebSocketWrite::new(write),
-            stream_map: Arc::new(DashMap::new()),
-            next_free_stream_id: AtomicU32::new(1),
-            close_rx: rx,
-            close_tx: tx,
-        }
+impl<W: ws::WebSocketWrite + Send> ClientMuxInner<W> {
+    pub async fn into_future<R>(
+        self,
+        rx: R,
+        close_rx: mpsc::UnboundedReceiver<MuxEvent>,
+    ) -> Result<(), WispError>
+    where
+        R: ws::WebSocketRead,
+    {
+        futures::try_join!(self.client_bg_loop(close_rx), self.client_loop(rx)).map(|_| ())
     }
 
-    pub async fn client_bg_loop(&mut self) {
-        while let Some(msg) = self.close_rx.next().await {
+    async fn client_bg_loop(
+        &self,
+        mut close_rx: mpsc::UnboundedReceiver<MuxEvent>,
+    ) -> Result<(), WispError> {
+        while let Some(msg) = close_rx.next().await {
             match msg {
                 MuxEvent::Close(stream_id, reason, channel) => {
                     if self.stream_map.clone().remove(&stream_id).is_some() {
@@ -206,14 +234,14 @@ impl<R: ws::WebSocketRead, W: ws::WebSocketWrite> ClientMux<R, W> {
                 }
             }
         }
+        Ok(())
     }
 
-    pub async fn client_loop(&mut self) -> Result<(), WispError> {
-        self.tx
-            .write_frame(Packet::new_continue(0, u32::MAX).into())
-            .await?;
-
-        while let Ok(frame) = self.rx.wisp_read_frame(&mut self.tx).await {
+    async fn client_loop<R>(&self, mut rx: R) -> Result<(), WispError>
+    where
+        R: ws::WebSocketRead,
+    {
+        while let Ok(frame) = rx.wisp_read_frame(&self.tx).await {
             if let Ok(packet) = Packet::try_from(frame) {
                 use PacketType::*;
                 match packet.packet {
@@ -235,12 +263,52 @@ impl<R: ws::WebSocketRead, W: ws::WebSocketWrite> ClientMux<R, W> {
         }
         Ok(())
     }
+}
+
+pub struct ClientMux<W>
+where
+    W: ws::WebSocketWrite,
+{
+    tx: ws::LockedWebSocketWrite<W>,
+    stream_map: Arc<DashMap<u32, mpsc::UnboundedSender<WsEvent>>>,
+    next_free_stream_id: AtomicU32,
+    close_tx: mpsc::UnboundedSender<MuxEvent>,
+}
+
+impl<W: ws::WebSocketWrite + Send + 'static> ClientMux<W> {
+    pub fn new<R>(read: R, write: W) -> (Self, impl Future<Output = Result<(), WispError>>)
+    where
+        R: ws::WebSocketRead,
+    {
+        let (tx, rx) = mpsc::unbounded::<MuxEvent>();
+        let map = Arc::new(DashMap::new());
+        let write = ws::LockedWebSocketWrite::new(write);
+        (
+            Self {
+                tx: write.clone(),
+                stream_map: map.clone(),
+                next_free_stream_id: AtomicU32::new(1),
+                close_tx: tx,
+            },
+            ClientMuxInner {
+                tx: write.clone(),
+                stream_map: map.clone(),
+            }
+            .into_future(read, rx),
+        )
+    }
 
     pub async fn client_new_stream(
         &mut self,
+        stream_type: StreamType,
+        host: String,
+        port: u16,
     ) -> Result<MuxStream<impl ws::WebSocketWrite>, WispError> {
         let (ch_tx, ch_rx) = mpsc::unbounded();
         let stream_id = self.next_free_stream_id.load(Ordering::Acquire);
+        self.tx
+            .write_frame(Packet::new_connect(stream_id, stream_type, port, host).into())
+            .await?;
         self.next_free_stream_id.store(
             stream_id
                 .checked_add(1)
