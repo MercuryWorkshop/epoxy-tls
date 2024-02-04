@@ -1,10 +1,12 @@
 #![feature(let_chains)]
 #[macro_use]
 mod utils;
+mod tls_stream;
 mod tokioio;
 mod websocket;
 mod wrappers;
 
+use tls_stream::EpxTlsStream;
 use tokioio::TokioIo;
 use utils::{ReplaceErr, UriExt};
 use websocket::EpxWebSocket;
@@ -15,10 +17,7 @@ use std::sync::Arc;
 use async_compression::tokio::bufread as async_comp;
 use async_io_stream::IoStream;
 use bytes::Bytes;
-use futures_util::{
-    stream::SplitSink,
-    StreamExt,
-};
+use futures_util::{stream::SplitSink, StreamExt};
 use http::{uri, HeaderName, HeaderValue, Request, Response};
 use hyper::{body::Incoming, client::conn::http1::Builder, Uri};
 use js_sys::{Array, Function, Object, Reflect, Uint8Array};
@@ -30,7 +29,7 @@ use tokio_util::{
 use wasm_bindgen::prelude::*;
 use web_sys::TextEncoder;
 use wisp_mux::{ClientMux, MuxStreamIo, StreamType};
-use ws_stream_wasm::{WsMeta, WsStream, WsMessage};
+use ws_stream_wasm::{WsMessage, WsMeta, WsStream};
 
 type HttpBody = http_body_util::Full<Bytes>;
 
@@ -45,14 +44,14 @@ enum EpxCompression {
     Gzip,
 }
 
-type EpxTlsStream = TlsStream<IoStream<MuxStreamIo, Vec<u8>>>;
-type EpxUnencryptedStream = IoStream<MuxStreamIo, Vec<u8>>;
-type EpxStream = Either<EpxTlsStream, EpxUnencryptedStream>;
+type EpxIoTlsStream = TlsStream<IoStream<MuxStreamIo, Vec<u8>>>;
+type EpxIoUnencryptedStream = IoStream<MuxStreamIo, Vec<u8>>;
+type EpxIoStream = Either<EpxIoTlsStream, EpxIoUnencryptedStream>;
 
 async fn send_req(
     req: http::Request<HttpBody>,
     should_redirect: bool,
-    io: EpxStream,
+    io: EpxIoStream,
 ) -> Result<EpxResponse, JsError> {
     let (mut req_sender, conn) = Builder::new()
         .title_case_headers(true)
@@ -175,10 +174,7 @@ impl EpoxyClient {
         })
     }
 
-    async fn get_http_io(&self, url: &Uri) -> Result<EpxStream, JsError> {
-        let url_host = url.host().replace_err("URL must have a host")?;
-        let url_port = utils::get_url_port(url)?;
-        debug!("making channel");
+    async fn get_tls_io(&self, url_host: &str, url_port: u16) -> Result<EpxIoTlsStream, JsError> {
         let channel = self
             .mux
             .client_new_stream(StreamType::Tcp, url_host.to_string(), url_port)
@@ -186,26 +182,42 @@ impl EpoxyClient {
             .replace_err("Failed to create multiplexor channel")?
             .into_io()
             .into_asyncrw();
+        let cloned_uri = url_host.to_string().clone();
+        let connector = TlsConnector::from(self.rustls_config.clone());
+        debug!("connecting channel");
+        let io = connector
+            .connect(
+                cloned_uri
+                    .try_into()
+                    .replace_err("Failed to parse URL (rustls)")?,
+                channel,
+            )
+            .await
+            .replace_err("Failed to perform TLS handshake")?;
+        debug!("connected channel");
+        Ok(io)
+    }
+
+    async fn get_http_io(&self, url: &Uri) -> Result<EpxIoStream, JsError> {
+        let url_host = url.host().replace_err("URL must have a host")?;
+        let url_port = utils::get_url_port(url)?;
 
         if utils::get_is_secure(url)? {
-            let cloned_uri = url_host.to_string().clone();
-            let connector = TlsConnector::from(self.rustls_config.clone());
-            debug!("connecting channel");
-            let io = connector
-                .connect(
-                    cloned_uri
-                        .try_into()
-                        .replace_err("Failed to parse URL (rustls)")?,
-                    channel,
-                )
-                .await
-                .replace_err("Failed to perform TLS handshake")?;
-            debug!("connected channel");
-            Ok(EpxStream::Left(io))
+            Ok(EpxIoStream::Left(
+                self.get_tls_io(url_host, url_port).await?,
+            ))
         } else {
+            debug!("making channel");
+            let channel = self
+                .mux
+                .client_new_stream(StreamType::Tcp, url_host.to_string(), url_port)
+                .await
+                .replace_err("Failed to create multiplexor channel")?
+                .into_io()
+                .into_asyncrw();
             debug!("connecting channel");
             debug!("connected channel");
-            Ok(EpxStream::Right(channel))
+            Ok(EpxIoStream::Right(channel))
         }
     }
 
@@ -253,11 +265,18 @@ impl EpoxyClient {
         .await
     }
 
-    pub async fn fetch(
+    pub async fn connect_tls(
         &self,
+        onopen: Function,
+        onclose: Function,
+        onerror: Function,
+        onmessage: Function,
         url: String,
-        options: Object,
-    ) -> Result<web_sys::Response, JsError> {
+    ) -> Result<EpxTlsStream, JsError> {
+        EpxTlsStream::connect(self, onopen, onclose, onerror, onmessage, url).await
+    }
+
+    pub async fn fetch(&self, url: String, options: Object) -> Result<web_sys::Response, JsError> {
         let uri = url.parse::<uri::Uri>().replace_err("Failed to parse URL")?;
         let uri_scheme = uri.scheme().replace_err("URL must have a scheme")?;
         if *uri_scheme != uri::Scheme::HTTP && *uri_scheme != uri::Scheme::HTTPS {

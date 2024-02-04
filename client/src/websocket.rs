@@ -68,7 +68,7 @@ impl EpxWebSocket {
             let (mut sender, conn) = Builder::new()
                 .title_case_headers(true)
                 .preserve_header_case(true)
-                .handshake::<TokioIo<EpxStream>, Empty<Bytes>>(TokioIo::new(stream))
+                .handshake::<TokioIo<EpxIoStream>, Empty<Bytes>>(TokioIo::new(stream))
                 .await?;
 
             wasm_bindgen_futures::spawn_local(async move {

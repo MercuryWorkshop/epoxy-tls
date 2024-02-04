@@ -12,6 +12,7 @@
     const should_multiperf_test = params.has("multi_perf_test");
     const should_perf_test = params.has("perf_test");
     const should_ws_test = params.has("ws_test");
+    const should_tls_test = params.has("rawtls_test");
 
     const log = (str) => {
         let el = document.createElement("div");
@@ -160,6 +161,16 @@
             await ws.send("data");
             await (new Promise((res, _) => setTimeout(res, 100)));
         }
+    } else if (should_tls_test) {
+        let decoder = new TextDecoder();
+        let ws = await epoxy_client.connect_tls(
+            () => console.log("opened"),
+            () => console.log("closed"),
+            err => console.error(err),
+            msg => { console.log(msg); console.log(decoder.decode(msg)) },
+            "alicesworld.tech:443",
+        );
+        await ws.send("GET / HTTP 1.1\r\nHost: alicesworld.tech\r\nConnection: close\r\n\r\n");
     } else {
         let resp = await epoxy_client.fetch("https://httpbin.org/get");
         console.warn(resp, Object.fromEntries(resp.headers));
