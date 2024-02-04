@@ -7,5 +7,5 @@ rustls-pki-types = { git = "https://github.com/r58Playz/rustls-pki-types" }
 
 [profile.release]
 lto = true
-opt-level = 'z'
+opt-level = 3
 codegen-units = 1

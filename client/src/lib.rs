@@ -111,11 +111,6 @@ async fn send_req(
     }
 }
 
-#[wasm_bindgen(start)]
-async fn start() {
-    utils::set_panic_hook();
-}
-
 #[wasm_bindgen]
 pub struct EpoxyClient {
     rustls_config: Arc<rustls::ClientConfig>,

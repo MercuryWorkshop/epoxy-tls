@@ -78,6 +78,8 @@ async fn accept_http(
         let uri = req.uri().clone();
         let (mut res, fut) = upgrade::upgrade(&mut req)?;
 
+        println!("{:?} {:?}", uri.path(), prefix);
+
         if *uri.path() != prefix {
             tokio::spawn(async move {
                 accept_wsproxy(fut, uri.path().strip_prefix(&prefix).unwrap(), addr.clone()).await

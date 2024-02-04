@@ -10,6 +10,7 @@ use std::{error::Error, future::Future};
 use tokio::net::TcpStream;
 use tokio_native_tls::{native_tls, TlsConnector};
 use wisp_mux::{ClientMux, StreamType};
+use tokio_util::either::Either;
 
 #[derive(Debug)]
 struct StrError(String);
@@ -59,10 +60,18 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .nth(4)
         .ok_or(StrError::new("no dest port"))?
         .parse()?;
+    let should_tls: bool = std::env::args()
+        .nth(5)
+        .ok_or(StrError::new("no should tls"))?
+        .parse()?;
 
     let socket = TcpStream::connect(format!("{}:{}", &addr, addr_port)).await?;
-    let cx = TlsConnector::from(native_tls::TlsConnector::builder().build()?);
-    let socket = cx.connect(&addr, socket).await?;
+    let socket = if should_tls {
+        let cx = TlsConnector::from(native_tls::TlsConnector::builder().build()?);
+        Either::Left(cx.connect(&addr, socket).await?)
+    } else {
+        Either::Right(socket)
+    };
     let req = Request::builder()
         .method("GET")
         .uri(format!("wss://{}:{}/", &addr, addr_port))

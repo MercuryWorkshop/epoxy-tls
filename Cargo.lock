@@ -155,16 +155,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
-name = "console_error_panic_hook"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
-dependencies = [
- "cfg-if",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -232,12 +222,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "either"
-version = "1.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a26ae43d7bcc3b814de94796a5e736d4029efb0ee900c12e2d54c993ad1a1e07"
-
-[[package]]
 name = "epoxy-client"
 version = "1.0.0"
 dependencies = [
@@ -245,8 +229,6 @@ dependencies = [
  "async_io_stream",
  "base64",
  "bytes",
- "console_error_panic_hook",
- "either",
  "fastwebsockets",
  "futures-util",
  "getrandom",
@@ -255,7 +237,6 @@ dependencies = [
  "hyper",
  "js-sys",
  "pin-project-lite",
- "rand",
  "ring",
  "tokio",
  "tokio-rustls",
@@ -453,9 +434,9 @@ dependencies = [
 
 [[package]]
 name = "getrandom"
-version = "0.2.11"
+version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe9006bed769170c11f845cf00c7c1e9092aeb3f268e007c3e760ac68008070f"
+checksum = "190092ea657667030ac6a35e305e62fc4dd69fd98ac98631e5d3a2b1575a12b5"
 dependencies = [
  "cfg-if",
  "js-sys",
@@ -1023,6 +1004,7 @@ dependencies = [
  "hyper",
  "tokio",
  "tokio-native-tls",
+ "tokio-util",
  "wisp-mux",
 ]
 

@@ -6,12 +6,8 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib"]
 
-[features]
-default = ["console_error_panic_hook"]
-
 [dependencies]
 bytes = "1.5.0"
-console_error_panic_hook = { version = "0.1.7", optional = true }
 http = "1.0.0"
 http-body-util = "0.1.0"
 hyper = { version = "1.1.0", features = ["client", "http1"] }
@@ -24,19 +20,15 @@ futures-util = "0.3.30"
 js-sys = "0.3.66"
 webpki-roots = "0.26.0"
 tokio-rustls = "0.25.0"
-web-sys = { version = "0.3.66", features = ["TextEncoder", "Navigator", "Response", "ResponseInit"] }
+web-sys = { version = "0.3.66", features = ["TextEncoder", "Response", "ResponseInit"] }
 wasm-streams = "0.4.0"
-either = "1.9.0"
 tokio-util = { version = "0.7.10", features = ["io"] }
 async-compression = { version = "0.4.5", features = ["tokio", "gzip", "brotli"] }
-fastwebsockets = { version = "0.6.0", features = ["simdutf8", "unstable-split"] }
-rand = "0.8.5"
+fastwebsockets = { version = "0.6.0", features = ["unstable-split"] }
 base64 = "0.21.7"
 wisp-mux = { path = "../wisp", features = ["ws_stream_wasm", "tokio_io"] }
 async_io_stream = { version = "0.3.3", features = ["tokio_io"] }
-
-[dependencies.getrandom]
-features = ["js"]
+getrandom = { version = "0.2.12", features = ["js"] }
 
 [dependencies.ring]
 features = ["wasm32_unknown_unknown_js"]
