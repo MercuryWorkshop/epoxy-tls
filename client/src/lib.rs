@@ -73,10 +73,12 @@ async fn send_req(
         None
     };
 
+    debug!("sending req");
     let res = req_sender
         .send_request(req)
         .await
         .replace_err("Failed to send request");
+    debug!("recieved res");
     match res {
         Ok(res) => {
             if utils::is_redirect(res.status().as_u16())
@@ -176,6 +178,7 @@ impl EpoxyClient {
     async fn get_http_io(&self, url: &Uri) -> Result<EpxStream, JsError> {
         let url_host = url.host().replace_err("URL must have a host")?;
         let url_port = utils::get_url_port(url)?;
+        debug!("making channel");
         let channel = self
             .mux
             .client_new_stream(StreamType::Tcp, url_host.to_string(), url_port)
@@ -187,6 +190,7 @@ impl EpoxyClient {
         if utils::get_is_secure(url)? {
             let cloned_uri = url_host.to_string().clone();
             let connector = TlsConnector::from(self.rustls_config.clone());
+            debug!("connecting channel");
             let io = connector
                 .connect(
                     cloned_uri
@@ -196,8 +200,11 @@ impl EpoxyClient {
                 )
                 .await
                 .replace_err("Failed to perform TLS handshake")?;
+            debug!("connected channel");
             Ok(EpxStream::Left(io))
         } else {
+            debug!("connecting channel");
+            debug!("connected channel");
             Ok(EpxStream::Right(channel))
         }
     }

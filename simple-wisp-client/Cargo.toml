@@ -1,0 +1,15 @@
+[package]
+name = "simple-wisp-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bytes = "1.5.0"
+fastwebsockets = { version = "0.6.0", features = ["unstable-split", "upgrade"] }
+futures = "0.3.30"
+http-body-util = "0.1.0"
+hyper = { version = "1.1.0", features = ["http1", "client"] }
+tokio = { version = "1.36.0", features = ["full"] }
+tokio-native-tls = "0.3.1"
+wisp-mux = { path = "../wisp", features = ["fastwebsockets"]}
+

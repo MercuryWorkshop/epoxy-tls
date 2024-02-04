@@ -168,8 +168,8 @@ impl<W: ws::WebSocketWrite + Send + 'static> ServerMuxInner<W> {
                     Close(inner_packet) => {
                         if let Some(stream) = self.stream_map.lock().await.get(&packet.stream_id) {
                             let _ = stream.unbounded_send(WsEvent::Close(inner_packet));
-                            self.stream_map.lock().await.remove(&packet.stream_id);
                         }
+                        self.stream_map.lock().await.remove(&packet.stream_id);
                     }
                 }
             } else {
@@ -276,8 +276,8 @@ impl<W: ws::WebSocketWrite + Send> ClientMuxInner<W> {
                     Close(inner_packet) => {
                         if let Some(stream) = self.stream_map.lock().await.get(&packet.stream_id) {
                             let _ = stream.unbounded_send(WsEvent::Close(inner_packet));
-                            self.stream_map.lock().await.remove(&packet.stream_id);
                         }
+                        self.stream_map.lock().await.remove(&packet.stream_id);
                     }
                 }
             }
