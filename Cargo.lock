@@ -1449,7 +1449,6 @@ version = "0.1.0"
 dependencies = [
  "async_io_stream",
  "bytes",
- "dashmap",
  "fastwebsockets",
  "futures",
  "futures-util",

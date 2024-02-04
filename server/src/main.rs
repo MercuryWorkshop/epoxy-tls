@@ -20,7 +20,7 @@ use wisp_mux::{ws, ConnectPacket, MuxStream, ServerMux, StreamType, WispError, W
 
 type HttpBody = http_body_util::Empty<hyper::body::Bytes>;
 
-#[tokio::main(flavor = "multi_thread")]
+#[tokio::main]
 async fn main() -> Result<(), Error> {
     let pem = include_bytes!("./pem.pem");
     let key = include_bytes!("./key.pem");
@@ -117,7 +117,6 @@ async fn handle_mux(
             loop {
                 tokio::select! {
                     event = stream.read() => {
-                        println!("ws rx");
                         match event {
                             Some(event) => match event {
                                 WsEvent::Send(data) => {
@@ -129,10 +128,9 @@ async fn handle_mux(
                         }
                     },
                     event = tcp_stream_framed.next() => {
-                        println!("tcp rx");
                         match event.and_then(|x| x.ok()) {
                             Some(event) => stream.write(event.into()).await?,
-                            None => return Ok(true),
+                            None => break,
                         }
                     }
                 }
@@ -176,10 +174,18 @@ async fn accept_ws(
 
     println!("{:?}: connected", addr);
 
-    ServerMux::handle(rx, tx, &mut |packet, stream| async move {
-        let close_err = stream.get_close_handle();
-        let close_ok = stream.get_close_handle();
+    let (mut mux, fut) = ServerMux::new(rx, tx);
+
+    tokio::spawn(async move {
+        if let Err(e) = fut.await {
+            println!("err in mux: {:?}", e);
+        }
+    });
+
+    while let Some((packet, stream)) = mux.server_new_stream().await {
         tokio::spawn(async move {
+            let close_err = stream.get_close_handle();
+            let close_ok = stream.get_close_handle();
             let _ = handle_mux(packet, stream)
                 .or_else(|err| async move {
                     let _ = close_err.close(0x03).await;
@@ -194,9 +200,7 @@ async fn accept_ws(
                 })
                 .await;
         });
-        Ok(())
-    })
-    .await?;
+    }
 
     println!("{:?}: disconnected", addr);
     Ok(())
