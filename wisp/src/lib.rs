@@ -1,3 +1,4 @@
+#![feature(impl_trait_in_assoc_type)]
 #[cfg(feature = "fastwebsockets")]
 mod fastwebsockets;
 mod packet;
@@ -5,6 +6,10 @@ mod stream;
 pub mod ws;
 #[cfg(feature = "ws_stream_wasm")]
 mod ws_stream_wasm;
+#[cfg(feature = "hyper_tower")]
+pub mod tokioio;
+#[cfg(feature = "hyper_tower")]
+pub mod tower;
 
 pub use crate::packet::*;
 pub use crate::stream::*;
