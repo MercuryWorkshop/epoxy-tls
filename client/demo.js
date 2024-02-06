@@ -1,25 +1,15 @@
-(async () => {
+importScripts("epoxy-bundled.js");
+onmessage = async (msg) => {
+    console.debug("recieved:", msg);
+    let [should_feature_test, should_multiparallel_test, should_parallel_test, should_multiperf_test, should_perf_test, should_ws_test, should_tls_test] = msg.data;
     console.log(
         "%cWASM is significantly slower with DevTools open!",
         "color:red;font-size:3rem;font-weight:bold"
     );
 
-    const params = (new URL(window.location.href)).searchParams;
-
-    const should_feature_test = params.has("feature_test");
-    const should_multiparallel_test = params.has("multi_parallel_test");
-    const should_parallel_test = params.has("parallel_test");
-    const should_multiperf_test = params.has("multi_perf_test");
-    const should_perf_test = params.has("perf_test");
-    const should_ws_test = params.has("ws_test");
-    const should_tls_test = params.has("rawtls_test");
-
     const log = (str) => {
-        let el = document.createElement("div");
-        el.innerText = str;
-        document.getElementById("logs").appendChild(el);
         console.warn(str);
-        window.scrollTo(0, document.body.scrollHeight);
+        postMessage(str);
     }
 
     let { EpoxyClient } = await epoxy();
@@ -183,4 +173,4 @@
         console.warn(await resp.text());
     }
     log("done");
-})();
+};

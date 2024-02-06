@@ -47,6 +47,11 @@ type EpxIoTlsStream = TlsStream<IoStream<MuxStreamIo, Vec<u8>>>;
 type EpxIoUnencryptedStream = IoStream<MuxStreamIo, Vec<u8>>;
 type EpxIoStream = Either<EpxIoTlsStream, EpxIoUnencryptedStream>;
 
+#[wasm_bindgen(start)]
+fn init() {
+    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+}
+
 #[wasm_bindgen]
 pub struct EpoxyClient {
     rustls_config: Arc<rustls::ClientConfig>,
@@ -303,7 +308,7 @@ impl EpoxyClient {
 
         let headers_map = builder.headers_mut().replace_err("Failed to get headers")?;
         headers_map.insert("Accept-Encoding", HeaderValue::from_str("gzip, br")?);
-        headers_map.insert("Connection", HeaderValue::from_str("close")?);
+        headers_map.insert("Connection", HeaderValue::from_str("keep-alive")?);
         headers_map.insert("User-Agent", HeaderValue::from_str(&self.useragent)?);
         headers_map.insert("Host", HeaderValue::from_str(uri_host)?);
         if body_bytes.is_empty() {

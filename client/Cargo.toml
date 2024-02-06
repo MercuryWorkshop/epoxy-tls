@@ -31,6 +31,7 @@ getrandom = { version = "0.2.12", features = ["js"] }
 hyper-util = { git = "https://github.com/r58Playz/hyper-util-wasm", features = ["client", "client-legacy", "http1", "http2"] }
 tokio = { version = "1.36.0", default-features = false }
 tower-service = "0.3.2"
+console_error_panic_hook = "0.1.7"
 
 [dependencies.ring]
 features = ["wasm32_unknown_unknown_js"]

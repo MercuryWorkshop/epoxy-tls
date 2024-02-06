@@ -2,12 +2,28 @@
 
 <head>
     <title>epoxy</title>
-    <script src="epoxy-bundled.js"></script>
-    <script src="demo.js"></script>
     <style>
     body { font-family: sans-serif }
     #logs > * { font-family: monospace }
     </style>
+    <script>
+        const params = (new URL(window.location.href)).searchParams;
+        const should_feature_test = params.has("feature_test");
+        const should_multiparallel_test = params.has("multi_parallel_test");
+        const should_parallel_test = params.has("parallel_test");
+        const should_multiperf_test = params.has("multi_perf_test");
+        const should_perf_test = params.has("perf_test");
+        const should_ws_test = params.has("ws_test");
+        const should_tls_test = params.has("rawtls_test");
+        const worker = new Worker("demo.js");
+        worker.onmessage = (msg) => {
+            let el = document.createElement("div");
+            el.textContent = msg.data;
+            document.getElementById("logs").appendChild(el);
+            window.scrollTo(0, document.body.scrollHeight);
+        };
+        worker.postMessage([should_feature_test, should_multiparallel_test, should_parallel_test, should_multiperf_test, should_perf_test, should_ws_test, should_tls_test]);
+    </script>
 </head>
 
 <body>
