@@ -1,8 +1,9 @@
 use wasm_bindgen::prelude::*;
 
+use hyper::rt::Executor;
 use hyper::{header::HeaderValue, Uri};
-use http::uri;
 use js_sys::{Array, Object};
+use std::future::Future;
 
 #[wasm_bindgen]
 extern "C" {
@@ -97,6 +98,21 @@ impl UriExt for Uri {
     }
 }
 
+#[derive(Clone)]
+pub struct WasmExecutor;
+
+impl<F> Executor<F> for WasmExecutor
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    fn execute(&self, future: F) {
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = future.await;
+        });
+    }
+}
+
 pub fn entries_of_object(obj: &Object) -> Vec<Vec<String>> {
     js_sys::Object::entries(obj)
         .to_vec()
@@ -126,41 +142,19 @@ pub fn is_redirect(code: u16) -> bool {
 }
 
 pub fn get_is_secure(url: &Uri) -> Result<bool, JsError> {
-    let url_scheme = url.scheme().replace_err("URL must have a scheme")?;
     let url_scheme_str = url.scheme_str().replace_err("URL must have a scheme")?;
-    // can't use match, compiler error
-    // error: to use a constant of type `Scheme` in a pattern, `Scheme` must be annotated with `#[derive(PartialEq, Eq)]`
-    if *url_scheme == uri::Scheme::HTTP {
-        Ok(false)
-    } else if *url_scheme == uri::Scheme::HTTPS {
-        Ok(true)
-    } else if url_scheme_str == "ws" {
-        Ok(false)
-    } else if url_scheme_str == "wss" {
-        Ok(true)
-    } else {
-        return Ok(false);
+    match url_scheme_str {
+        "https" | "wss" => Ok(true),
+        _ => Ok(false),
     }
 }
 
 pub fn get_url_port(url: &Uri) -> Result<u16, JsError> {
-    let url_scheme = url.scheme().replace_err("URL must have a scheme")?;
-    let url_scheme_str = url.scheme_str().replace_err("URL must have a scheme")?;
     if let Some(port) = url.port() {
         Ok(port.as_u16())
+    } else if get_is_secure(url)? {
+        Ok(443)
     } else {
-        // can't use match, compiler error
-        // error: to use a constant of type `Scheme` in a pattern, `Scheme` must be annotated with `#[derive(PartialEq, Eq)]`
-        if *url_scheme == uri::Scheme::HTTP {
-            Ok(80)
-        } else if *url_scheme == uri::Scheme::HTTPS {
-            Ok(443)
-        } else if url_scheme_str == "ws" {
-            Ok(80)
-        } else if url_scheme_str == "wss" {
-            Ok(443)
-        } else {
-            return Err(jerr!("Failed to coerce port from scheme"));
-        }
+        Ok(80)
     }
 }

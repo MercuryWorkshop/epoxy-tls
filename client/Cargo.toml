@@ -10,9 +10,8 @@ crate-type = ["cdylib"]
 bytes = "1.5.0"
 http = "1.0.0"
 http-body-util = "0.1.0"
-hyper = { version = "1.1.0", features = ["client", "http1"] }
+hyper = { version = "1.1.0", features = ["client", "http1", "http2"] }
 pin-project-lite = "0.2.13"
-tokio = { version = "1.35.1", default_features = false }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4.39"
 ws_stream_wasm = { version = "0.7.4", features = ["tokio_io"] }
@@ -26,9 +25,12 @@ tokio-util = { version = "0.7.10", features = ["io"] }
 async-compression = { version = "0.4.5", features = ["tokio", "gzip", "brotli"] }
 fastwebsockets = { version = "0.6.0", features = ["unstable-split"] }
 base64 = "0.21.7"
-wisp-mux = { path = "../wisp", features = ["ws_stream_wasm", "tokio_io"] }
+wisp-mux = { path = "../wisp", features = ["ws_stream_wasm", "tokio_io", "hyper_tower"] }
 async_io_stream = { version = "0.3.3", features = ["tokio_io"] }
 getrandom = { version = "0.2.12", features = ["js"] }
+hyper-util = { git = "https://github.com/r58Playz/hyper-util-wasm", features = ["client", "client-legacy", "http1", "http2"] }
+tokio = { version = "1.36.0", default-features = false }
+tower-service = "0.3.2"
 
 [dependencies.ring]
 features = ["wasm32_unknown_unknown_js"]

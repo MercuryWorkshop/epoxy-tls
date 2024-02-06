@@ -50,7 +50,13 @@
             ["https://httpbin.org/gzip", {}],
             ["https://httpbin.org/brotli", {}],
             ["https://httpbin.org/redirect/11", {}],
-            ["https://httpbin.org/redirect/1", { redirect: "manual" }]
+            ["https://httpbin.org/redirect/1", { redirect: "manual" }],
+            ["https://nghttp2.org/httpbin/get", {}],
+            ["https://nghttp2.org/httpbin/gzip", {}],
+            ["https://nghttp2.org/httpbin/brotli", {}],
+            ["https://nghttp2.org/httpbin/redirect/11", {}],
+            ["https://nghttp2.org/httpbin/redirect/1", { redirect: "manual" }]
+
         ]) {
             let resp = await epoxy_client.fetch(url[0], url[1]);
             console.warn(url, resp, Object.fromEntries(resp.headers));

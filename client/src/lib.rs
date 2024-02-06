@@ -1,16 +1,14 @@
-#![feature(let_chains)]
+#![feature(let_chains, impl_trait_in_assoc_type)]
 #[macro_use]
 mod utils;
 mod tls_stream;
-mod tokioio;
 mod websocket;
 mod wrappers;
 
 use tls_stream::EpxTlsStream;
-use tokioio::TokioIo;
 use utils::{ReplaceErr, UriExt};
 use websocket::EpxWebSocket;
-use wrappers::IncomingBody;
+use wrappers::{IncomingBody, TlsWispService};
 
 use std::sync::Arc;
 
@@ -19,7 +17,8 @@ use async_io_stream::IoStream;
 use bytes::Bytes;
 use futures_util::{stream::SplitSink, StreamExt};
 use http::{uri, HeaderName, HeaderValue, Request, Response};
-use hyper::{body::Incoming, client::conn::http1::Builder, Uri};
+use hyper::{body::Incoming, Uri};
+use hyper_util::client::legacy::Client;
 use js_sys::{Array, Function, Object, Reflect, Uint8Array};
 use tokio_rustls::{client::TlsStream, rustls, rustls::RootCertStore, TlsConnector};
 use tokio_util::{
@@ -28,7 +27,7 @@ use tokio_util::{
 };
 use wasm_bindgen::prelude::*;
 use web_sys::TextEncoder;
-use wisp_mux::{ClientMux, MuxStreamIo, StreamType};
+use wisp_mux::{tokioio::TokioIo, tower::ServiceWrapper, ClientMux, MuxStreamIo, StreamType};
 use ws_stream_wasm::{WsMessage, WsMeta, WsStream};
 
 type HttpBody = http_body_util::Full<Bytes>;
@@ -36,7 +35,7 @@ type HttpBody = http_body_util::Full<Bytes>;
 #[derive(Debug)]
 enum EpxResponse {
     Success(Response<Incoming>),
-    Redirect((Response<Incoming>, http::Request<HttpBody>, Uri)),
+    Redirect((Response<Incoming>, http::Request<HttpBody>)),
 }
 
 enum EpxCompression {
@@ -48,73 +47,11 @@ type EpxIoTlsStream = TlsStream<IoStream<MuxStreamIo, Vec<u8>>>;
 type EpxIoUnencryptedStream = IoStream<MuxStreamIo, Vec<u8>>;
 type EpxIoStream = Either<EpxIoTlsStream, EpxIoUnencryptedStream>;
 
-async fn send_req(
-    req: http::Request<HttpBody>,
-    should_redirect: bool,
-    io: EpxIoStream,
-) -> Result<EpxResponse, JsError> {
-    let (mut req_sender, conn) = Builder::new()
-        .title_case_headers(true)
-        .preserve_header_case(true)
-        .handshake(TokioIo::new(io))
-        .await
-        .replace_err("Failed to connect to host")?;
-
-    wasm_bindgen_futures::spawn_local(async move {
-        if let Err(e) = conn.await {
-            error!("epoxy: error in muxed hyper connection! {:?}", e);
-        }
-    });
-
-    let new_req = if should_redirect {
-        Some(req.clone())
-    } else {
-        None
-    };
-
-    debug!("sending req");
-    let res = req_sender
-        .send_request(req)
-        .await
-        .replace_err("Failed to send request");
-    debug!("recieved res");
-    match res {
-        Ok(res) => {
-            if utils::is_redirect(res.status().as_u16())
-                && let Some(mut new_req) = new_req
-                && let Some(location) = res.headers().get("Location")
-                && let Ok(redirect_url) = new_req.uri().get_redirect(location)
-                && let Some(redirect_url_authority) = redirect_url
-                    .clone()
-                    .authority()
-                    .replace_err("Redirect URL must have an authority")
-                    .ok()
-            {
-                let should_strip = new_req.uri().is_same_host(&redirect_url);
-                if should_strip {
-                    new_req.headers_mut().remove("authorization");
-                    new_req.headers_mut().remove("cookie");
-                    new_req.headers_mut().remove("www-authenticate");
-                }
-                let new_url = redirect_url.clone();
-                *new_req.uri_mut() = redirect_url;
-                new_req.headers_mut().insert(
-                    "Host",
-                    HeaderValue::from_str(redirect_url_authority.as_str())?,
-                );
-                Ok(EpxResponse::Redirect((res, new_req, new_url)))
-            } else {
-                Ok(EpxResponse::Success(res))
-            }
-        }
-        Err(err) => Err(err),
-    }
-}
-
 #[wasm_bindgen]
 pub struct EpoxyClient {
     rustls_config: Arc<rustls::ClientConfig>,
-    mux: ClientMux<SplitSink<WsStream, WsMessage>>,
+    mux: Arc<ClientMux<SplitSink<WsStream, WsMessage>>>,
+    hyper_client: Client<TlsWispService<SplitSink<WsStream, WsMessage>>, HttpBody>,
     useragent: String,
     redirect_limit: usize,
 }
@@ -145,6 +82,7 @@ impl EpoxyClient {
         debug!("connected!");
         let (wtx, wrx) = ws.split();
         let (mux, fut) = ClientMux::new(wrx, wtx);
+        let mux = Arc::new(mux);
 
         wasm_bindgen_futures::spawn_local(async move {
             if let Err(err) = fut.await {
@@ -162,7 +100,15 @@ impl EpoxyClient {
         );
 
         Ok(EpoxyClient {
-            mux,
+            mux: mux.clone(),
+            hyper_client: Client::builder(utils::WasmExecutor {})
+                .http09_responses(true)
+                .http1_title_case_headers(true)
+                .http1_preserve_header_case(true)
+                .build(TlsWispService {
+                    rustls_config: rustls_config.clone(),
+                    service: ServiceWrapper(mux),
+                }),
             rustls_config,
             useragent,
             redirect_limit,
@@ -193,26 +139,53 @@ impl EpoxyClient {
         Ok(io)
     }
 
-    async fn get_http_io(&self, url: &Uri) -> Result<EpxIoStream, JsError> {
-        let url_host = url.host().replace_err("URL must have a host")?;
-        let url_port = utils::get_url_port(url)?;
-
-        if utils::get_is_secure(url)? {
-            Ok(EpxIoStream::Left(
-                self.get_tls_io(url_host, url_port).await?,
-            ))
+    async fn send_req_inner(
+        &self,
+        req: http::Request<HttpBody>,
+        should_redirect: bool,
+    ) -> Result<EpxResponse, JsError> {
+        let new_req = if should_redirect {
+            Some(req.clone())
         } else {
-            debug!("making channel");
-            let channel = self
-                .mux
-                .client_new_stream(StreamType::Tcp, url_host.to_string(), url_port)
-                .await
-                .replace_err("Failed to create multiplexor channel")?
-                .into_io()
-                .into_asyncrw();
-            debug!("connecting channel");
-            debug!("connected channel");
-            Ok(EpxIoStream::Right(channel))
+            None
+        };
+
+        debug!("sending req");
+        let res = self
+            .hyper_client
+            .request(req)
+            .await
+            .replace_err("Failed to send request");
+        debug!("recieved res");
+        match res {
+            Ok(res) => {
+                if utils::is_redirect(res.status().as_u16())
+                    && let Some(mut new_req) = new_req
+                    && let Some(location) = res.headers().get("Location")
+                    && let Ok(redirect_url) = new_req.uri().get_redirect(location)
+                    && let Some(redirect_url_authority) = redirect_url
+                        .clone()
+                        .authority()
+                        .replace_err("Redirect URL must have an authority")
+                        .ok()
+                {
+                    let should_strip = new_req.uri().is_same_host(&redirect_url);
+                    if should_strip {
+                        new_req.headers_mut().remove("authorization");
+                        new_req.headers_mut().remove("cookie");
+                        new_req.headers_mut().remove("www-authenticate");
+                    }
+                    *new_req.uri_mut() = redirect_url;
+                    new_req.headers_mut().insert(
+                        "Host",
+                        HeaderValue::from_str(redirect_url_authority.as_str())?,
+                    );
+                    Ok(EpxResponse::Redirect((res, new_req)))
+                } else {
+                    Ok(EpxResponse::Success(res))
+                }
+            }
+            Err(err) => Err(err),
         }
     }
 
@@ -222,23 +195,22 @@ impl EpoxyClient {
         should_redirect: bool,
     ) -> Result<(hyper::Response<Incoming>, Uri, bool), JsError> {
         let mut redirected = false;
-        let uri = req.uri().clone();
-        let mut current_resp: EpxResponse =
-            send_req(req, should_redirect, self.get_http_io(&uri).await?).await?;
+        let mut current_url = req.uri().clone();
+        let mut current_resp: EpxResponse = self.send_req_inner(req, should_redirect).await?;
         for _ in 0..self.redirect_limit - 1 {
             match current_resp {
                 EpxResponse::Success(_) => break,
-                EpxResponse::Redirect((_, req, new_url)) => {
+                EpxResponse::Redirect((_, req)) => {
                     redirected = true;
-                    current_resp =
-                        send_req(req, should_redirect, self.get_http_io(&new_url).await?).await?
+                    current_url = req.uri().clone();
+                    current_resp = self.send_req_inner(req, should_redirect).await?
                 }
             }
         }
 
         match current_resp {
-            EpxResponse::Success(resp) => Ok((resp, uri, redirected)),
-            EpxResponse::Redirect((resp, _, new_url)) => Ok((resp, new_url, redirected)),
+            EpxResponse::Success(resp) => Ok((resp, current_url, redirected)),
+            EpxResponse::Redirect((resp, _)) => Ok((resp, current_url, redirected)),
         }
     }
 
@@ -353,7 +325,7 @@ impl EpoxyClient {
             .body(HttpBody::new(body_bytes))
             .replace_err("Failed to make request")?;
 
-        let (resp, last_url, req_redirected) = self.send_req(request, req_should_redirect).await?;
+        let (resp, resp_uri, req_redirected) = self.send_req(request, req_should_redirect).await?;
 
         let resp_headers_raw = resp.headers().clone();
 
@@ -417,7 +389,7 @@ impl EpoxyClient {
         Object::define_property(
             &resp,
             &jval!("url"),
-            &utils::define_property_obj(jval!(last_url.to_string()), false)
+            &utils::define_property_obj(jval!(resp_uri.to_string()), false)
                 .replace_err("Failed to make define_property object for url")?,
         );
 

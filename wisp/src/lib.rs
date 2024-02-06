@@ -35,6 +35,9 @@ pub enum WispError {
     InvalidPacketType,
     InvalidStreamType,
     InvalidStreamId,
+    InvalidUri,
+    UriHasNoHost,
+    UriHasNoPort,
     MaxStreamCountReached,
     StreamAlreadyClosed,
     WsFrameInvalidType,
@@ -60,6 +63,9 @@ impl std::fmt::Display for WispError {
             InvalidPacketType => write!(f, "Invalid packet type"),
             InvalidStreamType => write!(f, "Invalid stream type"),
             InvalidStreamId => write!(f, "Invalid stream id"),
+            InvalidUri => write!(f, "Invalid URI"),
+            UriHasNoHost => write!(f, "URI has no host"),
+            UriHasNoPort => write!(f, "URI has no port"),
             MaxStreamCountReached => write!(f, "Maximum stream count reached"),
             StreamAlreadyClosed => write!(f, "Stream already closed"),
             WsFrameInvalidType => write!(f, "Invalid websocket frame type"),
@@ -329,7 +335,7 @@ impl<W: ws::WebSocketWrite + Send + 'static> ClientMux<W> {
         stream_type: StreamType,
         host: String,
         port: u16,
-    ) -> Result<MuxStream<impl ws::WebSocketWrite>, WispError> {
+    ) -> Result<MuxStream<W>, WispError> {
         let (ch_tx, ch_rx) = mpsc::unbounded();
         let stream_id = self.next_free_stream_id.load(Ordering::Acquire);
         self.tx

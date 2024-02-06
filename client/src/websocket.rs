@@ -5,7 +5,7 @@ use fastwebsockets::{
     CloseCode, FragmentCollectorRead, Frame, OpCode, Payload, Role, WebSocket, WebSocketWrite,
 };
 use futures_util::lock::Mutex;
-use http_body_util::Empty;
+use http_body_util::Full;
 use hyper::{
     header::{CONNECTION, UPGRADE},
     upgrade::Upgraded,
@@ -63,23 +63,9 @@ impl EpxWebSocket {
                 builder = builder.header("Sec-WebSocket-Protocol", protocols.join(", "));
             }
 
-            let req = builder.body(Empty::<Bytes>::new())?;
+            let req = builder.body(Full::<Bytes>::new(Bytes::new()))?;
 
-            let stream = tcp.get_http_io(&url).await?;
-
-            let (mut sender, conn) = Builder::new()
-                .title_case_headers(true)
-                .preserve_header_case(true)
-                .handshake::<TokioIo<EpxIoStream>, Empty<Bytes>>(TokioIo::new(stream))
-                .await?;
-
-            wasm_bindgen_futures::spawn_local(async move {
-                if let Err(e) = conn.with_upgrades().await {
-                    error!("epoxy: error in muxed hyper connection (ws)! {:?}", e);
-                }
-            });
-
-            let mut response = sender.send_request(req).await?;
+            let mut response = tcp.hyper_client.request(req).await?;
             verify(&response)?;
 
             let ws = WebSocket::after_handshake(

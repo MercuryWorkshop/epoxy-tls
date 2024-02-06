@@ -10,14 +10,15 @@ fastwebsockets = { version = "0.6.0", features = ["unstable-split"], optional = 
 futures = "0.3.30"
 futures-util = "0.3.30"
 hyper = { version = "1.1.0", optional = true }
+hyper-util = { git = "https://github.com/r58Playz/hyper-util-wasm", features = ["client", "client-legacy"], optional = true }
 pin-project-lite = "0.2.13"
-tokio = { version = "1.35.1", optional = true }
-tower = { version = "0.4.13", optional = true }
+tokio = { version = "1.35.1", optional = true, default-features = false }
+tower-service = { version = "0.3.2", optional = true }
 ws_stream_wasm = { version = "0.7.4", optional = true }
 
 [features]
 fastwebsockets = ["dep:fastwebsockets", "dep:tokio"]
 ws_stream_wasm = ["dep:ws_stream_wasm"]
 tokio_io = ["async_io_stream/tokio_io"]
-hyper_tower = ["dep:tower", "dep:hyper", "dep:tokio"]
+hyper_tower = ["dep:tower-service", "dep:hyper", "dep:tokio", "dep:hyper-util"]
 
