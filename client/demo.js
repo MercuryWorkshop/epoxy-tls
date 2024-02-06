@@ -41,12 +41,6 @@ onmessage = async (msg) => {
             ["https://httpbin.org/brotli", {}],
             ["https://httpbin.org/redirect/11", {}],
             ["https://httpbin.org/redirect/1", { redirect: "manual" }],
-            ["https://nghttp2.org/httpbin/get", {}],
-            ["https://nghttp2.org/httpbin/gzip", {}],
-            ["https://nghttp2.org/httpbin/brotli", {}],
-            ["https://nghttp2.org/httpbin/redirect/11", {}],
-            ["https://nghttp2.org/httpbin/redirect/1", { redirect: "manual" }]
-
         ]) {
             let resp = await epoxy_client.fetch(url[0], url[1]);
             console.warn(url, resp, Object.fromEntries(resp.headers));
@@ -122,7 +116,6 @@ onmessage = async (msg) => {
         }
         total_mux_minus_native = total_mux_minus_native / num_tests;
         log(`total mux - native (${num_tests} tests of ${num_tests} reqs): ${total_mux_minus_native} ms or ${total_mux_minus_native / 1000} s`);
-
     } else if (should_perf_test) {
         const num_tests = 10;
 
