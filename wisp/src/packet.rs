@@ -63,7 +63,7 @@ impl From<ConnectPacket> for Vec<u8> {
 
 #[derive(Debug)]
 pub struct ContinuePacket {
-    buffer_remaining: u32,
+    pub buffer_remaining: u32,
 }
 
 impl ContinuePacket {
@@ -94,7 +94,7 @@ impl From<ContinuePacket> for Vec<u8> {
 
 #[derive(Debug)]
 pub struct ClosePacket {
-    reason: u8,
+    pub reason: u8,
 }
 
 impl ClosePacket {

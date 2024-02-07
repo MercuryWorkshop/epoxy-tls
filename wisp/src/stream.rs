@@ -1,5 +1,6 @@
 use async_io_stream::IoStream;
 use bytes::Bytes;
+use event_listener::Event;
 use futures::{
     channel::{mpsc, oneshot},
     sink, stream,
@@ -10,7 +11,7 @@ use pin_project_lite::pin_project;
 use std::{
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
         Arc,
     },
 };
@@ -24,19 +25,36 @@ pub enum MuxEvent {
     Close(u32, u8, oneshot::Sender<Result<(), crate::WispError>>),
 }
 
-pub struct MuxStreamRead {
+pub struct MuxStreamRead<W>
+where
+    W: crate::ws::WebSocketWrite,
+{
     pub stream_id: u32,
+    role: crate::Role,
+    tx: crate::ws::LockedWebSocketWrite<W>,
     rx: mpsc::UnboundedReceiver<WsEvent>,
     is_closed: Arc<AtomicBool>,
+    flow_control: Arc<AtomicU32>,
 }
 
-impl MuxStreamRead {
+impl<W: crate::ws::WebSocketWrite + Send + 'static> MuxStreamRead<W> {
     pub async fn read(&mut self) -> Option<WsEvent> {
         if self.is_closed.load(Ordering::Acquire) {
             return None;
         }
         match self.rx.next().await? {
-            WsEvent::Send(bytes) => Some(WsEvent::Send(bytes)),
+            WsEvent::Send(bytes) => {
+                if self.role == crate::Role::Server {
+                    let old_val = self.flow_control.fetch_add(1, Ordering::SeqCst);
+                    self.tx
+                        .write_frame(
+                            crate::Packet::new_continue(self.stream_id, old_val + 1).into(),
+                        )
+                        .await
+                        .ok()?;
+                }
+                Some(WsEvent::Send(bytes))
+            }
             WsEvent::Close(packet) => {
                 self.is_closed.store(true, Ordering::Release);
                 Some(WsEvent::Close(packet))
@@ -63,9 +81,12 @@ where
     W: crate::ws::WebSocketWrite,
 {
     pub stream_id: u32,
+    role: crate::Role,
     tx: crate::ws::LockedWebSocketWrite<W>,
     close_channel: mpsc::UnboundedSender<MuxEvent>,
     is_closed: Arc<AtomicBool>,
+    continue_recieved: Arc<Event>,
+    flow_control: Arc<AtomicU32>,
 }
 
 impl<W: crate::ws::WebSocketWrite + Send + 'static> MuxStreamWrite<W> {
@@ -73,9 +94,22 @@ impl<W: crate::ws::WebSocketWrite + Send + 'static> MuxStreamWrite<W> {
         if self.is_closed.load(Ordering::Acquire) {
             return Err(crate::WispError::StreamAlreadyClosed);
         }
+        if self.role == crate::Role::Client && self.flow_control.load(Ordering::Acquire) <= 0 {
+            self.continue_recieved.listen().await;
+        }
         self.tx
             .write_frame(crate::Packet::new_data(self.stream_id, data).into())
-            .await
+            .await?;
+        if self.role == crate::Role::Client {
+            self.flow_control.store(
+                self.flow_control
+                    .load(Ordering::Acquire)
+                    .checked_add(1)
+                    .unwrap_or(0),
+                Ordering::Release,
+            );
+        }
+        Ok(())
     }
 
     pub fn get_close_handle(&self) -> MuxStreamCloser {
@@ -123,30 +157,39 @@ where
     W: crate::ws::WebSocketWrite,
 {
     pub stream_id: u32,
-    rx: MuxStreamRead,
+    rx: MuxStreamRead<W>,
     tx: MuxStreamWrite<W>,
 }
 
 impl<W: crate::ws::WebSocketWrite + Send + 'static> MuxStream<W> {
     pub(crate) fn new(
         stream_id: u32,
+        role: crate::Role,
         rx: mpsc::UnboundedReceiver<WsEvent>,
         tx: crate::ws::LockedWebSocketWrite<W>,
         close_channel: mpsc::UnboundedSender<MuxEvent>,
         is_closed: Arc<AtomicBool>,
+        flow_control: Arc<AtomicU32>,
+        continue_recieved: Arc<Event>
     ) -> Self {
         Self {
             stream_id,
             rx: MuxStreamRead {
                 stream_id,
+                role,
+                tx: tx.clone(),
                 rx,
                 is_closed: is_closed.clone(),
+                flow_control: flow_control.clone(),
             },
             tx: MuxStreamWrite {
                 stream_id,
+                role,
                 tx,
                 close_channel,
                 is_closed: is_closed.clone(),
+                flow_control: flow_control.clone(),
+                continue_recieved: continue_recieved.clone(),
             },
         }
     }
@@ -167,7 +210,7 @@ impl<W: crate::ws::WebSocketWrite + Send + 'static> MuxStream<W> {
         self.tx.close(reason).await
     }
 
-    pub fn into_split(self) -> (MuxStreamRead, MuxStreamWrite<W>) {
+    pub fn into_split(self) -> (MuxStreamRead<W>, MuxStreamWrite<W>) {
         (self.rx, self.tx)
     }
 

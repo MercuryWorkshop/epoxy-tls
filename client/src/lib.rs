@@ -49,7 +49,7 @@ type EpxIoStream = Either<EpxIoTlsStream, EpxIoUnencryptedStream>;
 
 #[wasm_bindgen(start)]
 fn init() {
-    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+    console_error_panic_hook::set_once();
 }
 
 #[wasm_bindgen]
@@ -86,7 +86,7 @@ impl EpoxyClient {
             .replace_err("Failed to connect to websocket")?;
         debug!("connected!");
         let (wtx, wrx) = ws.split();
-        let (mux, fut) = ClientMux::new(wrx, wtx);
+        let (mux, fut) = ClientMux::new(wrx, wtx).await?;
         let mux = Arc::new(mux);
 
         wasm_bindgen_futures::spawn_local(async move {
@@ -174,12 +174,6 @@ impl EpoxyClient {
                         .replace_err("Redirect URL must have an authority")
                         .ok()
                 {
-                    let should_strip = new_req.uri().is_same_host(&redirect_url);
-                    if should_strip {
-                        new_req.headers_mut().remove("authorization");
-                        new_req.headers_mut().remove("cookie");
-                        new_req.headers_mut().remove("www-authenticate");
-                    }
                     *new_req.uri_mut() = redirect_url;
                     new_req.headers_mut().insert(
                         "Host",

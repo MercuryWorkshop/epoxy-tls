@@ -1,7 +1,8 @@
 #![feature(let_chains)]
-use std::io::Error;
+use std::io::{Error, Read};
 
 use bytes::Bytes;
+use clap::Parser;
 use fastwebsockets::{
     upgrade, CloseCode, FragmentCollector, FragmentCollectorRead, Frame, OpCode, Payload,
     WebSocketError,
@@ -18,25 +19,36 @@ use tokio_util::codec::{BytesCodec, Framed};
 
 use wisp_mux::{ws, ConnectPacket, MuxStream, ServerMux, StreamType, WispError, WsEvent};
 
-type HttpBody = http_body_util::Empty<hyper::body::Bytes>;
+type HttpBody = http_body_util::Full<hyper::body::Bytes>;
 
-#[tokio::main]
+#[derive(Parser)]
+#[command(version = clap::crate_version!(), about = "Implementation of the Wisp protocol in Rust, made for epoxy.")]
+struct Cli {
+    #[arg(long, default_value = "/")]
+    prefix: String,
+    #[arg(
+        long = "port",
+        short = 'l',
+        value_name = "PORT",
+        default_value = "4000"
+    )]
+    listen_port: String,
+    #[arg(long, short, value_parser)]
+    pubkey: clio::Input,
+    #[arg(long, short = 'P', value_parser)]
+    privkey: clio::Input,
+}
+
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Error> {
-    let pem = include_bytes!("./pem.pem");
-    let key = include_bytes!("./key.pem");
-    let identity = native_tls::Identity::from_pkcs8(pem, key).expect("failed to make identity");
-    let prefix = if let Some(prefix) = std::env::args().nth(1) {
-        prefix
-    } else {
-        "/".to_string()
-    };
-    let port = if let Some(prefix) = std::env::args().nth(2) {
-        prefix
-    } else {
-        "4000".to_string()
-    };
+    let mut opt = Cli::parse();
+    let mut pem = Vec::new();
+    opt.pubkey.read_to_end(&mut pem)?;
+    let mut key = Vec::new();
+    opt.privkey.read_to_end(&mut key)?;
+    let identity = native_tls::Identity::from_pkcs8(&pem, &key).expect("failed to make identity");
 
-    let socket = TcpListener::bind(format!("0.0.0.0:{}", port))
+    let socket = TcpListener::bind(format!("0.0.0.0:{}", opt.listen_port))
         .await
         .expect("failed to bind");
     let acceptor = TlsAcceptor::from(
@@ -47,7 +59,7 @@ async fn main() -> Result<(), Error> {
     println!("listening on 0.0.0.0:4000");
     while let Ok((stream, addr)) = socket.accept().await {
         let acceptor_cloned = acceptor.clone();
-        let prefix_cloned = prefix.clone();
+        let prefix_cloned = opt.prefix.clone();
         tokio::spawn(async move {
             let stream = acceptor_cloned.accept(stream).await.expect("not tls");
             let io = TokioIo::new(stream);
@@ -72,15 +84,23 @@ async fn accept_http(
 ) -> Result<Response<HttpBody>, WebSocketError> {
     if upgrade::is_upgrade_request(&req)
         && req.uri().path().to_string().starts_with(&prefix)
-        && let Some(protocol) = req.headers().get("Sec-Websocket-Protocol")
-        && protocol == "wisp-v1"
+        && let Some(protocols) = req.headers().get("Sec-Websocket-Protocol").and_then(|x| {
+            Some(
+                x.to_str()
+                    .ok()?
+                    .split(',')
+                    .map(|x| x.trim())
+                    .collect::<Vec<&str>>(),
+            )
+        })
+        && protocols.contains(&"wisp-v1")
     {
         let uri = req.uri().clone();
         let (mut res, fut) = upgrade::upgrade(&mut req)?;
 
         println!("{:?} {:?}", uri.path(), prefix);
 
-        if *uri.path() != prefix {
+        if uri.path().starts_with(&prefix) {
             tokio::spawn(async move {
                 accept_wsproxy(fut, uri.path().strip_prefix(&prefix).unwrap(), addr.clone()).await
             });
@@ -92,11 +112,14 @@ async fn accept_http(
             "Sec-Websocket-Protocol",
             HeaderValue::from_str("wisp-v1").unwrap(),
         );
-        Ok(res)
+        Ok(Response::from_parts(
+            res.into_parts().0,
+            HttpBody::new(Bytes::new()),
+        ))
     } else {
         Ok(Response::builder()
             .status(StatusCode::OK)
-            .body(HttpBody::new())
+            .body(HttpBody::new(":3".to_string().into()))
             .unwrap())
     }
 }
@@ -176,7 +199,7 @@ async fn accept_ws(
 
     println!("{:?}: connected", addr);
 
-    let (mut mux, fut) = ServerMux::new(rx, tx);
+    let (mut mux, fut) = ServerMux::new(rx, tx, 128);
 
     tokio::spawn(async move {
         if let Err(e) = fut.await {
