@@ -24,7 +24,7 @@ type HttpBody = http_body_util::Full<hyper::body::Bytes>;
 #[derive(Parser)]
 #[command(version = clap::crate_version!(), about = "Implementation of the Wisp protocol in Rust, made for epoxy.")]
 struct Cli {
-    #[arg(long, default_value = "/")]
+    #[arg(long, default_value = "")]
     prefix: String,
     #[arg(
         long = "port",
@@ -82,9 +82,13 @@ async fn accept_http(
     addr: String,
     prefix: String,
 ) -> Result<Response<HttpBody>, WebSocketError> {
+    let uri = req.uri().clone().path().to_string();
     if upgrade::is_upgrade_request(&req)
-        && req.uri().path().to_string().starts_with(&prefix)
-        && let Some(protocols) = req.headers().get("Sec-Websocket-Protocol").and_then(|x| {
+        && let Some(uri) = uri.strip_prefix(&prefix)
+    {
+        let (mut res, fut) = upgrade::upgrade(&mut req)?;
+
+        if let Some(protocols) = req.headers().get("Sec-Websocket-Protocol").and_then(|x| {
             Some(
                 x.to_str()
                     .ok()?
@@ -92,31 +96,25 @@ async fn accept_http(
                     .map(|x| x.trim())
                     .collect::<Vec<&str>>(),
             )
-        })
-        && protocols.contains(&"wisp-v1")
-    {
-        let uri = req.uri().clone();
-        let (mut res, fut) = upgrade::upgrade(&mut req)?;
-
-        println!("{:?} {:?}", uri.path(), prefix);
-
-        if uri.path().starts_with(&prefix) {
-            tokio::spawn(async move {
-                accept_wsproxy(fut, uri.path().strip_prefix(&prefix).unwrap(), addr.clone()).await
-            });
-        } else {
+        }) && protocols.contains(&"wisp-v1")
+            && (uri == "" || uri == "/")
+        {
             tokio::spawn(async move { accept_ws(fut, addr.clone()).await });
+            res.headers_mut().insert(
+                "Sec-Websocket-Protocol",
+                HeaderValue::from_str("wisp-v1").unwrap(),
+            );
+        } else {
+            let uri = uri.strip_prefix("/").unwrap_or(uri).to_string();
+            tokio::spawn(async move { accept_wsproxy(fut, uri, addr.clone()).await });
         }
 
-        res.headers_mut().insert(
-            "Sec-Websocket-Protocol",
-            HeaderValue::from_str("wisp-v1").unwrap(),
-        );
         Ok(Response::from_parts(
             res.into_parts().0,
             HttpBody::new(Bytes::new()),
         ))
     } else {
+        println!("random request to path {:?}", uri);
         Ok(Response::builder()
             .status(StatusCode::OK)
             .body(HttpBody::new(":3".to_string().into()))
@@ -134,32 +132,13 @@ async fn handle_mux(
     );
     match packet.stream_type {
         StreamType::Tcp => {
-            let tcp_stream = TcpStream::connect(uri)
+            let mut tcp_stream = TcpStream::connect(uri)
                 .await
                 .map_err(|x| WispError::Other(Box::new(x)))?;
-            let mut tcp_stream_framed = Framed::new(tcp_stream, BytesCodec::new());
-
-            loop {
-                tokio::select! {
-                    event = stream.read() => {
-                        match event {
-                            Some(event) => match event {
-                                WsEvent::Send(data) => {
-                                    tcp_stream_framed.send(data).await.map_err(|x| WispError::Other(Box::new(x)))?;
-                                }
-                                WsEvent::Close(_) => return Ok(false),
-                            },
-                            None => break,
-                        }
-                    },
-                    event = tcp_stream_framed.next() => {
-                        match event.and_then(|x| x.ok()) {
-                            Some(event) => stream.write(event.into()).await?,
-                            None => break,
-                        }
-                    }
-                }
-            }
+            let mut mux_stream = stream.into_io().into_asyncrw();
+            tokio::io::copy_bidirectional(&mut tcp_stream, &mut mux_stream)
+                .await
+                .map_err(|x| WispError::Other(Box::new(x)))?;
         }
         StreamType::Udp => {
             let udp_socket = UdpSocket::bind(uri)
@@ -233,20 +212,27 @@ async fn accept_ws(
 
 async fn accept_wsproxy(
     fut: upgrade::UpgradeFut,
-    incoming_uri: &str,
+    incoming_uri: String,
     addr: String,
 ) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
     let mut ws_stream = FragmentCollector::new(fut.await?);
 
-    println!("{:?}: connected (wsproxy)", addr);
+    println!("{:?}: connected (wsproxy): {:?}", addr, incoming_uri);
+
+    match hyper::Uri::try_from(incoming_uri.clone()) {
+        Ok(_) => (),
+        Err(err) => {
+            ws_stream.write_frame(Frame::close(CloseCode::Away.into(), b"invalid uri")).await?;
+            return Err(Box::new(err));
+        }
+    }
 
     let tcp_stream = match TcpStream::connect(incoming_uri).await {
         Ok(stream) => stream,
         Err(err) => {
             ws_stream
                 .write_frame(Frame::close(CloseCode::Away.into(), b"failed to connect"))
-                .await
-                .unwrap();
+                .await?;
             return Err(Box::new(err));
         }
     };
