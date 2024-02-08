@@ -12,6 +12,7 @@ let client = await new EpoxyClient("wss://localhost:4000", navigator.userAgent, 
 let response = await client.fetch("https://httpbin.org/get");
 await response.text();
 ```
+See `client/demo.js` for more examples.
 
 ## Using the server
 ```
