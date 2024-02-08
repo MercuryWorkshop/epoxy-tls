@@ -6,8 +6,8 @@
 
 #[cfg(feature = "fastwebsockets")]
 mod fastwebsockets;
-mod sink_unfold;
 mod packet;
+mod sink_unfold;
 mod stream;
 #[cfg(feature = "hyper_tower")]
 pub mod tokioio;
@@ -111,12 +111,18 @@ impl std::fmt::Display for WispError {
 
 impl std::error::Error for WispError {}
 
+struct MuxMapValue {
+    stream: mpsc::UnboundedSender<MuxEvent>,
+    flow_control: Arc<AtomicU32>,
+    flow_control_event: Arc<Event>,
+}
+
 struct ServerMuxInner<W>
 where
     W: ws::WebSocketWrite + Send + 'static,
 {
     tx: ws::LockedWebSocketWrite<W>,
-    stream_map: Arc<Mutex<HashMap<u32, mpsc::UnboundedSender<MuxEvent>>>>,
+    stream_map: Arc<Mutex<HashMap<u32, MuxMapValue>>>,
     close_tx: mpsc::UnboundedSender<WsEvent>,
 }
 
@@ -132,11 +138,13 @@ impl<W: ws::WebSocketWrite + Send + 'static> ServerMuxInner<W> {
         R: ws::WebSocketRead,
     {
         let ret = futures::select! {
-            x = self.server_close_loop(close_rx, self.stream_map.clone(), self.tx.clone()).fuse() => x,
+            x = self.server_close_loop(close_rx).fuse() => x,
             x = self.server_msg_loop(rx, muxstream_sender, buffer_size).fuse() => x
         };
         self.stream_map.lock().await.iter().for_each(|x| {
-            let _ = x.1.unbounded_send(MuxEvent::Close(ClosePacket::new(CloseReason::Unknown)));
+            let _ =
+                x.1.stream
+                    .unbounded_send(MuxEvent::Close(ClosePacket::new(CloseReason::Unknown)));
         });
         ret
     }
@@ -144,15 +152,14 @@ impl<W: ws::WebSocketWrite + Send + 'static> ServerMuxInner<W> {
     async fn server_close_loop(
         &self,
         mut close_rx: mpsc::UnboundedReceiver<WsEvent>,
-        stream_map: Arc<Mutex<HashMap<u32, mpsc::UnboundedSender<MuxEvent>>>>,
-        tx: ws::LockedWebSocketWrite<W>,
     ) -> Result<(), WispError> {
         while let Some(msg) = close_rx.next().await {
             match msg {
                 WsEvent::Close(stream_id, reason, channel) => {
-                    if stream_map.lock().await.remove(&stream_id).is_some() {
+                    if self.stream_map.lock().await.remove(&stream_id).is_some() {
                         let _ = channel.send(
-                            tx.write_frame(Packet::new_close(stream_id, reason).into())
+                            self.tx
+                                .write_frame(Packet::new_close(stream_id, reason).into())
                                 .await,
                         );
                     } else {
@@ -184,7 +191,17 @@ impl<W: ws::WebSocketWrite + Send + 'static> ServerMuxInner<W> {
                     Connect(inner_packet) => {
                         let (ch_tx, ch_rx) = mpsc::unbounded();
                         let stream_type = inner_packet.stream_type;
-                        self.stream_map.lock().await.insert(packet.stream_id, ch_tx);
+                        let flow_control: Arc<AtomicU32> = AtomicU32::new(buffer_size).into();
+                        let flow_control_event: Arc<Event> = Event::new().into();
+
+                        self.stream_map.lock().await.insert(
+                            packet.stream_id,
+                            MuxMapValue {
+                                stream: ch_tx,
+                                flow_control: flow_control.clone(),
+                                flow_control_event: flow_control_event.clone(),
+                            },
+                        );
                         muxstream_sender
                             .unbounded_send((
                                 inner_packet,
@@ -196,21 +213,27 @@ impl<W: ws::WebSocketWrite + Send + 'static> ServerMuxInner<W> {
                                     self.tx.clone(),
                                     self.close_tx.clone(),
                                     AtomicBool::new(false).into(),
-                                    AtomicU32::new(buffer_size).into(),
-                                    Event::new().into(),
+                                    flow_control,
+                                    flow_control_event,
                                 ),
                             ))
                             .map_err(|x| WispError::Other(Box::new(x)))?;
                     }
                     Data(data) => {
                         if let Some(stream) = self.stream_map.lock().await.get(&packet.stream_id) {
-                            let _ = stream.unbounded_send(MuxEvent::Send(data));
+                            let _ = stream.stream.unbounded_send(MuxEvent::Send(data));
+                            stream.flow_control.store(
+                                stream.flow_control
+                                    .load(Ordering::Acquire)
+                                    .saturating_sub(1),
+                                Ordering::Release,
+                            );
                         }
                     }
                     Continue(_) => unreachable!(),
                     Close(inner_packet) => {
                         if let Some(stream) = self.stream_map.lock().await.get(&packet.stream_id) {
-                            let _ = stream.unbounded_send(MuxEvent::Close(inner_packet));
+                            let _ = stream.stream.unbounded_send(MuxEvent::Close(inner_packet));
                         }
                         self.stream_map.lock().await.remove(&packet.stream_id);
                     }
@@ -281,18 +304,12 @@ impl<W: ws::WebSocketWrite + Send + 'static> ServerMux<W> {
     }
 }
 
-struct ClientMuxMapValue {
-    stream: mpsc::UnboundedSender<MuxEvent>,
-    flow_control: Arc<AtomicU32>,
-    flow_control_event: Arc<Event>,
-}
-
 struct ClientMuxInner<W>
 where
     W: ws::WebSocketWrite,
 {
     tx: ws::LockedWebSocketWrite<W>,
-    stream_map: Arc<Mutex<HashMap<u32, ClientMuxMapValue>>>,
+    stream_map: Arc<Mutex<HashMap<u32, MuxMapValue>>>,
 }
 
 impl<W: ws::WebSocketWrite + Send> ClientMuxInner<W> {
@@ -386,7 +403,7 @@ where
     W: ws::WebSocketWrite,
 {
     tx: ws::LockedWebSocketWrite<W>,
-    stream_map: Arc<Mutex<HashMap<u32, ClientMuxMapValue>>>,
+    stream_map: Arc<Mutex<HashMap<u32, MuxMapValue>>>,
     next_free_stream_id: AtomicU32,
     close_tx: mpsc::UnboundedSender<WsEvent>,
     buf_size: u32,
@@ -450,7 +467,7 @@ impl<W: ws::WebSocketWrite + Send + 'static> ClientMux<W> {
         );
         self.stream_map.lock().await.insert(
             stream_id,
-            ClientMuxMapValue {
+            MuxMapValue {
                 stream: ch_tx,
                 flow_control: flow_control.clone(),
                 flow_control_event: evt.clone(),

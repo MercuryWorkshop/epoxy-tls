@@ -53,7 +53,7 @@ impl<W: crate::ws::WebSocketWrite + Send + 'static> MuxStreamRead<W> {
         match self.rx.next().await? {
             MuxEvent::Send(bytes) => {
                 if self.role == crate::Role::Server && self.stream_type == crate::StreamType::Tcp {
-                    let old_val = self.flow_control.fetch_add(1, Ordering::SeqCst);
+                    let old_val = self.flow_control.fetch_add(1, Ordering::AcqRel);
                     self.tx
                         .write_frame(
                             crate::Packet::new_continue(self.stream_id, old_val + 1).into(),
@@ -115,8 +115,7 @@ impl<W: crate::ws::WebSocketWrite + Send + 'static> MuxStreamWrite<W> {
             self.flow_control.store(
                 self.flow_control
                     .load(Ordering::Acquire)
-                    .checked_add(1)
-                    .unwrap_or(0),
+                    .saturating_sub(1),
                 Ordering::Release,
             );
         }
