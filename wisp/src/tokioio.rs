@@ -168,8 +168,8 @@ where
     }
 }
 
-impl<T> hyper_util::client::legacy::connect::Connection for TokioIo<T> {
-    fn connected(&self) -> hyper_util::client::legacy::connect::Connected {
-        hyper_util::client::legacy::connect::Connected::new()
+impl<T> hyper_util_wasm::client::legacy::connect::Connection for TokioIo<T> {
+    fn connected(&self) -> hyper_util_wasm::client::legacy::connect::Connected {
+        hyper_util_wasm::client::legacy::connect::Connected::new()
     }
 }

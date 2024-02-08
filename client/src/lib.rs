@@ -18,7 +18,7 @@ use bytes::Bytes;
 use futures_util::{stream::SplitSink, StreamExt};
 use http::{uri, HeaderName, HeaderValue, Request, Response};
 use hyper::{body::Incoming, Uri};
-use hyper_util::client::legacy::Client;
+use hyper_util_wasm::client::legacy::Client;
 use js_sys::{Array, Function, Object, Reflect, Uint8Array};
 use tokio_rustls::{client::TlsStream, rustls, rustls::RootCertStore, TlsConnector};
 use tokio_util::{
