@@ -1,6 +1,5 @@
 #![allow(dead_code)]
-// Taken from https://github.com/hyperium/hyper-util/blob/master/src/rt/tokio.rs
-// hyper-util fails to compile on WASM as it has a dependency on socket2
+//! hyper_util::rt::tokio::TokioIo
 
 use std::{
     pin::Pin,

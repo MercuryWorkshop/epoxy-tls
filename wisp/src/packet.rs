@@ -2,9 +2,12 @@ use crate::ws;
 use crate::WispError;
 use bytes::{Buf, BufMut, Bytes};
 
-#[derive(Debug)]
+/// Wisp stream type.
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum StreamType {
+    /// TCP Wisp stream.
     Tcp = 0x01,
+    /// UDP Wisp stream.
     Udp = 0x02,
 }
 
@@ -20,15 +23,26 @@ impl TryFrom<u8> for StreamType {
     }
 }
 
-#[derive(Debug)]
+/// Packet used to create a new stream.
+///
+/// See [the docs](https://github.com/MercuryWorkshop/wisp-protocol/blob/main/protocol.md#0x01---connect).
+#[derive(Debug, Clone)]
 pub struct ConnectPacket {
+    /// Whether the new stream should use a TCP or UDP socket.
     pub stream_type: StreamType,
+    /// Destination TCP/UDP port for the new stream.
     pub destination_port: u16,
+    /// Destination hostname, in a UTF-8 string.
     pub destination_hostname: String,
 }
 
 impl ConnectPacket {
-    pub fn new(stream_type: StreamType, destination_port: u16, destination_hostname: String) -> Self {
+    /// Create a new connect packet.
+    pub fn new(
+        stream_type: StreamType,
+        destination_port: u16,
+        destination_hostname: String,
+    ) -> Self {
         Self {
             stream_type,
             destination_port,
@@ -61,12 +75,17 @@ impl From<ConnectPacket> for Vec<u8> {
     }
 }
 
-#[derive(Debug)]
+/// Packet used for Wisp TCP stream flow control.
+///
+/// See [the docs](https://github.com/MercuryWorkshop/wisp-protocol/blob/main/protocol.md#0x03---continue).
+#[derive(Debug, Copy, Clone)]
 pub struct ContinuePacket {
+    /// Number of packets that the server can buffer for the current stream.
     pub buffer_remaining: u32,
 }
 
 impl ContinuePacket {
+    /// Create a new continue packet.
     pub fn new(buffer_remaining: u32) -> Self {
         Self { buffer_remaining }
     }
@@ -92,12 +111,21 @@ impl From<ContinuePacket> for Vec<u8> {
     }
 }
 
-#[derive(Debug)]
+/// Packet used to close a stream.
+///
+/// See [the
+/// docs](https://github.com/MercuryWorkshop/wisp-protocol/blob/main/protocol.md#0x04---close).
+#[derive(Debug, Copy, Clone)]
 pub struct ClosePacket {
+    /// The close reason.
+    /// 
+    /// See [the
+    /// docs](https://github.com/MercuryWorkshop/wisp-protocol/blob/main/protocol.md#clientserver-close-reasons).
     pub reason: u8,
 }
 
 impl ClosePacket {
+    /// Create a new close packet.
     pub fn new(reason: u8) -> Self {
         Self { reason }
     }
@@ -123,15 +151,21 @@ impl From<ClosePacket> for Vec<u8> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+/// Type of packet recieved.
 pub enum PacketType {
+    /// Connect packet.
     Connect(ConnectPacket),
+    /// Data packet.
     Data(Bytes),
+    /// Continue packet.
     Continue(ContinuePacket),
+    /// Close packet.
     Close(ClosePacket),
 }
 
 impl PacketType {
+    /// Get the packet type used in the protocol.
     pub fn as_u8(&self) -> u8 {
         use PacketType::*;
         match self {
@@ -155,17 +189,24 @@ impl From<PacketType> for Vec<u8> {
     }
 }
 
-#[derive(Debug)]
+/// Wisp protocol packet.
+#[derive(Debug, Clone)]
 pub struct Packet {
+    /// Stream this packet is associated with.
     pub stream_id: u32,
+    /// Packet recieved.
     pub packet: PacketType,
 }
 
 impl Packet {
+    /// Create a new packet.
+    ///
+    /// The helper functions should be used for most use cases.
     pub fn new(stream_id: u32, packet: PacketType) -> Self {
         Self { stream_id, packet }
     }
 
+    /// Create a new connect packet.
     pub fn new_connect(
         stream_id: u32,
         stream_type: StreamType,
@@ -182,6 +223,7 @@ impl Packet {
         }
     }
 
+    /// Create a new data packet.
     pub fn new_data(stream_id: u32, data: Bytes) -> Self {
         Self {
             stream_id,
@@ -189,6 +231,7 @@ impl Packet {
         }
     }
 
+    /// Create a new continue packet.
     pub fn new_continue(stream_id: u32, buffer_remaining: u32) -> Self {
         Self {
             stream_id,
@@ -196,6 +239,7 @@ impl Packet {
         }
     }
 
+    /// Create a new close packet.
     pub fn new_close(stream_id: u32, reason: u8) -> Self {
         Self {
             stream_id,

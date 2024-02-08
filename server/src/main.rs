@@ -17,7 +17,7 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio_native_tls::{native_tls, TlsAcceptor};
 use tokio_util::codec::{BytesCodec, Framed};
 
-use wisp_mux::{ws, ConnectPacket, MuxStream, ServerMux, StreamType, WispError, WsEvent};
+use wisp_mux::{ws, ConnectPacket, MuxStream, ServerMux, StreamType, WispError, MuxEvent};
 
 type HttpBody = http_body_util::Full<hyper::body::Bytes>;
 
@@ -97,7 +97,7 @@ async fn accept_http(
                     .collect::<Vec<&str>>(),
             )
         }) && protocols.contains(&"wisp-v1")
-            && (uri == "" || uri == "/")
+            && (uri.is_empty() || uri == "/")
         {
             tokio::spawn(async move { accept_ws(fut, addr.clone()).await });
             res.headers_mut().insert(
@@ -105,7 +105,7 @@ async fn accept_http(
                 HeaderValue::from_str("wisp-v1").unwrap(),
             );
         } else {
-            let uri = uri.strip_prefix("/").unwrap_or(uri).to_string();
+            let uri = uri.strip_prefix('/').unwrap_or(uri).to_string();
             tokio::spawn(async move { accept_wsproxy(fut, uri, addr.clone()).await });
         }
 
@@ -154,10 +154,10 @@ async fn handle_mux(
                     event = stream.read() => {
                         match event {
                             Some(event) => match event {
-                                WsEvent::Send(data) => {
+                                MuxEvent::Send(data) => {
                                     udp_socket.send(&data).await.map_err(|x| WispError::Other(Box::new(x)))?;
                                 }
-                                WsEvent::Close(_) => return Ok(false),
+                                MuxEvent::Close(_) => return Ok(false),
                             },
                             None => break,
                         }

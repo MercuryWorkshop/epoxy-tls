@@ -1,3 +1,4 @@
+//! Helper that implements a Tower Service for a client multiplexor.
 use crate::{tokioio::TokioIo, ws::WebSocketWrite, ClientMux, MuxStreamIo, StreamType, WispError};
 use async_io_stream::IoStream;
 use futures::{
@@ -6,6 +7,7 @@ use futures::{
 };
 use std::sync::Arc;
 
+/// Wrapper struct that implements a Tower Service sfor a client multiplexor.
 pub struct ServiceWrapper<W: WebSocketWrite + Send + 'static>(pub Arc<ClientMux<W>>);
 
 impl<W: WebSocketWrite + Send + 'static> tower_service::Service<hyper::Uri> for ServiceWrapper<W> {
