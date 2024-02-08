@@ -5,7 +5,7 @@ license = "AGPL-3.0-only"
 description = "A library for easily creating Wisp servers and clients."
 homepage = "https://github.com/MercuryWorkshop/epoxy-tls/tree/multiplexed/wisp"
 repository = "https://github.com/MercuryWorkshop/epoxy-tls/tree/multiplexed/wisp"
-readme = "https://github.com/MercuryWorkshop/epoxy-tls/tree/multiplexed/wisp/README.md"
+readme = "README.md"
 edition = "2021"
 
 [dependencies]
