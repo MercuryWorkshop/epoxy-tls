@@ -30,7 +30,8 @@ Options:
 ```
 
 ## Building
-Rust nightly is required.
+> [!IMPORTANT]
+> Rust nightly is required.
 
 ### Server
 ```
