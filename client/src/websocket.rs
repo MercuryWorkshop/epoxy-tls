@@ -4,7 +4,8 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use fastwebsockets::{
     CloseCode, FragmentCollectorRead, Frame, OpCode, Payload, Role, WebSocket, WebSocketWrite,
 };
-use http_body_util::Empty;
+use futures_util::lock::Mutex;
+use http_body_util::Full;
 use hyper::{
     header::{CONNECTION, UPGRADE},
     upgrade::Upgraded,
@@ -16,7 +17,7 @@ use tokio::io::WriteHalf;
 
 #[wasm_bindgen]
 pub struct EpxWebSocket {
-    tx: WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>,
+    tx: Arc<Mutex<WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>>>,
     onerror: Function,
 }
 
@@ -44,7 +45,8 @@ impl EpxWebSocket {
             let url = Uri::try_from(url).replace_err("Failed to parse URL")?;
             let host = url.host().replace_err("URL must have a host")?;
 
-            let rand: [u8; 16] = rand::random();
+            let mut rand: [u8; 16] = [0; 16];
+            getrandom::getrandom(&mut rand)?;
             let key = STANDARD.encode(rand);
 
             let mut builder = Request::builder()
@@ -61,23 +63,9 @@ impl EpxWebSocket {
                 builder = builder.header("Sec-WebSocket-Protocol", protocols.join(", "));
             }
 
-            let req = builder.body(Empty::<Bytes>::new())?;
+            let req = builder.body(Full::<Bytes>::new(Bytes::new()))?;
 
-            let stream = tcp.get_http_io(&url).await?;
-
-            let (mut sender, conn) = Builder::new()
-                .title_case_headers(true)
-                .preserve_header_case(true)
-                .handshake::<TokioIo<EpxStream>, Empty<Bytes>>(TokioIo::new(stream))
-                .await?;
-
-            wasm_bindgen_futures::spawn_local(async move {
-                if let Err(e) = conn.with_upgrades().await {
-                    error!("epoxy: error in muxed hyper connection (ws)! {:?}", e);
-                }
-            });
-
-            let mut response = sender.send_request(req).await?;
+            let mut response = tcp.hyper_client.request(req).await?;
             verify(&response)?;
 
             let ws = WebSocket::after_handshake(
@@ -88,16 +76,12 @@ impl EpxWebSocket {
             let (rx, tx) = ws.split(tokio::io::split);
 
             let mut rx = FragmentCollectorRead::new(rx);
+            let tx = Arc::new(Mutex::new(tx));
+            let tx_cloned = tx.clone();
 
             wasm_bindgen_futures::spawn_local(async move {
                 while let Ok(frame) = rx
-                    .read_frame(&mut |arg| async move {
-                        error!(
-                            "wtf is an obligated write {:?}, {:?}, {:?}",
-                            arg.fin, arg.opcode, arg.payload
-                        );
-                        Ok::<(), std::io::Error>(())
-                    })
+                    .read_frame(&mut |arg| async { tx_cloned.lock().await.write_frame(arg).await })
                     .await
                 {
                     match frame.opcode {
@@ -137,10 +121,12 @@ impl EpxWebSocket {
     }
 
     #[wasm_bindgen]
-    pub async fn send(&mut self, payload: String) -> Result<(), JsError> {
+    pub async fn send(&self, payload: String) -> Result<(), JsError> {
         let onerr = self.onerror.clone();
         let ret = self
             .tx
+            .lock()
+            .await
             .write_frame(Frame::text(Payload::Owned(payload.as_bytes().to_vec())))
             .await;
         if let Err(ret) = ret {
@@ -152,8 +138,10 @@ impl EpxWebSocket {
     }
 
     #[wasm_bindgen]
-    pub async fn close(&mut self) -> Result<(), JsError> {
+    pub async fn close(&self) -> Result<(), JsError> {
         self.tx
+            .lock()
+            .await
             .write_frame(Frame::close(CloseCode::Normal.into(), b""))
             .await?;
         Ok(())

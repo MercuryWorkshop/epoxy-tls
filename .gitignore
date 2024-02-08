@@ -1,9 +1,12 @@
 /target
-server/src/*.pem
+**/*.pem
 client/pkg
 client/out
 .direnv
-client/index.js
-client/module.js
-client/module.d.ts
+client/epoxy-bundled.js
+client/epoxy-module-bundled.js
+client/epoxy-module-bundled.d.ts
+client/epoxy.js
+client/epoxy.d.ts
+client/epoxy.wasm
 pnpm-lock.yaml

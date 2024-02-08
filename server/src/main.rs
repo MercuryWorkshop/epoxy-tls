@@ -1,176 +1,283 @@
-use std::{convert::Infallible, env, net::SocketAddr, sync::Arc};
+#![feature(let_chains)]
+use std::io::{Error, Read};
 
+use bytes::Bytes;
+use clap::Parser;
+use fastwebsockets::{
+    upgrade, CloseCode, FragmentCollector, FragmentCollectorRead, Frame, OpCode, Payload,
+    WebSocketError,
+};
+use futures_util::{SinkExt, StreamExt, TryFutureExt};
 use hyper::{
-    body::Incoming,
-    header::{
-        HeaderValue, CONNECTION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_PROTOCOL,
-        SEC_WEBSOCKET_VERSION, UPGRADE,
-    },
-    server::conn::http1,
-    service::service_fn,
-    upgrade::Upgraded,
-    Method, Request, Response, StatusCode, Version,
+    body::Incoming, header::HeaderValue, server::conn::http1, service::service_fn, Request,
+    Response, StatusCode,
 };
 use hyper_util::rt::TokioIo;
-use penguin_mux::{Multiplexor, MuxStream};
-use tokio::{
-    net::{TcpListener, TcpStream},
-    task::{JoinError, JoinSet},
-};
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio_native_tls::{native_tls, TlsAcceptor};
-use tokio_tungstenite::{
-    tungstenite::{handshake::derive_accept_key, protocol::Role},
-    WebSocketStream,
-};
+use tokio_util::codec::{BytesCodec, Framed};
 
-type Body = http_body_util::Empty<hyper::body::Bytes>;
+use wisp_mux::{ws, ConnectPacket, MuxStream, ServerMux, StreamType, WispError, WsEvent};
 
-type MultiplexorStream = MuxStream<WebSocketStream<TokioIo<Upgraded>>>;
+type HttpBody = http_body_util::Full<hyper::body::Bytes>;
 
-async fn forward(mut stream: MultiplexorStream) -> Result<(), JoinError> {
-    println!("forwarding");
-    let host = std::str::from_utf8(&stream.dest_host).unwrap();
-    let mut tcp_stream = TcpStream::connect((host, stream.dest_port)).await.unwrap();
-    println!("connected to {:?}", tcp_stream.peer_addr().unwrap());
-    tokio::io::copy_bidirectional(&mut stream, &mut tcp_stream)
+#[derive(Parser)]
+#[command(version = clap::crate_version!(), about = "Implementation of the Wisp protocol in Rust, made for epoxy.")]
+struct Cli {
+    #[arg(long, default_value = "")]
+    prefix: String,
+    #[arg(
+        long = "port",
+        short = 'l',
+        value_name = "PORT",
+        default_value = "4000"
+    )]
+    listen_port: String,
+    #[arg(long, short, value_parser)]
+    pubkey: clio::Input,
+    #[arg(long, short = 'P', value_parser)]
+    privkey: clio::Input,
+}
+
+#[tokio::main(flavor = "multi_thread")]
+async fn main() -> Result<(), Error> {
+    let mut opt = Cli::parse();
+    let mut pem = Vec::new();
+    opt.pubkey.read_to_end(&mut pem)?;
+    let mut key = Vec::new();
+    opt.privkey.read_to_end(&mut key)?;
+    let identity = native_tls::Identity::from_pkcs8(&pem, &key).expect("failed to make identity");
+
+    let socket = TcpListener::bind(format!("0.0.0.0:{}", opt.listen_port))
         .await
-        .unwrap();
-    println!("finished");
-    Ok(())
-}
+        .expect("failed to bind");
+    let acceptor = TlsAcceptor::from(
+        native_tls::TlsAcceptor::new(identity).expect("failed to make tls acceptor"),
+    );
+    let acceptor = std::sync::Arc::new(acceptor);
 
-async fn handle_connection(ws_stream: WebSocketStream<TokioIo<Upgraded>>, addr: SocketAddr) {
-    println!("WebSocket connection established: {}", addr);
-    let mux = Multiplexor::new(ws_stream, penguin_mux::Role::Server, None, None);
-    let mut jobs = JoinSet::new();
-    println!("muxing");
-    loop {
-        tokio::select! {
-            Some(result) = jobs.join_next() => {
-                match result {
-                    Ok(Ok(())) => {}
-                    Ok(Err(err)) | Err(err) => eprintln!("failed to forward: {:?}", err),
-                }
-            }
-            Ok(result) = mux.server_new_stream_channel() => {
-                jobs.spawn(forward(result));
-            }
-            else => {
-                break;
-            }
-        }
-    }
-    println!("{} disconnected", &addr);
-}
-
-async fn handle_request(
-    mut req: Request<Incoming>,
-    addr: SocketAddr,
-) -> Result<Response<Body>, Infallible> {
-    let headers = req.headers();
-    let derived = headers
-        .get(SEC_WEBSOCKET_KEY)
-        .map(|k| derive_accept_key(k.as_bytes()));
-
-    let mut negotiated_protocol: Option<String> = None;
-    if let Some(protocols) = headers
-        .get(SEC_WEBSOCKET_PROTOCOL)
-        .and_then(|h| h.to_str().ok())
-    {
-        negotiated_protocol = protocols.split(',').next().map(|h| h.trim().to_string());
-    }
-
-    if req.method() != Method::GET
-        || req.version() < Version::HTTP_11
-        || !headers
-            .get(CONNECTION)
-            .and_then(|h| h.to_str().ok())
-            .map(|h| {
-                h.split(|c| c == ' ' || c == ',')
-                    .any(|p| p.eq_ignore_ascii_case("upgrade"))
-            })
-            .unwrap_or(false)
-        || !headers
-            .get(UPGRADE)
-            .and_then(|h| h.to_str().ok())
-            .map(|h| h.eq_ignore_ascii_case("websocket"))
-            .unwrap_or(false)
-        || !headers
-            .get(SEC_WEBSOCKET_VERSION)
-            .map(|h| h == "13")
-            .unwrap_or(false)
-        || derived.is_none()
-    {
-        return Ok(Response::new(Body::default()));
-    }
-
-    let ver = req.version();
-    tokio::task::spawn(async move {
-        match hyper::upgrade::on(&mut req).await {
-            Ok(upgraded) => {
-                let upgraded = TokioIo::new(upgraded);
-                handle_connection(
-                    WebSocketStream::from_raw_socket(upgraded, Role::Server, None).await,
-                    addr,
-                )
-                .await;
-            }
-            Err(e) => eprintln!("upgrade error: {}", e),
-        }
-    });
-
-    let mut res = Response::new(Body::default());
-    *res.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
-    *res.version_mut() = ver;
-    res.headers_mut()
-        .append(CONNECTION, HeaderValue::from_static("Upgrade"));
-    res.headers_mut()
-        .append(UPGRADE, HeaderValue::from_static("websocket"));
-    res.headers_mut()
-        .append(SEC_WEBSOCKET_ACCEPT, derived.unwrap().parse().unwrap());
-    if let Some(protocol) = negotiated_protocol {
-        res.headers_mut()
-            .append(SEC_WEBSOCKET_PROTOCOL, protocol.parse().unwrap());
-    }
-
-    Ok(res)
-}
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = env::args()
-        .nth(1)
-        .unwrap_or_else(|| "0.0.0.0:4000".to_string())
-        .parse::<SocketAddr>()?;
-    let pem = include_bytes!("./pem.pem");
-    let key = include_bytes!("./key.pem");
-
-    let identity = native_tls::Identity::from_pkcs8(pem, key).expect("invalid pem/key");
-
-    let acceptor = TlsAcceptor::from(native_tls::TlsAcceptor::new(identity).unwrap());
-    let acceptor = Arc::new(acceptor);
-
-    let listener = TcpListener::bind(addr).await?;
-
-    println!("listening on {}", addr);
-
-    loop {
-        let (stream, remote_addr) = listener.accept().await?;
-        let acceptor = acceptor.clone();
-
+    println!("listening on 0.0.0.0:4000");
+    while let Ok((stream, addr)) = socket.accept().await {
+        let acceptor_cloned = acceptor.clone();
+        let prefix_cloned = opt.prefix.clone();
         tokio::spawn(async move {
-            let stream = acceptor.accept(stream).await.expect("not tls");
+            let stream = acceptor_cloned.accept(stream).await.expect("not tls");
             let io = TokioIo::new(stream);
-
-            let service = service_fn(move |req| handle_request(req, remote_addr));
-
+            let service =
+                service_fn(move |res| accept_http(res, addr.to_string(), prefix_cloned.clone()));
             let conn = http1::Builder::new()
                 .serve_connection(io, service)
                 .with_upgrades();
-
             if let Err(err) = conn.await {
-                eprintln!("failed to serve connection: {:?}", err);
+                println!("{:?}: failed to serve conn: {:?}", addr, err);
             }
         });
     }
+
+    Ok(())
+}
+
+async fn accept_http(
+    mut req: Request<Incoming>,
+    addr: String,
+    prefix: String,
+) -> Result<Response<HttpBody>, WebSocketError> {
+    let uri = req.uri().clone().path().to_string();
+    if upgrade::is_upgrade_request(&req)
+        && let Some(uri) = uri.strip_prefix(&prefix)
+    {
+        let (mut res, fut) = upgrade::upgrade(&mut req)?;
+
+        if let Some(protocols) = req.headers().get("Sec-Websocket-Protocol").and_then(|x| {
+            Some(
+                x.to_str()
+                    .ok()?
+                    .split(',')
+                    .map(|x| x.trim())
+                    .collect::<Vec<&str>>(),
+            )
+        }) && protocols.contains(&"wisp-v1")
+            && (uri == "" || uri == "/")
+        {
+            tokio::spawn(async move { accept_ws(fut, addr.clone()).await });
+            res.headers_mut().insert(
+                "Sec-Websocket-Protocol",
+                HeaderValue::from_str("wisp-v1").unwrap(),
+            );
+        } else {
+            let uri = uri.strip_prefix("/").unwrap_or(uri).to_string();
+            tokio::spawn(async move { accept_wsproxy(fut, uri, addr.clone()).await });
+        }
+
+        Ok(Response::from_parts(
+            res.into_parts().0,
+            HttpBody::new(Bytes::new()),
+        ))
+    } else {
+        println!("random request to path {:?}", uri);
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .body(HttpBody::new(":3".to_string().into()))
+            .unwrap())
+    }
+}
+
+async fn handle_mux(
+    packet: ConnectPacket,
+    mut stream: MuxStream<impl ws::WebSocketWrite + Send + 'static>,
+) -> Result<bool, WispError> {
+    let uri = format!(
+        "{}:{}",
+        packet.destination_hostname, packet.destination_port
+    );
+    match packet.stream_type {
+        StreamType::Tcp => {
+            let mut tcp_stream = TcpStream::connect(uri)
+                .await
+                .map_err(|x| WispError::Other(Box::new(x)))?;
+            let mut mux_stream = stream.into_io().into_asyncrw();
+            tokio::io::copy_bidirectional(&mut tcp_stream, &mut mux_stream)
+                .await
+                .map_err(|x| WispError::Other(Box::new(x)))?;
+        }
+        StreamType::Udp => {
+            let udp_socket = UdpSocket::bind(uri)
+                .await
+                .map_err(|x| WispError::Other(Box::new(x)))?;
+            let mut data = vec![0u8; 65507]; // udp standard max datagram size
+            loop {
+                tokio::select! {
+                    size = udp_socket.recv(&mut data).map_err(|x| WispError::Other(Box::new(x))) => {
+                        let size = size?;
+                        stream.write(Bytes::copy_from_slice(&data[..size])).await?
+                    },
+                    event = stream.read() => {
+                        match event {
+                            Some(event) => match event {
+                                WsEvent::Send(data) => {
+                                    udp_socket.send(&data).await.map_err(|x| WispError::Other(Box::new(x)))?;
+                                }
+                                WsEvent::Close(_) => return Ok(false),
+                            },
+                            None => break,
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(true)
+}
+
+async fn accept_ws(
+    fut: upgrade::UpgradeFut,
+    addr: String,
+) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
+    let (rx, tx) = fut.await?.split(tokio::io::split);
+    let rx = FragmentCollectorRead::new(rx);
+
+    println!("{:?}: connected", addr);
+
+    let (mut mux, fut) = ServerMux::new(rx, tx, 128);
+
+    tokio::spawn(async move {
+        if let Err(e) = fut.await {
+            println!("err in mux: {:?}", e);
+        }
+    });
+
+    while let Some((packet, stream)) = mux.server_new_stream().await {
+        tokio::spawn(async move {
+            let close_err = stream.get_close_handle();
+            let close_ok = stream.get_close_handle();
+            let _ = handle_mux(packet, stream)
+                .or_else(|err| async move {
+                    let _ = close_err.close(0x03).await;
+                    Err(err)
+                })
+                .and_then(|should_send| async move {
+                    if should_send {
+                        close_ok.close(0x02).await
+                    } else {
+                        Ok(())
+                    }
+                })
+                .await;
+        });
+    }
+
+    println!("{:?}: disconnected", addr);
+    Ok(())
+}
+
+async fn accept_wsproxy(
+    fut: upgrade::UpgradeFut,
+    incoming_uri: String,
+    addr: String,
+) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
+    let mut ws_stream = FragmentCollector::new(fut.await?);
+
+    println!("{:?}: connected (wsproxy): {:?}", addr, incoming_uri);
+
+    match hyper::Uri::try_from(incoming_uri.clone()) {
+        Ok(_) => (),
+        Err(err) => {
+            ws_stream.write_frame(Frame::close(CloseCode::Away.into(), b"invalid uri")).await?;
+            return Err(Box::new(err));
+        }
+    }
+
+    let tcp_stream = match TcpStream::connect(incoming_uri).await {
+        Ok(stream) => stream,
+        Err(err) => {
+            ws_stream
+                .write_frame(Frame::close(CloseCode::Away.into(), b"failed to connect"))
+                .await?;
+            return Err(Box::new(err));
+        }
+    };
+    let mut tcp_stream_framed = Framed::new(tcp_stream, BytesCodec::new());
+
+    loop {
+        tokio::select! {
+            event = ws_stream.read_frame() => {
+                match event {
+                    Ok(frame) => {
+                        match frame.opcode {
+                            OpCode::Text | OpCode::Binary => {
+                                let _ = tcp_stream_framed.send(Bytes::from(frame.payload.to_vec())).await;
+                            }
+                            OpCode::Close => {
+                                // tokio closes the stream for us
+                                drop(tcp_stream_framed);
+                                break;
+                            }
+                            _ => {}
+                        }
+                    },
+                    Err(_) => {
+                        // tokio closes the stream for us
+                        drop(tcp_stream_framed);
+                        break;
+                    }
+                }
+            },
+            event = tcp_stream_framed.next() => {
+                if let Some(res) = event {
+                    match res {
+                        Ok(buf) => {
+                            let _ = ws_stream.write_frame(Frame::binary(Payload::Borrowed(&buf))).await;
+                        }
+                        Err(_) => {
+                            let _ = ws_stream.write_frame(Frame::close(CloseCode::Away.into(), b"tcp side is going away")).await;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    println!("{:?}: disconnected (wsproxy)", addr);
+
+    Ok(())
 }

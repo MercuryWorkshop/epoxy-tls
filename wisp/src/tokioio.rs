@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 // Taken from https://github.com/hyperium/hyper-util/blob/master/src/rt/tokio.rs
-// hyper-util fails to compile on WASM as it has a dependency on socket2, but I only need
-// hyper-util for TokioIo.
+// hyper-util fails to compile on WASM as it has a dependency on socket2
 
 use std::{
     pin::Pin,
@@ -167,5 +166,11 @@ where
         bufs: &[std::io::IoSlice<'_>],
     ) -> Poll<Result<usize, std::io::Error>> {
         hyper::rt::Write::poll_write_vectored(self.project().inner, cx, bufs)
+    }
+}
+
+impl<T> hyper_util::client::legacy::connect::Connection for TokioIo<T> {
+    fn connected(&self) -> hyper_util::client::legacy::connect::Connected {
+        hyper_util::client::legacy::connect::Connected::new()
     }
 }

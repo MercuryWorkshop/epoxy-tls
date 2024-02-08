@@ -4,117 +4,11 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures_util::{Sink, Stream};
+use futures_util::Stream;
 use hyper::body::Body;
-use penguin_mux_wasm::ws;
 use pin_project_lite::pin_project;
-use ws_stream_wasm::{WsErr, WsMessage, WsMeta, WsStream};
-
-pin_project! {
-    pub struct WsStreamWrapper {
-        #[pin]
-        ws: WsStream,
-    }
-}
-
-impl WsStreamWrapper {
-    pub async fn connect(
-        url: impl AsRef<str>,
-        protocols: impl Into<Option<Vec<&str>>>,
-    ) -> Result<Self, WsErr> {
-        let (_, wsstream) = WsMeta::connect(url, protocols).await?;
-        Ok(WsStreamWrapper { ws: wsstream })
-    }
-}
-
-impl Stream for WsStreamWrapper {
-    type Item = Result<ws::Message, ws::Error>;
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.project();
-        let ret = this.ws.poll_next(cx);
-        match ret {
-            Poll::Ready(item) => Poll::<Option<Self::Item>>::Ready(item.map(|x| {
-                Ok(match x {
-                    WsMessage::Text(txt) => ws::Message::Text(txt),
-                    WsMessage::Binary(bin) => ws::Message::Binary(bin),
-                })
-            })),
-            Poll::Pending => Poll::<Option<Self::Item>>::Pending,
-        }
-    }
-}
-
-fn wserr_to_ws_err(err: WsErr) -> ws::Error {
-    debug!("err: {:?}", err);
-    match err {
-        WsErr::ConnectionNotOpen => ws::Error::AlreadyClosed,
-        _ => ws::Error::Io(std::io::Error::other(format!("{:?}", err))),
-    }
-}
-
-impl Sink<ws::Message> for WsStreamWrapper {
-    type Error = ws::Error;
-
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        let this = self.project();
-        let ret = this.ws.poll_ready(cx);
-        match ret {
-            Poll::Ready(item) => Poll::<Result<(), Self::Error>>::Ready(match item {
-                Ok(_) => Ok(()),
-                Err(err) => Err(wserr_to_ws_err(err)),
-            }),
-            Poll::Pending => Poll::<Result<(), Self::Error>>::Pending,
-        }
-    }
-
-    fn start_send(self: Pin<&mut Self>, item: ws::Message) -> Result<(), Self::Error> {
-        use ws::Message::*;
-        let item = match item {
-            Text(txt) => WsMessage::Text(txt),
-            Binary(bin) => WsMessage::Binary(bin),
-            Close(_) => {
-                debug!("closing");
-                return match self.ws.wrapped().close() {
-                    Ok(_) => Ok(()),
-                    Err(err) => Err(ws::Error::Io(std::io::Error::other(format!(
-                        "ws close err: {:?}",
-                        err
-                    )))),
-                };
-            }
-            Ping(_) | Pong(_) | Frame(_) => return Ok(()),
-        };
-        let this = self.project();
-        let ret = this.ws.start_send(item);
-        match ret {
-            Ok(_) => Ok(()),
-            Err(err) => Err(wserr_to_ws_err(err)),
-        }
-    }
-
-    // no point wrapping this as it's not going to do anything
-    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Ok(()).into()
-    }
-
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        let this = self.project();
-        let ret = this.ws.poll_close(cx);
-        match ret {
-            Poll::Ready(item) => Poll::<Result<(), Self::Error>>::Ready(match item {
-                Ok(_) => Ok(()),
-                Err(err) => Err(wserr_to_ws_err(err)),
-            }),
-            Poll::Pending => Poll::<Result<(), Self::Error>>::Pending,
-        }
-    }
-}
-
-impl ws::WebSocketStream for WsStreamWrapper {
-    fn ping_auto_pong(&self) -> bool {
-        true
-    }
-}
+use std::future::Future;
+use wisp_mux::{tokioio::TokioIo, tower::ServiceWrapper, WispError};
 
 pin_project! {
     pub struct IncomingBody {
@@ -138,12 +32,78 @@ impl Stream for IncomingBody {
             Poll::Ready(item) => Poll::<Option<Self::Item>>::Ready(match item {
                 Some(frame) => frame
                     .map(|x| {
-                        x.into_data().map_err(|_| std::io::Error::other("not data frame"))
+                        x.into_data()
+                            .map_err(|_| std::io::Error::other("not data frame"))
                     })
                     .ok(),
                 None => None,
             }),
             Poll::Pending => Poll::<Option<Self::Item>>::Pending,
+        }
+    }
+}
+
+pub struct TlsWispService<W>
+where
+    W: wisp_mux::ws::WebSocketWrite + Send + 'static,
+{
+    pub service: ServiceWrapper<W>,
+    pub rustls_config: Arc<rustls::ClientConfig>,
+}
+
+
+impl<W: wisp_mux::ws::WebSocketWrite + Send + 'static> tower_service::Service<hyper::Uri>
+    for TlsWispService<W>
+{
+    type Response = TokioIo<EpxIoStream>;
+    type Error = WispError;
+    type Future = Pin<Box<impl Future<Output = Result<Self::Response, Self::Error>>>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.service.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: http::Uri) -> Self::Future {
+        let mut service = self.service.clone();
+        let rustls_config = self.rustls_config.clone();
+        Box::pin(async move {
+            let uri_host = req
+                .host()
+                .ok_or(WispError::UriHasNoHost)?
+                .to_string()
+                .clone();
+            let uri_parsed = Uri::builder()
+                .authority(format!(
+                    "{}:{}",
+                    uri_host,
+                    utils::get_url_port(&req).map_err(|_| WispError::UriHasNoPort)?
+                ))
+                .build()
+                .map_err(|x| WispError::Other(Box::new(x)))?;
+            let stream = service.call(uri_parsed).await?.into_inner();
+            if utils::get_is_secure(&req).map_err(|_| WispError::InvalidUri)? {
+                let connector = TlsConnector::from(rustls_config);
+                Ok(TokioIo::new(Either::Left(
+                    connector
+                        .connect(
+                            uri_host.try_into().map_err(|_| WispError::InvalidUri)?,
+                            stream,
+                        )
+                        .await
+                        .map_err(|x| WispError::Other(Box::new(x)))?,
+                )))
+            } else {
+                Ok(TokioIo::new(Either::Right(stream)))
+            }
+        })
+    }
+}
+
+impl<W: wisp_mux::ws::WebSocketWrite + Send + 'static> Clone for TlsWispService<W> {
+    fn clone(&self) -> Self {
+        Self {
+            rustls_config: self.rustls_config.clone(),
+            service: self.service.clone(),
         }
     }
 }
