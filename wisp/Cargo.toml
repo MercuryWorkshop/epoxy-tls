@@ -1,6 +1,7 @@
 [package]
 name = "wisp-mux"
 version = "1.0.0"
+license = "AGPL-3.0-only"
 description = "A library for easily creating Wisp servers and clients."
 homepage = "https://github.com/MercuryWorkshop/epoxy-tls/tree/multiplexed/wisp"
 repository = "https://github.com/MercuryWorkshop/epoxy-tls/tree/multiplexed/wisp"
