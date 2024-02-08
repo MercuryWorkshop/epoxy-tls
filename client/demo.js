@@ -12,7 +12,7 @@ onmessage = async (msg) => {
         postMessage(str);
     }
 
-    let { EpoxyClient } = await epoxy();
+    const { EpoxyClient } = await epoxy();
 
     const tconn0 = performance.now();
     // args: websocket url, user agent, redirect limit 

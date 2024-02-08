@@ -1,29 +1,55 @@
 # epoxy
 Epoxy is an encrypted proxy for browser javascript. It allows you to make requests that bypass cors without compromising security, by running SSL/TLS inside webassembly.
 
-Simple usage example for making a secure GET request to httpbin.org:
+## Using the client
+Epoxy must be run from within a web worker and must be served with the [security headers needed for `SharedArrayBuffer`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer#security_requirements). Here is a simple usage example:
 ```javascript
-import epoxy from "@mercuryworkshop/epoxy-tls";
+importScripts("epoxy-bundled.js");
 
 const { EpoxyClient } = await epoxy();
 let client = await new EpoxyClient("wss://localhost:4000", navigator.userAgent, 10);
 
 let response = await client.fetch("https://httpbin.org/get");
 await response.text();
-
 ```
 
-Epoxy also allows you to make arbitrary end to end encrypted TCP connections safely directly from the browser.
+## Using the server
+```
+$ cargo r -r --bin epoxy-server -- --help
+Implementation of the Wisp protocol in Rust, made for epoxy.
+
+Usage: epoxy-server [OPTIONS] --pubkey <PUBKEY> --privkey <PRIVKEY>
+
+Options:
+      --prefix <PREFIX>    [default: ]
+  -l, --port <PORT>        [default: 4000]
+  -p, --pubkey <PUBKEY>    
+  -P, --privkey <PRIVKEY>  
+  -h, --help               Print help
+  -V, --version            Print version
+```
 
 ## Building
+Rust nightly is required.
 
 ### Server
-
-1. Generate certs with `mkcert` and place the public certificate in `./server/src/pem.pem` and private certificate in `./server/src/key.pem`
-2. Run `cargo r --bin epoxy-server`, optionally with `-r` flag for release
+```
+cargo b -r --bin epoxy-server
+```
+The executable will be placed at `target/release/epoxy-server`.
 
 ### Client
-Note: Building the client is only supported on linux
+> [!IMPORTANT]
+> Building the client is only supported on Linux.
 
-1. Make sure you have the `wasm32-unknown-unknown` target installed, `wasm-bindgen` and `wasm-opt` executables installed, and `bash`, `python3` packages (`python3` is used for `http.server` module)
-2. Run `pnpm build`
+Make sure you have the `wasm32-unknown-unknown` rust target, the `rust-std` component, and the `wasm-bindgen`, `wasm-opt`, and `base64` binaries installed.
+
+In the `client` directory:
+```
+bash build.sh
+```
+
+To host a local server with the required headers:
+```
+python3 serve.py
+```
