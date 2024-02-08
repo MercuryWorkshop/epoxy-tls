@@ -160,6 +160,7 @@ onmessage = async (msg) => {
             "alicesworld.tech:443",
         );
         await ws.send("GET / HTTP 1.1\r\nHost: alicesworld.tech\r\nConnection: close\r\n\r\n");
+        await ws.close();
     } else {
         let resp = await epoxy_client.fetch("https://httpbin.org/get");
         console.warn(resp, Object.fromEntries(resp.headers));

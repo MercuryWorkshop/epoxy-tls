@@ -1,6 +1,6 @@
 [package]
 name = "wisp-mux"
-version = "1.0.0"
+version = "1.1.0"
 license = "AGPL-3.0-only"
 description = "A library for easily creating Wisp servers and clients."
 homepage = "https://github.com/MercuryWorkshop/epoxy-tls/tree/multiplexed/wisp"
@@ -28,3 +28,5 @@ ws_stream_wasm = ["dep:ws_stream_wasm"]
 tokio_io = ["async_io_stream/tokio_io"]
 hyper_tower = ["dep:tower-service", "dep:hyper", "dep:tokio", "dep:hyper-util-wasm"]
 
+[package.metadata.docs.rs]
+features = ["hyper_tower"]

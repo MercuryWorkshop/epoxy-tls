@@ -23,6 +23,57 @@ impl TryFrom<u8> for StreamType {
     }
 }
 
+/// Close reason.
+///
+/// See [the
+/// docs](https://github.com/MercuryWorkshop/wisp-protocol/blob/main/protocol.md#clientserver-close-reasons)
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum CloseReason {
+    /// Reason unspecified or unknown.
+    Unknown = 0x01,
+    /// Voluntary stream closure.
+    Voluntary = 0x02,
+    /// Unexpected stream closure due to a network error.
+    Unexpected = 0x03,
+    /// Stream creation failed due to invalid information.
+    ServerStreamInvalidInfo = 0x41,
+    /// Stream creation failed due to an unreachable destination host.
+    ServerStreamUnreachable = 0x42,
+    /// Stream creation timed out due to the destination server not responding.
+    ServerStreamConnectionTimedOut = 0x43,
+    /// Stream creation failed due to the destination server refusing the connection.
+    ServerStreamConnectionRefused = 0x44,
+    /// TCP data transfer timed out.
+    ServerStreamTimedOut = 0x47,
+    /// Stream destination address/domain is intentionally blocked by the proxy server.
+    ServerStreamBlockedAddress = 0x48,
+    /// Connection throttled by the server.
+    ServerStreamThrottled = 0x49,
+    /// The client has encountered an unexpected error.
+    ClientUnexpected = 0x81,
+}
+
+impl TryFrom<u8> for CloseReason {
+    type Error = WispError;
+    fn try_from(stream_type: u8) -> Result<Self, Self::Error> {
+        use CloseReason::*;
+        match stream_type {
+            0x01 => Ok(Unknown),
+            0x02 => Ok(Voluntary),
+            0x03 => Ok(Unexpected),
+            0x41 => Ok(ServerStreamInvalidInfo),
+            0x42 => Ok(ServerStreamUnreachable),
+            0x43 => Ok(ServerStreamConnectionTimedOut),
+            0x44 => Ok(ServerStreamConnectionRefused),
+            0x47 => Ok(ServerStreamTimedOut),
+            0x48 => Ok(ServerStreamBlockedAddress),
+            0x49 => Ok(ServerStreamThrottled),
+            0x81 => Ok(ClientUnexpected),
+            _ => Err(Self::Error::InvalidStreamType),
+        }
+    }
+}
+
 /// Packet used to create a new stream.
 ///
 /// See [the docs](https://github.com/MercuryWorkshop/wisp-protocol/blob/main/protocol.md#0x01---connect).
@@ -118,15 +169,12 @@ impl From<ContinuePacket> for Vec<u8> {
 #[derive(Debug, Copy, Clone)]
 pub struct ClosePacket {
     /// The close reason.
-    /// 
-    /// See [the
-    /// docs](https://github.com/MercuryWorkshop/wisp-protocol/blob/main/protocol.md#clientserver-close-reasons).
-    pub reason: u8,
+    pub reason: CloseReason,
 }
 
 impl ClosePacket {
     /// Create a new close packet.
-    pub fn new(reason: u8) -> Self {
+    pub fn new(reason: CloseReason) -> Self {
         Self { reason }
     }
 }
@@ -138,7 +186,7 @@ impl TryFrom<Bytes> for ClosePacket {
             return Err(Self::Error::PacketTooSmall);
         }
         Ok(Self {
-            reason: bytes.get_u8(),
+            reason: bytes.get_u8().try_into()?,
         })
     }
 }
@@ -146,7 +194,7 @@ impl TryFrom<Bytes> for ClosePacket {
 impl From<ClosePacket> for Vec<u8> {
     fn from(packet: ClosePacket) -> Self {
         let mut encoded = Self::with_capacity(1);
-        encoded.put_u8(packet.reason);
+        encoded.put_u8(packet.reason as u8);
         encoded
     }
 }
@@ -240,7 +288,7 @@ impl Packet {
     }
 
     /// Create a new close packet.
-    pub fn new_close(stream_id: u32, reason: u8) -> Self {
+    pub fn new_close(stream_id: u32, reason: CloseReason) -> Self {
         Self {
             stream_id,
             packet: PacketType::Close(ClosePacket::new(reason)),

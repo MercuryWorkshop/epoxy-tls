@@ -3,7 +3,7 @@ use bytes::Bytes;
 use event_listener::Event;
 use futures::{
     channel::{mpsc, oneshot},
-    sink, stream,
+    stream,
     task::{Context, Poll},
     Sink, Stream, StreamExt,
 };
@@ -25,7 +25,7 @@ pub enum MuxEvent {
 }
 
 pub(crate) enum WsEvent {
-    Close(u32, u8, oneshot::Sender<Result<(), crate::WispError>>),
+    Close(u32, crate::CloseReason, oneshot::Sender<Result<(), crate::WispError>>),
 }
 
 /// Read side of a multiplexor stream.
@@ -143,7 +143,7 @@ impl<W: crate::ws::WebSocketWrite + Send + 'static> MuxStreamWrite<W> {
     }
 
     /// Close the stream. You will no longer be able to write or read after this has been called.
-    pub async fn close(&self, reason: u8) -> Result<(), crate::WispError> {
+    pub async fn close(&self, reason: crate::CloseReason) -> Result<(), crate::WispError> {
         if self.is_closed.load(Ordering::Acquire) {
             return Err(crate::WispError::StreamAlreadyClosed);
         }
@@ -159,9 +159,12 @@ impl<W: crate::ws::WebSocketWrite + Send + 'static> MuxStreamWrite<W> {
     }
 
     pub(crate) fn into_sink(self) -> Pin<Box<dyn Sink<Bytes, Error = crate::WispError> + Send>> {
-        Box::pin(sink::unfold(self, |tx, data| async move {
+        let handle = self.get_close_handle();
+        Box::pin(crate::sink_unfold::unfold(self, |tx, data| async move {
             tx.write(data).await?;
             Ok(tx)
+        }, move || {
+            handle.close_sync(crate::CloseReason::Unknown)
         }))
     }
 }
@@ -171,7 +174,7 @@ impl<W: crate::ws::WebSocketWrite> Drop for MuxStreamWrite<W> {
         let (tx, _) = oneshot::channel::<Result<(), crate::WispError>>();
         let _ = self
             .close_channel
-            .unbounded_send(WsEvent::Close(self.stream_id, 0x01, tx));
+            .unbounded_send(WsEvent::Close(self.stream_id, crate::CloseReason::Unknown, tx));
     }
 }
 
@@ -248,7 +251,7 @@ impl<W: crate::ws::WebSocketWrite + Send + 'static> MuxStream<W> {
     }
 
     /// Close the stream. You will no longer be able to write or read after this has been called.
-    pub async fn close(&self, reason: u8) -> Result<(), crate::WispError> {
+    pub async fn close(&self, reason: crate::CloseReason) -> Result<(), crate::WispError> {
         self.tx.close(reason).await
     }
 
@@ -267,6 +270,7 @@ impl<W: crate::ws::WebSocketWrite + Send + 'static> MuxStream<W> {
 }
 
 /// Close handle for a multiplexor stream.
+#[derive(Clone)]
 pub struct MuxStreamCloser {
     /// ID of the stream.
     pub stream_id: u32,
@@ -276,7 +280,7 @@ pub struct MuxStreamCloser {
 
 impl MuxStreamCloser {
     /// Close the stream. You will no longer be able to write or read after this has been called.
-    pub async fn close(&self, reason: u8) -> Result<(), crate::WispError> {
+    pub async fn close(&self, reason: crate::CloseReason) -> Result<(), crate::WispError> {
         if self.is_closed.load(Ordering::Acquire) {
             return Err(crate::WispError::StreamAlreadyClosed);
         }
@@ -286,6 +290,19 @@ impl MuxStreamCloser {
             .map_err(|x| crate::WispError::Other(Box::new(x)))?;
         rx.await
             .map_err(|x| crate::WispError::Other(Box::new(x)))??;
+        self.is_closed.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    /// Close the stream. This function does not check if it was actually closed.
+    pub(crate) fn close_sync(&self, reason: crate::CloseReason) -> Result<(), crate::WispError> {
+        if self.is_closed.load(Ordering::Acquire) {
+            return Err(crate::WispError::StreamAlreadyClosed);
+        }
+        let (tx, _) = oneshot::channel::<Result<(), crate::WispError>>();
+        self.close_channel
+            .unbounded_send(WsEvent::Close(self.stream_id, reason, tx))
+            .map_err(|x| crate::WispError::Other(Box::new(x)))?;
         self.is_closed.store(true, Ordering::Release);
         Ok(())
     }

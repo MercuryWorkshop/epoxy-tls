@@ -6,6 +6,7 @@
 
 #[cfg(feature = "fastwebsockets")]
 mod fastwebsockets;
+mod sink_unfold;
 mod packet;
 mod stream;
 #[cfg(feature = "hyper_tower")]
@@ -49,6 +50,8 @@ pub enum WispError {
     InvalidStreamType,
     /// The stream had an invalid ID.
     InvalidStreamId,
+    /// The close packet had an invalid reason.
+    InvalidCloseReason,
     /// The URI recieved was invalid.
     InvalidUri,
     /// The URI recieved had no host.
@@ -89,6 +92,7 @@ impl std::fmt::Display for WispError {
             InvalidPacketType => write!(f, "Invalid packet type"),
             InvalidStreamType => write!(f, "Invalid stream type"),
             InvalidStreamId => write!(f, "Invalid stream id"),
+            InvalidCloseReason => write!(f, "Invalid close reason"),
             InvalidUri => write!(f, "Invalid URI"),
             UriHasNoHost => write!(f, "URI has no host"),
             UriHasNoPort => write!(f, "URI has no port"),
@@ -132,7 +136,7 @@ impl<W: ws::WebSocketWrite + Send + 'static> ServerMuxInner<W> {
             x = self.server_msg_loop(rx, muxstream_sender, buffer_size).fuse() => x
         };
         self.stream_map.lock().await.iter().for_each(|x| {
-            let _ = x.1.unbounded_send(MuxEvent::Close(ClosePacket::new(0x01)));
+            let _ = x.1.unbounded_send(MuxEvent::Close(ClosePacket::new(CloseReason::Unknown)));
         });
         ret
     }

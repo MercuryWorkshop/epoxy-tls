@@ -17,7 +17,9 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio_native_tls::{native_tls, TlsAcceptor};
 use tokio_util::codec::{BytesCodec, Framed};
 
-use wisp_mux::{ws, ConnectPacket, MuxStream, ServerMux, StreamType, WispError, MuxEvent};
+use wisp_mux::{
+    ws, CloseReason, ConnectPacket, MuxEvent, MuxStream, ServerMux, StreamType, WispError,
+};
 
 type HttpBody = http_body_util::Full<hyper::body::Bytes>;
 
@@ -192,12 +194,12 @@ async fn accept_ws(
             let close_ok = stream.get_close_handle();
             let _ = handle_mux(packet, stream)
                 .or_else(|err| async move {
-                    let _ = close_err.close(0x03).await;
+                    let _ = close_err.close(CloseReason::Unexpected).await;
                     Err(err)
                 })
                 .and_then(|should_send| async move {
                     if should_send {
-                        close_ok.close(0x02).await
+                        close_ok.close(CloseReason::Voluntary).await
                     } else {
                         Ok(())
                     }
@@ -222,7 +224,9 @@ async fn accept_wsproxy(
     match hyper::Uri::try_from(incoming_uri.clone()) {
         Ok(_) => (),
         Err(err) => {
-            ws_stream.write_frame(Frame::close(CloseCode::Away.into(), b"invalid uri")).await?;
+            ws_stream
+                .write_frame(Frame::close(CloseCode::Away.into(), b"invalid uri"))
+                .await?;
             return Err(Box::new(err));
         }
     }
