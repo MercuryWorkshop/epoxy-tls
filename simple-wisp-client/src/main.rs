@@ -91,7 +91,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let (rx, tx) = ws.split(tokio::io::split);
     let rx = FragmentCollectorRead::new(rx);
 
-    let (mux, fut) = ClientMux::new(rx, tx);
+    let (mux, fut) = ClientMux::new(rx, tx).await?;
 
     tokio::task::spawn(fut);
 
