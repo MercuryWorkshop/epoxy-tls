@@ -52,16 +52,21 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .ok_or(StrError::new("no src port"))?
         .parse()?;
 
-    let addr_dest = std::env::args()
+    let addr_path= std::env::args()
         .nth(3)
+        .ok_or(StrError::new("no src path"))?;
+
+
+    let addr_dest = std::env::args()
+        .nth(4)
         .ok_or(StrError::new("no dest addr"))?;
 
     let addr_dest_port: u16 = std::env::args()
-        .nth(4)
+        .nth(5)
         .ok_or(StrError::new("no dest port"))?
         .parse()?;
     let should_tls: bool = std::env::args()
-        .nth(5)
+        .nth(6)
         .ok_or(StrError::new("no should tls"))?
         .parse()?;
 
@@ -74,7 +79,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     };
     let req = Request::builder()
         .method("GET")
-        .uri(format!("wss://{}:{}/", &addr, addr_port))
+        .uri(addr_path)
         .header("Host", &addr)
         .header(UPGRADE, "websocket")
         .header(CONNECTION, "upgrade")
