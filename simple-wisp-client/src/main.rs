@@ -74,7 +74,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     };
     let req = Request::builder()
         .method("GET")
-        .uri(format!("wss://{}:{}/", &addr, addr_port))
+        .uri("/")
         .header("Host", &addr)
         .header(UPGRADE, "websocket")
         .header(CONNECTION, "upgrade")

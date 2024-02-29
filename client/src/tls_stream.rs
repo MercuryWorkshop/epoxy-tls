@@ -4,10 +4,12 @@ use js_sys::Function;
 use tokio::io::{split, AsyncWriteExt, WriteHalf};
 use tokio_util::io::ReaderStream;
 
-#[wasm_bindgen]
+#[wasm_bindgen(inspectable)]
 pub struct EpxTlsStream {
     tx: WriteHalf<EpxIoTlsStream>,
     onerror: Function,
+    #[wasm_bindgen(readonly, getter_with_clone)]
+    pub url: String,
 }
 
 #[wasm_bindgen]
@@ -51,7 +53,7 @@ impl EpxTlsStream {
                 .call0(&Object::default())
                 .replace_err("Failed to call onopen")?;
 
-            Ok(Self { tx, onerror })
+            Ok(Self { tx, onerror, url: url.to_string() })
         }
         .await;
         if let Err(ret) = ret {

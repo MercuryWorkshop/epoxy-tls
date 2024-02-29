@@ -3,8 +3,9 @@
 <head>
     <title>epoxy</title>
     <style>
-    body { font-family: sans-serif }
-    #logs > * { font-family: monospace }
+    body { font-family: monospace; font-weight: bold; width: 100%; height: 100%; padding: 0; margin: 0 }
+    body > div { padding: 1em; }
+    #logs > * { margin: 0; font-weight: normal; }
     </style>
     <script>
         const params = (new URL(window.location.href)).searchParams;
@@ -17,8 +18,8 @@
         const should_tls_test = params.has("rawtls_test");
         const worker = new Worker("demo.js");
         worker.onmessage = (msg) => {
-            let el = document.createElement("div");
-            el.textContent = msg.data;
+            let el = document.createElement("pre");
+            el.innerHTML = msg.data;
             document.getElementById("logs").appendChild(el);
             window.scrollTo(0, document.body.scrollHeight);
         };
@@ -28,9 +29,10 @@
 
 <body>
     <div>
-        running... (wait for the browser alert if not running ws test)
+        <div>running... (note: WASM is significantly slower when DevTools is open)</div>
+        <div>logs:</div>
+        <div id="logs"></div>
     </div>
-    <div id="logs"></div>
 </body>
 
 </html>

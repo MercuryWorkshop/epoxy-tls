@@ -9,8 +9,12 @@ importScripts("epoxy-bundled.js");
 const { EpoxyClient } = await epoxy();
 let client = await new EpoxyClient("wss://localhost:4000", navigator.userAgent, 10);
 
+// You can view and change the user agent and redirect limit
+console.log(client.userAgent);
+client.redirect_limit = 5;
+
 let response = await client.fetch("https://httpbin.org/get");
-await response.text();
+console.log(await response.text());
 ```
 See `client/demo.js` for more examples.
 

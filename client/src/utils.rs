@@ -1,4 +1,4 @@
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::{intern, prelude::*};
 
 use hyper::rt::Executor;
 use hyper::{header::HeaderValue, Uri};
@@ -15,7 +15,6 @@ extern "C" {
     pub fn console_error(s: &str);
 }
 
-#[allow(unused_macros)]
 macro_rules! debug {
     ($($t:tt)*) => (utils::console_debug(&format_args!($($t)*).to_string()))
 }
@@ -25,22 +24,31 @@ macro_rules! log {
     ($($t:tt)*) => (utils::console_log(&format_args!($($t)*).to_string()))
 }
 
-#[allow(unused_macros)]
 macro_rules! error {
     ($($t:tt)*) => (utils::console_error(&format_args!($($t)*).to_string()))
 }
 
-#[allow(unused_macros)]
 macro_rules! jerr {
     ($expr:expr) => {
         JsError::new($expr)
     };
 }
 
-#[allow(unused_macros)]
 macro_rules! jval {
     ($expr:expr) => {
         JsValue::from($expr)
+    };
+}
+
+macro_rules! jerri {
+    ($expr:expr) => {
+        JsError::new(intern($expr))
+    };
+}
+
+macro_rules! jvali {
+    ($expr:expr) => {
+        JsValue::from(intern($expr))
     };
 }
 
@@ -55,11 +63,11 @@ impl<T, E: std::fmt::Debug> ReplaceErr for Result<T, E> {
     type Ok = T;
 
     fn replace_err(self, err: &str) -> Result<<Self as ReplaceErr>::Ok, JsError> {
-        self.map_err(|oe| jerr!(&format!("{}, original error: {:?}", err, oe)))
+        self.map_err(|_| jerri!(err))
     }
 
     fn replace_err_jv(self, err: &str) -> Result<<Self as ReplaceErr>::Ok, JsValue> {
-        self.map_err(|oe| jval!(&format!("{}, original error: {:?}", err, oe)))
+        self.map_err(|_| jvali!(err))
     }
 }
 
@@ -67,17 +75,52 @@ impl<T> ReplaceErr for Option<T> {
     type Ok = T;
 
     fn replace_err(self, err: &str) -> Result<<Self as ReplaceErr>::Ok, JsError> {
-        self.ok_or_else(|| jerr!(err))
+        self.ok_or_else(|| jerri!(err))
     }
 
     fn replace_err_jv(self, err: &str) -> Result<<Self as ReplaceErr>::Ok, JsValue> {
-        self.ok_or_else(|| jval!(err))
+        self.ok_or_else(|| jvali!(err))
+    }
+}
+
+// the... BOOLINATOR!
+impl ReplaceErr for bool {
+    type Ok = ();
+
+    fn replace_err(self, err: &str) -> Result<(), JsError> {
+        if !self {
+            Err(jerri!(err))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn replace_err_jv(self, err: &str) -> Result<(), JsValue> {
+        if !self {
+            Err(jvali!(err))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+// the... BOOLINATOR!
+pub trait Boolinator {
+    fn flatten(self, err: &str) -> Result<(), JsError>;
+}
+
+impl Boolinator for Result<bool, JsValue> {
+    fn flatten(self, err: &str) -> Result<(), JsError> {
+        if !self.replace_err(err)? {
+            Err(jerri!(err))
+        } else {
+            Ok(())
+        }
     }
 }
 
 pub trait UriExt {
     fn get_redirect(&self, location: &HeaderValue) -> Result<Uri, JsError>;
-    fn is_same_host(&self, other: &Uri) -> bool;
 }
 
 impl UriExt for Uri {
@@ -92,9 +135,6 @@ impl UriExt for Uri {
         }
 
         Ok(Uri::from_parts(new_parts)?)
-    }
-    fn is_same_host(&self, other: &Uri) -> bool {
-        self.host() == other.host() && self.port() == other.port()
     }
 }
 
@@ -129,8 +169,8 @@ pub fn entries_of_object(obj: &Object) -> Vec<Vec<String>> {
 
 pub fn define_property_obj(value: JsValue, writable: bool) -> Result<Object, JsValue> {
     let entries: Array = [
-        Array::of2(&jval!("value"), &jval!(value)),
-        Array::of2(&jval!("writable"), &jval!(writable)),
+        Array::of2(&jval!(intern("value")), &value),
+        Array::of2(&jval!(intern("writable")), &jval!(writable)),
     ]
     .iter()
     .collect::<Array>();

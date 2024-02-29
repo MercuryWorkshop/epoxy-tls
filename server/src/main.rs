@@ -9,8 +9,7 @@ use fastwebsockets::{
 };
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
 use hyper::{
-    body::Incoming, header::HeaderValue, server::conn::http1, service::service_fn, Request,
-    Response, StatusCode,
+    body::Incoming, server::conn::http1, service::service_fn, Request, Response, StatusCode,
 };
 use hyper_util::rt::TokioIo;
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
@@ -88,24 +87,10 @@ async fn accept_http(
     if upgrade::is_upgrade_request(&req)
         && let Some(uri) = uri.strip_prefix(&prefix)
     {
-        let (mut res, fut) = upgrade::upgrade(&mut req)?;
+        let (res, fut) = upgrade::upgrade(&mut req)?;
 
-        if let Some(protocols) = req.headers().get("Sec-Websocket-Protocol").and_then(|x| {
-            Some(
-                x.to_str()
-                    .ok()?
-                    .split(',')
-                    .map(|x| x.trim())
-                    .collect::<Vec<&str>>(),
-            )
-        }) && protocols.contains(&"wisp-v1")
-            && (uri.is_empty() || uri == "/")
-        {
+        if uri.is_empty() || uri == "/" {
             tokio::spawn(async move { accept_ws(fut, addr.clone()).await });
-            res.headers_mut().insert(
-                "Sec-Websocket-Protocol",
-                HeaderValue::from_str("wisp-v1").unwrap(),
-            );
         } else {
             let uri = uri.strip_prefix('/').unwrap_or(uri).to_string();
             tokio::spawn(async move { accept_wsproxy(fut, uri, addr.clone()).await });
@@ -119,7 +104,7 @@ async fn accept_http(
         println!("random request to path {:?}", uri);
         Ok(Response::builder()
             .status(StatusCode::OK)
-            .body(HttpBody::new(":3".to_string().into()))
+            .body(HttpBody::new(":3".into()))
             .unwrap())
     }
 }

@@ -1,6 +1,6 @@
 importScripts("epoxy-bundled.js");
 onmessage = async (msg) => {
-    console.debug("recieved:", msg);
+    console.debug("recieved demo:", msg);
     let [should_feature_test, should_multiparallel_test, should_parallel_test, should_multiperf_test, should_perf_test, should_ws_test, should_tls_test] = msg.data;
     console.log(
         "%cWASM is significantly slower with DevTools open!",
@@ -8,8 +8,13 @@ onmessage = async (msg) => {
     );
 
     const log = (str) => {
-        console.warn(str);
+        console.log(str);
         postMessage(str);
+    }
+
+    const plog = (str) => {
+        console.log(str);
+        postMessage(JSON.stringify(str, null, 4));
     }
 
     const { EpoxyClient } = await epoxy();
@@ -19,6 +24,11 @@ onmessage = async (msg) => {
     let epoxy_client = await new EpoxyClient("wss://localhost:4000", navigator.userAgent, 10);
     const tconn1 = performance.now();
     log(`conn establish took ${tconn1 - tconn0} ms or ${(tconn1 - tconn0) / 1000} s`);
+
+    // epoxy classes are inspectable
+    console.log(epoxy_client);
+    // you can change the user agent and redirect limit in JS
+    epoxy_client.redirectLimit = 15;
 
     const test_mux = async (url) => {
         const t0 = performance.now();
@@ -138,23 +148,24 @@ onmessage = async (msg) => {
         log(`avg mux - avg native (${num_tests}): ${total_mux - total_native} ms or ${(total_mux - total_native) / 1000} s`);
     } else if (should_ws_test) {
         let ws = await epoxy_client.connect_ws(
-            () => console.log("opened"),
-            () => console.log("closed"),
+            () => log("opened"),
+            () => log("closed"),
             err => console.error(err),
-            msg => console.log(msg),
+            msg => log(msg),
             "wss://echo.websocket.events",
             [],
             "localhost"
         );
         while (true) {
+            log("sending `data`");
             await ws.send("data");
-            await (new Promise((res, _) => setTimeout(res, 100)));
+            await (new Promise((res, _) => setTimeout(res, 50)));
         }
     } else if (should_tls_test) {
         let decoder = new TextDecoder();
         let ws = await epoxy_client.connect_tls(
-            () => console.log("opened"),
-            () => console.log("closed"),
+            () => log("opened"),
+            () => log("closed"),
             err => console.error(err),
             msg => { console.log(msg); console.log(decoder.decode(msg)) },
             "alicesworld.tech:443",
@@ -163,8 +174,8 @@ onmessage = async (msg) => {
         await ws.close();
     } else {
         let resp = await epoxy_client.fetch("https://httpbin.org/get");
-        console.warn(resp, Object.fromEntries(resp.headers));
-        console.warn(await resp.text());
+        console.log(resp, Object.fromEntries(resp.headers));
+        plog(await resp.json());
     }
     log("done");
 };

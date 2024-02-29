@@ -15,10 +15,16 @@ use js_sys::Function;
 use std::str::from_utf8;
 use tokio::io::WriteHalf;
 
-#[wasm_bindgen]
+#[wasm_bindgen(inspectable)]
 pub struct EpxWebSocket {
     tx: Arc<Mutex<WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>>>,
     onerror: Function,
+    #[wasm_bindgen(readonly, getter_with_clone)]
+    pub url: String,
+    #[wasm_bindgen(readonly, getter_with_clone)]
+    pub protocols: Vec<String>,
+    #[wasm_bindgen(readonly, getter_with_clone)]
+    pub origin: String,
 }
 
 #[wasm_bindgen]
@@ -53,7 +59,7 @@ impl EpxWebSocket {
                 .method("GET")
                 .uri(url.clone())
                 .header("Host", host)
-                .header("Origin", origin)
+                .header("Origin", origin.clone())
                 .header(UPGRADE, "websocket")
                 .header(CONNECTION, "upgrade")
                 .header("Sec-WebSocket-Key", key)
@@ -109,7 +115,7 @@ impl EpxWebSocket {
                 .call0(&Object::default())
                 .replace_err("Failed to call onopen")?;
 
-            Ok(Self { tx, onerror })
+            Ok(Self { tx, onerror, origin, protocols, url: url.to_string() })
         }
         .await;
         if let Err(ret) = ret {
