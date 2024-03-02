@@ -50,6 +50,18 @@ type EpxIoStream = Either<EpxIoTlsStream, EpxIoUnencryptedStream>;
 #[wasm_bindgen(start)]
 fn init() {
     console_error_panic_hook::set_once();
+    // utils.rs
+    intern("value");
+    intern("writable");
+
+    // main.rs
+    intern("method");
+    intern("redirect");
+    intern("body");
+    intern("headers");
+    intern("url");
+    intern("redirected");
+    intern("rawHeaders");
 }
 
 
@@ -242,18 +254,18 @@ impl EpoxyClient {
         let uri = url.parse::<uri::Uri>().replace_err("Failed to parse URL")?;
         let uri_scheme = uri.scheme().replace_err("URL must have a scheme")?;
         if *uri_scheme != uri::Scheme::HTTP && *uri_scheme != uri::Scheme::HTTPS {
-            return Err(jerri!("Scheme must be either `http` or `https`"));
+            return Err(jerr!("Scheme must be either `http` or `https`"));
         }
         let uri_host = uri.host().replace_err("URL must have a host")?;
 
-        let req_method_string: String = match Reflect::get(&options, &jvali!("method")) {
+        let req_method_string: String = match Reflect::get(&options, &jval!("method")) {
             Ok(val) => val.as_string().unwrap_or("GET".to_string()),
             Err(_) => "GET".to_string(),
         };
         let req_method: http::Method = http::Method::try_from(req_method_string.as_str())
             .replace_err("Invalid http method")?;
 
-        let req_should_redirect = match Reflect::get(&options, &jvali!("redirect")) {
+        let req_should_redirect = match Reflect::get(&options, &jval!("redirect")) {
             Ok(val) => !matches!(
                 val.as_string().unwrap_or_default().as_str(),
                 "error" | "manual"
@@ -261,7 +273,7 @@ impl EpoxyClient {
             Err(_) => true,
         };
 
-        let body_jsvalue: Option<JsValue> = Reflect::get(&options, &jvali!("body")).ok();
+        let body_jsvalue: Option<JsValue> = Reflect::get(&options, &jval!("body")).ok();
         let body = if let Some(val) = body_jsvalue {
             if val.is_string() {
                 let str = val
@@ -283,7 +295,7 @@ impl EpoxyClient {
             None => Bytes::new(),
         };
 
-        let headers = Reflect::get(&options, &jvali!("headers"))
+        let headers = Reflect::get(&options, &jval!("headers"))
             .map(|val| {
                 if val.is_truthy() {
                     Some(utils::entries_of_object(&Object::from(val)))
@@ -382,14 +394,14 @@ impl EpoxyClient {
 
         Object::define_property(
             &resp,
-            &jvali!("url"),
+            &jval!("url"),
             &utils::define_property_obj(jval!(resp_uri.to_string()), false)
                 .replace_err("Failed to make define_property object for url")?,
         );
 
         Object::define_property(
             &resp,
-            &jvali!("redirected"),
+            &jval!("redirected"),
             &utils::define_property_obj(jval!(req_redirected), false)
                 .replace_err("Failed to make define_property object for redirected")?,
         );
@@ -414,7 +426,7 @@ impl EpoxyClient {
         }
         Object::define_property(
             &resp,
-            &jvali!("rawHeaders"),
+            &jval!("rawHeaders"),
             &utils::define_property_obj(jval!(&raw_headers), false)
                 .replace_err("Failed to make define_property object for rawHeaders")?,
         );

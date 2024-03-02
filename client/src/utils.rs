@@ -1,4 +1,4 @@
-use wasm_bindgen::{intern, prelude::*};
+use wasm_bindgen::prelude::*;
 
 use hyper::rt::Executor;
 use hyper::{header::HeaderValue, Uri};
@@ -40,18 +40,6 @@ macro_rules! jval {
     };
 }
 
-macro_rules! jerri {
-    ($expr:expr) => {
-        JsError::new(intern($expr))
-    };
-}
-
-macro_rules! jvali {
-    ($expr:expr) => {
-        JsValue::from(intern($expr))
-    };
-}
-
 pub trait ReplaceErr {
     type Ok;
 
@@ -63,11 +51,11 @@ impl<T, E: std::fmt::Debug> ReplaceErr for Result<T, E> {
     type Ok = T;
 
     fn replace_err(self, err: &str) -> Result<<Self as ReplaceErr>::Ok, JsError> {
-        self.map_err(|_| jerri!(err))
+        self.map_err(|_| jerr!(err))
     }
 
     fn replace_err_jv(self, err: &str) -> Result<<Self as ReplaceErr>::Ok, JsValue> {
-        self.map_err(|_| jvali!(err))
+        self.map_err(|_| jval!(err))
     }
 }
 
@@ -75,11 +63,11 @@ impl<T> ReplaceErr for Option<T> {
     type Ok = T;
 
     fn replace_err(self, err: &str) -> Result<<Self as ReplaceErr>::Ok, JsError> {
-        self.ok_or_else(|| jerri!(err))
+        self.ok_or_else(|| jerr!(err))
     }
 
     fn replace_err_jv(self, err: &str) -> Result<<Self as ReplaceErr>::Ok, JsValue> {
-        self.ok_or_else(|| jvali!(err))
+        self.ok_or_else(|| jval!(err))
     }
 }
 
@@ -89,7 +77,7 @@ impl ReplaceErr for bool {
 
     fn replace_err(self, err: &str) -> Result<(), JsError> {
         if !self {
-            Err(jerri!(err))
+            Err(jerr!(err))
         } else {
             Ok(())
         }
@@ -97,7 +85,7 @@ impl ReplaceErr for bool {
 
     fn replace_err_jv(self, err: &str) -> Result<(), JsValue> {
         if !self {
-            Err(jvali!(err))
+            Err(jval!(err))
         } else {
             Ok(())
         }
@@ -111,11 +99,7 @@ pub trait Boolinator {
 
 impl Boolinator for Result<bool, JsValue> {
     fn flatten(self, err: &str) -> Result<(), JsError> {
-        if !self.replace_err(err)? {
-            Err(jerri!(err))
-        } else {
-            Ok(())
-        }
+        self.replace_err(err)?.replace_err(err)
     }
 }
 
@@ -169,8 +153,8 @@ pub fn entries_of_object(obj: &Object) -> Vec<Vec<String>> {
 
 pub fn define_property_obj(value: JsValue, writable: bool) -> Result<Object, JsValue> {
     let entries: Array = [
-        Array::of2(&jval!(intern("value")), &value),
-        Array::of2(&jval!(intern("writable")), &jval!(writable)),
+        Array::of2(&jval!("value"), &value),
+        Array::of2(&jval!("writable"), &jval!(writable)),
     ]
     .iter()
     .collect::<Array>();
