@@ -1,21 +1,23 @@
 #![deny(missing_docs)]
 #![feature(impl_trait_in_assoc_type)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 //! A library for easily creating [Wisp] clients and servers.
 //!
 //! [Wisp]: https://github.com/MercuryWorkshop/wisp-protocol
 
 #[cfg(feature = "fastwebsockets")]
+#[cfg_attr(docsrs, doc(cfg(feature = "fastwebsockets")))]
 mod fastwebsockets;
 mod packet;
 mod sink_unfold;
 mod stream;
 #[cfg(feature = "hyper_tower")]
+#[cfg_attr(docsrs, doc(cfg(feature = "hyper_tower")))]
 pub mod tokioio;
 #[cfg(feature = "hyper_tower")]
+#[cfg_attr(docsrs, doc(cfg(feature = "hyper_tower")))]
 pub mod tower;
 pub mod ws;
-#[cfg(feature = "ws_stream_wasm")]
-mod ws_stream_wasm;
 
 pub use crate::packet::*;
 pub use crate::stream::*;

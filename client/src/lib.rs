@@ -8,14 +8,14 @@ mod wrappers;
 use tls_stream::EpxTlsStream;
 use utils::{Boolinator, ReplaceErr, UriExt};
 use websocket::EpxWebSocket;
-use wrappers::{IncomingBody, TlsWispService};
+use wrappers::{IncomingBody, TlsWispService, WebSocketWrapper};
 
 use std::sync::Arc;
 
 use async_compression::tokio::bufread as async_comp;
 use async_io_stream::IoStream;
 use bytes::Bytes;
-use futures_util::{stream::SplitSink, StreamExt};
+use futures_util::StreamExt;
 use http::{uri, HeaderName, HeaderValue, Request, Response};
 use hyper::{body::Incoming, Uri};
 use hyper_util_wasm::client::legacy::Client;
@@ -28,7 +28,6 @@ use tokio_util::{
 use wasm_bindgen::{intern, prelude::*};
 use web_sys::TextEncoder;
 use wisp_mux::{tokioio::TokioIo, tower::ServiceWrapper, ClientMux, MuxStreamIo, StreamType};
-use ws_stream_wasm::{WsMessage, WsMeta, WsStream};
 
 type HttpBody = http_body_util::Full<Bytes>;
 
@@ -64,12 +63,11 @@ fn init() {
     intern("rawHeaders");
 }
 
-
 #[wasm_bindgen(inspectable)]
 pub struct EpoxyClient {
     rustls_config: Arc<rustls::ClientConfig>,
-    mux: Arc<ClientMux<SplitSink<WsStream, WsMessage>>>,
-    hyper_client: Client<TlsWispService<SplitSink<WsStream, WsMessage>>, HttpBody>,
+    mux: Arc<ClientMux<WebSocketWrapper>>,
+    hyper_client: Client<TlsWispService<WebSocketWrapper>, HttpBody>,
     #[wasm_bindgen(getter_with_clone)]
     pub useragent: String,
     #[wasm_bindgen(js_name = "redirectLimit")]
@@ -96,12 +94,11 @@ impl EpoxyClient {
         }
 
         debug!("connecting to ws {:?}", ws_url);
-        let (_, ws) = WsMeta::connect(ws_url, vec![])
+        let (wtx, wrx) = WebSocketWrapper::connect(ws_url, vec![])
             .await
             .replace_err("Failed to connect to websocket")?;
         debug!("connected!");
 
-        let (wtx, wrx) = ws.split();
         let (mux, fut) = ClientMux::new(wrx, wtx).await?;
         let mux = Arc::new(mux);
 
