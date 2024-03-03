@@ -16,14 +16,24 @@
         const should_perf_test = params.has("perf_test");
         const should_ws_test = params.has("ws_test");
         const should_tls_test = params.has("rawtls_test");
+        const should_udp_test = params.has("udp_test");
         const worker = new Worker("demo.js", {type:'module'});
         worker.onmessage = (msg) => {
             let el = document.createElement("pre");
-            el.innerHTML = msg.data;
+            el.textContent = msg.data;
             document.getElementById("logs").appendChild(el);
             window.scrollTo(0, document.body.scrollHeight);
         };
-        worker.postMessage([should_feature_test, should_multiparallel_test, should_parallel_test, should_multiperf_test, should_perf_test, should_ws_test, should_tls_test]);
+        worker.postMessage([
+            should_feature_test,
+            should_multiparallel_test,
+            should_parallel_test,
+            should_multiperf_test,
+            should_perf_test,
+            should_ws_test,
+            should_tls_test,
+            should_udp_test
+        ]);
     </script>
 </head>
 

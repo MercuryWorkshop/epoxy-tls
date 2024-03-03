@@ -108,7 +108,11 @@ async fn handle_mux(
                 .map_err(|x| WispError::Other(Box::new(x)))?;
         }
         StreamType::Udp => {
-            let udp_socket = UdpSocket::bind(uri)
+            let udp_socket = UdpSocket::bind("0.0.0.0:0")
+                .await
+                .map_err(|x| WispError::Other(Box::new(x)))?;
+            udp_socket
+                .connect(uri)
                 .await
                 .map_err(|x| WispError::Other(Box::new(x)))?;
             let mut data = vec![0u8; 65507]; // udp standard max datagram size

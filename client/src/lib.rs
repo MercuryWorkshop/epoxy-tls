@@ -2,10 +2,12 @@
 #[macro_use]
 mod utils;
 mod tls_stream;
+mod udp_stream;
 mod websocket;
 mod wrappers;
 
 use tls_stream::EpxTlsStream;
+use udp_stream::EpxUdpStream;
 use utils::{Boolinator, ReplaceErr, UriExt};
 use websocket::EpxWebSocket;
 use wrappers::{IncomingBody, TlsWispService, WebSocketWrapper};
@@ -245,6 +247,17 @@ impl EpoxyClient {
         url: String,
     ) -> Result<EpxTlsStream, JsError> {
         EpxTlsStream::connect(self, onopen, onclose, onerror, onmessage, url).await
+    }
+
+    pub async fn connect_udp(
+        &self,
+        onopen: Function,
+        onclose: Function,
+        onerror: Function,
+        onmessage: Function,
+        url: String,
+    ) -> Result<EpxUdpStream, JsError> {
+        EpxUdpStream::connect(self, onopen, onclose, onerror, onmessage, url).await
     }
 
     pub async fn fetch(&self, url: String, options: Object) -> Result<web_sys::Response, JsError> {

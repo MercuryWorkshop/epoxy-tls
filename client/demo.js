@@ -2,7 +2,16 @@ import epoxy from "./pkg/epoxy-module-bundled.js";
 
 onmessage = async (msg) => {
     console.debug("recieved demo:", msg);
-    let [should_feature_test, should_multiparallel_test, should_parallel_test, should_multiperf_test, should_perf_test, should_ws_test, should_tls_test] = msg.data;
+    let [
+        should_feature_test,
+        should_multiparallel_test,
+        should_parallel_test,
+        should_multiperf_test,
+        should_perf_test,
+        should_ws_test,
+        should_tls_test,
+        should_udp_test
+    ] = msg.data;
     console.log(
         "%cWASM is significantly slower with DevTools open!",
         "color:red;font-size:3rem;font-weight:bold"
@@ -168,10 +177,23 @@ onmessage = async (msg) => {
             () => log("opened"),
             () => log("closed"),
             err => console.error(err),
-            msg => { console.log(msg); console.log(decoder.decode(msg)) },
+            msg => { console.log(msg); log(decoder.decode(msg)) },
             "alicesworld.tech:443",
         );
         await ws.send("GET / HTTP 1.1\r\nHost: alicesworld.tech\r\nConnection: close\r\n\r\n");
+        await (new Promise((res, _) => setTimeout(res, 500)));
+        await ws.close();
+    } else if (should_udp_test) {
+        let decoder = new TextDecoder();
+        // nc -ulp 5000
+        let ws = await epoxy_client.connect_udp(
+            () => log("opened"),
+            () => log("closed"),
+            err => console.error(err),
+            msg => { console.log(msg); log(decoder.decode(msg)) },
+            "127.0.0.1:5000",
+        );
+        await (new Promise((res, _) => setTimeout(res, 5000)));
         await ws.close();
     } else {
         let resp = await epoxy_client.fetch("https://httpbin.org/get");
