@@ -51,11 +51,11 @@ impl<T, E: std::fmt::Debug> ReplaceErr for Result<T, E> {
     type Ok = T;
 
     fn replace_err(self, err: &str) -> Result<<Self as ReplaceErr>::Ok, JsError> {
-        self.map_err(|_| jerr!(err))
+        self.map_err(|x| jerr!(&format!("{}, original error: {:?}", err, x)))
     }
 
     fn replace_err_jv(self, err: &str) -> Result<<Self as ReplaceErr>::Ok, JsValue> {
-        self.map_err(|_| jval!(err))
+        self.map_err(|x| jval!(&format!("{}, original error: {:?}", err, x)))
     }
 }
 
@@ -163,6 +163,10 @@ pub fn define_property_obj(value: JsValue, writable: bool) -> Result<Object, JsV
 
 pub fn is_redirect(code: u16) -> bool {
     [301, 302, 303, 307, 308].contains(&code)
+}
+
+pub fn is_null_body(code: u16) -> bool {
+    [101, 204, 205, 304].contains(&code)
 }
 
 pub fn get_is_secure(url: &Uri) -> Result<bool, JsError> {
