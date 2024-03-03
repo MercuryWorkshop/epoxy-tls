@@ -1,5 +1,5 @@
 #![feature(let_chains)]
-use std::io::{Error, Read};
+use std::io::Error;
 
 use bytes::Bytes;
 use clap::Parser;
@@ -13,7 +13,6 @@ use hyper::{
 };
 use hyper_util::rt::TokioIo;
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio_native_tls::{native_tls, TlsAcceptor};
 use tokio_util::codec::{BytesCodec, Framed};
 
 use wisp_mux::{
@@ -27,42 +26,23 @@ type HttpBody = http_body_util::Full<hyper::body::Bytes>;
 struct Cli {
     #[arg(long, default_value = "")]
     prefix: String,
-    #[arg(
-        long = "port",
-        short = 'l',
-        value_name = "PORT",
-        default_value = "4000"
-    )]
-    listen_port: String,
-    #[arg(long, short, value_parser)]
-    pubkey: clio::Input,
-    #[arg(long, short = 'P', value_parser)]
-    privkey: clio::Input,
+    #[arg(long, short, default_value = "4000")]
+    port: String,
+    #[arg(long = "host", short, value_name = "HOST", default_value = "0.0.0.0")]
+    bind_host: String,
 }
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Error> {
-    let mut opt = Cli::parse();
-    let mut pem = Vec::new();
-    opt.pubkey.read_to_end(&mut pem)?;
-    let mut key = Vec::new();
-    opt.privkey.read_to_end(&mut key)?;
-    let identity = native_tls::Identity::from_pkcs8(&pem, &key).expect("failed to make identity");
+    let opt = Cli::parse();
+    let addr = format!("{}:{}", opt.bind_host, opt.port);
 
-    let socket = TcpListener::bind(format!("0.0.0.0:{}", opt.listen_port))
-        .await
-        .expect("failed to bind");
-    let acceptor = TlsAcceptor::from(
-        native_tls::TlsAcceptor::new(identity).expect("failed to make tls acceptor"),
-    );
-    let acceptor = std::sync::Arc::new(acceptor);
+    let socket = TcpListener::bind(&addr).await.expect("failed to bind");
 
-    println!("listening on 0.0.0.0:4000");
+    println!("listening on `{}`", addr);
     while let Ok((stream, addr)) = socket.accept().await {
-        let acceptor_cloned = acceptor.clone();
         let prefix_cloned = opt.prefix.clone();
         tokio::spawn(async move {
-            let stream = acceptor_cloned.accept(stream).await.expect("not tls");
             let io = TokioIo::new(stream);
             let service =
                 service_fn(move |res| accept_http(res, addr.to_string(), prefix_cloned.clone()));

@@ -21,7 +21,7 @@ onmessage = async (msg) => {
 
     const tconn0 = performance.now();
     // args: websocket url, user agent, redirect limit 
-    let epoxy_client = await new EpoxyClient("wss://localhost:4000", navigator.userAgent, 10);
+    let epoxy_client = await new EpoxyClient("ws://localhost:4000", navigator.userAgent, 10);
     const tconn1 = performance.now();
     log(`conn establish took ${tconn1 - tconn0} ms or ${(tconn1 - tconn0) / 1000} s`);
 
