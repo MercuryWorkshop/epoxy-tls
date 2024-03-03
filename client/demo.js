@@ -1,4 +1,5 @@
-importScripts("epoxy-bundled.js");
+import epoxy from "./pkg/epoxy-module-bundled.js";
+
 onmessage = async (msg) => {
     console.debug("recieved demo:", msg);
     let [should_feature_test, should_multiparallel_test, should_parallel_test, should_multiperf_test, should_perf_test, should_ws_test, should_tls_test] = msg.data;

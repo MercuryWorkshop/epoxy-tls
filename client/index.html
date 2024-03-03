@@ -16,7 +16,7 @@
         const should_perf_test = params.has("perf_test");
         const should_ws_test = params.has("ws_test");
         const should_tls_test = params.has("rawtls_test");
-        const worker = new Worker("demo.js");
+        const worker = new Worker("demo.js", {type:'module'});
         worker.onmessage = (msg) => {
             let el = document.createElement("pre");
             el.innerHTML = msg.data;
