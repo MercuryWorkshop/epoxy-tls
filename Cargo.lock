@@ -101,7 +101,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d7b9decdf35d8908a7e3ef02f64c5e9b1695e230154c0e8de3969142d9b94c"
 dependencies = [
  "futures",
- "pharos",
  "rustc_version",
  "tokio",
 ]
@@ -358,13 +357,14 @@ dependencies = [
 
 [[package]]
 name = "epoxy-client"
-version = "1.0.0"
+version = "1.2.0"
 dependencies = [
  "async-compression",
  "async_io_stream",
  "base64",
  "bytes",
  "console_error_panic_hook",
+ "event-listener",
  "fastwebsockets",
  "futures-util",
  "getrandom",
@@ -375,6 +375,7 @@ dependencies = [
  "js-sys",
  "pin-project-lite",
  "ring",
+ "send_wrapper",
  "tokio",
  "tokio-rustls",
  "tokio-util",
@@ -385,7 +386,6 @@ dependencies = [
  "web-sys",
  "webpki-roots",
  "wisp-mux",
- "ws_stream_wasm",
 ]
 
 [[package]]
@@ -402,7 +402,6 @@ dependencies = [
  "hyper",
  "hyper-util",
  "tokio",
- "tokio-native-tls",
  "tokio-util",
  "wisp-mux",
 ]
@@ -425,9 +424,9 @@ dependencies = [
 
 [[package]]
 name = "event-listener"
-version = "5.0.0"
+version = "5.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b72557800024fabbaa2449dd4bf24e37b93702d457a4d4f2b0dd1f0f039f20c1"
+checksum = "2b5fb89194fa3cad959b833185b3063ba881dbfc7030680b314250779fb4cc91"
 dependencies = [
  "concurrent-queue",
  "parking",
@@ -957,16 +956,6 @@ dependencies = [
  "redox_syscall",
  "smallvec",
  "windows-targets 0.48.5",
-]
-
-[[package]]
-name = "pharos"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9567389417feee6ce15dd6527a8a1ecac205ef62c2932bcf3d9f6fc5b78b414"
-dependencies = [
- "futures",
- "rustc_version",
 ]
 
 [[package]]
@@ -1860,7 +1849,7 @@ checksum = "dff9641d1cd4be8d1a070daf9e3773c5f67e78b4d9d42263020c057706765c04"
 
 [[package]]
 name = "wisp-mux"
-version = "1.1.1"
+version = "1.1.3"
 dependencies = [
  "async_io_stream",
  "bytes",
@@ -1873,26 +1862,6 @@ dependencies = [
  "pin-project-lite",
  "tokio",
  "tower-service",
- "ws_stream_wasm",
-]
-
-[[package]]
-name = "ws_stream_wasm"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7999f5f4217fe3818726b66257a4475f71e74ffd190776ad053fa159e50737f5"
-dependencies = [
- "async_io_stream",
- "futures",
- "js-sys",
- "log",
- "pharos",
- "rustc_version",
- "send_wrapper",
- "thiserror",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
 ]
 
 [[package]]

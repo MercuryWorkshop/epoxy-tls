@@ -15,7 +15,6 @@ extern "C" {
     pub fn console_error(s: &str);
 }
 
-#[allow(unused_macros)]
 macro_rules! debug {
     ($($t:tt)*) => (utils::console_debug(&format_args!($($t)*).to_string()))
 }
@@ -25,19 +24,16 @@ macro_rules! log {
     ($($t:tt)*) => (utils::console_log(&format_args!($($t)*).to_string()))
 }
 
-#[allow(unused_macros)]
 macro_rules! error {
     ($($t:tt)*) => (utils::console_error(&format_args!($($t)*).to_string()))
 }
 
-#[allow(unused_macros)]
 macro_rules! jerr {
     ($expr:expr) => {
         JsError::new($expr)
     };
 }
 
-#[allow(unused_macros)]
 macro_rules! jval {
     ($expr:expr) => {
         JsValue::from($expr)
@@ -55,11 +51,11 @@ impl<T, E: std::fmt::Debug> ReplaceErr for Result<T, E> {
     type Ok = T;
 
     fn replace_err(self, err: &str) -> Result<<Self as ReplaceErr>::Ok, JsError> {
-        self.map_err(|oe| jerr!(&format!("{}, original error: {:?}", err, oe)))
+        self.map_err(|x| jerr!(&format!("{}, original error: {:?}", err, x)))
     }
 
     fn replace_err_jv(self, err: &str) -> Result<<Self as ReplaceErr>::Ok, JsValue> {
-        self.map_err(|oe| jval!(&format!("{}, original error: {:?}", err, oe)))
+        self.map_err(|x| jval!(&format!("{}, original error: {:?}", err, x)))
     }
 }
 
@@ -75,9 +71,40 @@ impl<T> ReplaceErr for Option<T> {
     }
 }
 
+// the... BOOLINATOR!
+impl ReplaceErr for bool {
+    type Ok = ();
+
+    fn replace_err(self, err: &str) -> Result<(), JsError> {
+        if !self {
+            Err(jerr!(err))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn replace_err_jv(self, err: &str) -> Result<(), JsValue> {
+        if !self {
+            Err(jval!(err))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+// the... BOOLINATOR!
+pub trait Boolinator {
+    fn flatten(self, err: &str) -> Result<(), JsError>;
+}
+
+impl Boolinator for Result<bool, JsValue> {
+    fn flatten(self, err: &str) -> Result<(), JsError> {
+        self.replace_err(err)?.replace_err(err)
+    }
+}
+
 pub trait UriExt {
     fn get_redirect(&self, location: &HeaderValue) -> Result<Uri, JsError>;
-    fn is_same_host(&self, other: &Uri) -> bool;
 }
 
 impl UriExt for Uri {
@@ -92,9 +119,6 @@ impl UriExt for Uri {
         }
 
         Ok(Uri::from_parts(new_parts)?)
-    }
-    fn is_same_host(&self, other: &Uri) -> bool {
-        self.host() == other.host() && self.port() == other.port()
     }
 }
 
@@ -129,7 +153,7 @@ pub fn entries_of_object(obj: &Object) -> Vec<Vec<String>> {
 
 pub fn define_property_obj(value: JsValue, writable: bool) -> Result<Object, JsValue> {
     let entries: Array = [
-        Array::of2(&jval!("value"), &jval!(value)),
+        Array::of2(&jval!("value"), &value),
         Array::of2(&jval!("writable"), &jval!(writable)),
     ]
     .iter()
@@ -139,6 +163,10 @@ pub fn define_property_obj(value: JsValue, writable: bool) -> Result<Object, JsV
 
 pub fn is_redirect(code: u16) -> bool {
     [301, 302, 303, 307, 308].contains(&code)
+}
+
+pub fn is_null_body(code: u16) -> bool {
+    [101, 204, 205, 304].contains(&code)
 }
 
 pub fn get_is_secure(url: &Uri) -> Result<bool, JsError> {

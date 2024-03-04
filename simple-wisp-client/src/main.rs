@@ -52,10 +52,9 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .ok_or(StrError::new("no src port"))?
         .parse()?;
 
-    let addr_path= std::env::args()
+    let addr_path = std::env::args()
         .nth(3)
         .ok_or(StrError::new("no src path"))?;
-
 
     let addr_dest = std::env::args()
         .nth(4)

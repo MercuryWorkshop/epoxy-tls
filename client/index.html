@@ -3,8 +3,9 @@
 <head>
     <title>epoxy</title>
     <style>
-    body { font-family: sans-serif }
-    #logs > * { font-family: monospace }
+    body { font-family: monospace; font-weight: bold; width: 100%; height: 100%; padding: 0; margin: 0 }
+    body > div { padding: 1em; }
+    #logs > * { margin: 0; font-weight: normal; }
     </style>
     <script>
         const params = (new URL(window.location.href)).searchParams;
@@ -15,22 +16,33 @@
         const should_perf_test = params.has("perf_test");
         const should_ws_test = params.has("ws_test");
         const should_tls_test = params.has("rawtls_test");
-        const worker = new Worker("demo.js");
+        const should_udp_test = params.has("udp_test");
+        const worker = new Worker("demo.js", {type:'module'});
         worker.onmessage = (msg) => {
-            let el = document.createElement("div");
+            let el = document.createElement("pre");
             el.textContent = msg.data;
             document.getElementById("logs").appendChild(el);
             window.scrollTo(0, document.body.scrollHeight);
         };
-        worker.postMessage([should_feature_test, should_multiparallel_test, should_parallel_test, should_multiperf_test, should_perf_test, should_ws_test, should_tls_test]);
+        worker.postMessage([
+            should_feature_test,
+            should_multiparallel_test,
+            should_parallel_test,
+            should_multiperf_test,
+            should_perf_test,
+            should_ws_test,
+            should_tls_test,
+            should_udp_test
+        ]);
     </script>
 </head>
 
 <body>
     <div>
-        running... (wait for the browser alert if not running ws test)
+        <div>running... (note: WASM is significantly slower when DevTools is open)</div>
+        <div>logs:</div>
+        <div id="logs"></div>
     </div>
-    <div id="logs"></div>
 </body>
 
 </html>

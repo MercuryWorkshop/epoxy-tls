@@ -1,5 +1,5 @@
 #![feature(let_chains)]
-use std::io::{Error, Read};
+use std::io::Error;
 
 use bytes::Bytes;
 use clap::Parser;
@@ -9,12 +9,10 @@ use fastwebsockets::{
 };
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
 use hyper::{
-    body::Incoming, header::HeaderValue, server::conn::http1, service::service_fn, Request,
-    Response, StatusCode,
+    body::Incoming, server::conn::http1, service::service_fn, Request, Response, StatusCode,
 };
 use hyper_util::rt::TokioIo;
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio_native_tls::{native_tls, TlsAcceptor};
 use tokio_util::codec::{BytesCodec, Framed};
 
 use wisp_mux::{
@@ -28,42 +26,23 @@ type HttpBody = http_body_util::Full<hyper::body::Bytes>;
 struct Cli {
     #[arg(long, default_value = "")]
     prefix: String,
-    #[arg(
-        long = "port",
-        short = 'l',
-        value_name = "PORT",
-        default_value = "4000"
-    )]
-    listen_port: String,
-    #[arg(long, short, value_parser)]
-    pubkey: clio::Input,
-    #[arg(long, short = 'P', value_parser)]
-    privkey: clio::Input,
+    #[arg(long, short, default_value = "4000")]
+    port: String,
+    #[arg(long = "host", short, value_name = "HOST", default_value = "0.0.0.0")]
+    bind_host: String,
 }
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Error> {
-    let mut opt = Cli::parse();
-    let mut pem = Vec::new();
-    opt.pubkey.read_to_end(&mut pem)?;
-    let mut key = Vec::new();
-    opt.privkey.read_to_end(&mut key)?;
-    let identity = native_tls::Identity::from_pkcs8(&pem, &key).expect("failed to make identity");
+    let opt = Cli::parse();
+    let addr = format!("{}:{}", opt.bind_host, opt.port);
 
-    let socket = TcpListener::bind(format!("0.0.0.0:{}", opt.listen_port))
-        .await
-        .expect("failed to bind");
-    let acceptor = TlsAcceptor::from(
-        native_tls::TlsAcceptor::new(identity).expect("failed to make tls acceptor"),
-    );
-    let acceptor = std::sync::Arc::new(acceptor);
+    let socket = TcpListener::bind(&addr).await.expect("failed to bind");
 
-    println!("listening on 0.0.0.0:4000");
+    println!("listening on `{}`", addr);
     while let Ok((stream, addr)) = socket.accept().await {
-        let acceptor_cloned = acceptor.clone();
         let prefix_cloned = opt.prefix.clone();
         tokio::spawn(async move {
-            let stream = acceptor_cloned.accept(stream).await.expect("not tls");
             let io = TokioIo::new(stream);
             let service =
                 service_fn(move |res| accept_http(res, addr.to_string(), prefix_cloned.clone()));
@@ -88,24 +67,10 @@ async fn accept_http(
     if upgrade::is_upgrade_request(&req)
         && let Some(uri) = uri.strip_prefix(&prefix)
     {
-        let (mut res, fut) = upgrade::upgrade(&mut req)?;
+        let (res, fut) = upgrade::upgrade(&mut req)?;
 
-        if let Some(protocols) = req.headers().get("Sec-Websocket-Protocol").and_then(|x| {
-            Some(
-                x.to_str()
-                    .ok()?
-                    .split(',')
-                    .map(|x| x.trim())
-                    .collect::<Vec<&str>>(),
-            )
-        }) && protocols.contains(&"wisp-v1")
-            && (uri.is_empty() || uri == "/")
-        {
+        if uri.is_empty() || uri == "/" {
             tokio::spawn(async move { accept_ws(fut, addr.clone()).await });
-            res.headers_mut().insert(
-                "Sec-Websocket-Protocol",
-                HeaderValue::from_str("wisp-v1").unwrap(),
-            );
         } else {
             let uri = uri.strip_prefix('/').unwrap_or(uri).to_string();
             tokio::spawn(async move { accept_wsproxy(fut, uri, addr.clone()).await });
@@ -119,7 +84,7 @@ async fn accept_http(
         println!("random request to path {:?}", uri);
         Ok(Response::builder()
             .status(StatusCode::OK)
-            .body(HttpBody::new(":3".to_string().into()))
+            .body(HttpBody::new(":3".into()))
             .unwrap())
     }
 }
@@ -143,7 +108,11 @@ async fn handle_mux(
                 .map_err(|x| WispError::Other(Box::new(x)))?;
         }
         StreamType::Udp => {
-            let udp_socket = UdpSocket::bind(uri)
+            let udp_socket = UdpSocket::bind("0.0.0.0:0")
+                .await
+                .map_err(|x| WispError::Other(Box::new(x)))?;
+            udp_socket
+                .connect(uri)
                 .await
                 .map_err(|x| WispError::Other(Box::new(x)))?;
             let mut data = vec![0u8; 65507]; // udp standard max datagram size

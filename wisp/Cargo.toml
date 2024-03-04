@@ -1,7 +1,7 @@
 [package]
 name = "wisp-mux"
-version = "1.1.1"
-license = "AGPL-3.0-only"
+version = "1.1.3"
+license = "LGPL-3.0-only"
 description = "A library for easily creating Wisp servers and clients."
 homepage = "https://github.com/MercuryWorkshop/epoxy-tls/tree/multiplexed/wisp"
 repository = "https://github.com/MercuryWorkshop/epoxy-tls/tree/multiplexed/wisp"
@@ -20,13 +20,12 @@ hyper-util-wasm = { version = "0.1.3", features = ["client", "client-legacy"], o
 pin-project-lite = "0.2.13"
 tokio = { version = "1.35.1", optional = true, default-features = false }
 tower-service = { version = "0.3.2", optional = true }
-ws_stream_wasm = { version = "0.7.4", optional = true }
 
 [features]
 fastwebsockets = ["dep:fastwebsockets", "dep:tokio"]
-ws_stream_wasm = ["dep:ws_stream_wasm"]
 tokio_io = ["async_io_stream/tokio_io"]
 hyper_tower = ["dep:tower-service", "dep:hyper", "dep:tokio", "dep:hyper-util-wasm"]
 
 [package.metadata.docs.rs]
-features = ["hyper_tower"]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
