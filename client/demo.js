@@ -27,7 +27,9 @@ onmessage = async (msg) => {
         postMessage(JSON.stringify(str, null, 4));
     }
 
-    const { EpoxyClient } = await epoxy();
+    const { EpoxyClient, certs } = await epoxy();
+
+    console.log("certs:", certs());
 
     const tconn0 = performance.now();
     // args: websocket url, user agent, redirect limit 

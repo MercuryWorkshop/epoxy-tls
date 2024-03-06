@@ -8,8 +8,12 @@ import epoxy from "./epoxy-module-bundled.js";
 // or
 // importScripts("epoxy-bundled.js");
 
-const { EpoxyClient } = await epoxy();
+const { EpoxyClient, certs } = await epoxy();
+
 let client = await new EpoxyClient("wss://localhost:4000", navigator.userAgent, 10);
+
+// You can view the certificates compiled in
+console.log(certs())
 
 // You can view and change the user agent and redirect limit
 console.log(client.userAgent);

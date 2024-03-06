@@ -22,6 +22,7 @@ use http::{uri, HeaderName, HeaderValue, Request, Response};
 use hyper::{body::Incoming, Uri};
 use hyper_util_wasm::client::legacy::Client;
 use js_sys::{Array, Function, Object, Reflect, Uint8Array};
+use rustls::pki_types::TrustAnchor;
 use tokio_rustls::{client::TlsStream, rustls, rustls::RootCertStore, TlsConnector};
 use tokio_util::{
     either::Either,
@@ -63,6 +64,38 @@ fn init() {
     intern("url");
     intern("redirected");
     intern("rawHeaders");
+}
+
+fn cert_to_jval(cert: &TrustAnchor) -> Result<JsValue, JsValue> {
+    let val = Object::new();
+    Reflect::set(
+        &val,
+        &jval!("subject"),
+        &Uint8Array::from(cert.subject.as_ref()),
+    )?;
+    Reflect::set(
+        &val,
+        &jval!("subject_public_key_info"),
+        &Uint8Array::from(cert.subject_public_key_info.as_ref()),
+    )?;
+    Reflect::set(
+        &val,
+        &jval!("name_constraints"),
+        &jval!(cert
+            .name_constraints
+            .as_ref()
+            .map(|x| Uint8Array::from(x.as_ref()))),
+    )?;
+    Ok(val.into())
+}
+
+#[wasm_bindgen]
+pub fn certs() -> Result<JsValue, JsValue> {
+    Ok(webpki_roots::TLS_SERVER_ROOTS
+        .iter()
+        .map(cert_to_jval)
+        .collect::<Result<Array, JsValue>>()?
+        .into())
 }
 
 #[wasm_bindgen(inspectable)]
