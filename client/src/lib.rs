@@ -2,15 +2,17 @@
 #[macro_use]
 mod utils;
 mod tls_stream;
+mod tokioio;
 mod udp_stream;
 mod websocket;
 mod wrappers;
 
 use tls_stream::EpxTlsStream;
+use tokioio::TokioIo;
 use udp_stream::EpxUdpStream;
 use utils::{Boolinator, ReplaceErr, UriExt};
 use websocket::EpxWebSocket;
-use wrappers::{IncomingBody, TlsWispService, WebSocketWrapper};
+use wrappers::{IncomingBody, ServiceWrapper, TlsWispService, WebSocketWrapper};
 
 use std::sync::Arc;
 
@@ -23,6 +25,7 @@ use hyper::{body::Incoming, Uri};
 use hyper_util_wasm::client::legacy::Client;
 use js_sys::{Array, Function, Object, Reflect, Uint8Array};
 use rustls::pki_types::TrustAnchor;
+use tokio::sync::RwLock;
 use tokio_rustls::{client::TlsStream, rustls, rustls::RootCertStore, TlsConnector};
 use tokio_util::{
     either::Either,
@@ -30,7 +33,7 @@ use tokio_util::{
 };
 use wasm_bindgen::{intern, prelude::*};
 use web_sys::TextEncoder;
-use wisp_mux::{tokioio::TokioIo, tower::ServiceWrapper, ClientMux, MuxStreamIo, StreamType};
+use wisp_mux::{ClientMux, MuxStreamIo, StreamType};
 
 type HttpBody = http_body_util::Full<Bytes>;
 
@@ -101,8 +104,8 @@ pub fn certs() -> Result<JsValue, JsValue> {
 #[wasm_bindgen(inspectable)]
 pub struct EpoxyClient {
     rustls_config: Arc<rustls::ClientConfig>,
-    mux: Arc<ClientMux<WebSocketWrapper>>,
-    hyper_client: Client<TlsWispService<WebSocketWrapper>, HttpBody>,
+    mux: Arc<RwLock<ClientMux<WebSocketWrapper>>>,
+    hyper_client: Client<TlsWispService, HttpBody>,
     #[wasm_bindgen(getter_with_clone)]
     pub useragent: String,
     #[wasm_bindgen(js_name = "redirectLimit")]
@@ -128,20 +131,9 @@ impl EpoxyClient {
             return Err(JsError::new("Scheme must be either `ws` or `wss`"));
         }
 
-        debug!("connecting to ws {:?}", ws_url);
-        let (wtx, wrx) = WebSocketWrapper::connect(ws_url, vec![])
-            .await
-            .replace_err("Failed to connect to websocket")?;
-        debug!("connected!");
-
-        let (mux, fut) = ClientMux::new(wrx, wtx).await?;
-        let mux = Arc::new(mux);
-
-        wasm_bindgen_futures::spawn_local(async move {
-            if let Err(err) = fut.await {
-                error!("epoxy: error in mux future! {:?}", err);
-            }
-        });
+        let (mux, fut) = utils::make_mux(&ws_url).await?;
+        let mux = Arc::new(RwLock::new(mux));
+        utils::spawn_mux_fut(mux.clone(), fut, ws_url.clone());
 
         let mut certstore = RootCertStore::empty();
         certstore.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -160,7 +152,7 @@ impl EpoxyClient {
                 .http1_preserve_header_case(true)
                 .build(TlsWispService {
                     rustls_config: rustls_config.clone(),
-                    service: ServiceWrapper(mux),
+                    service: ServiceWrapper(mux, ws_url),
                 }),
             rustls_config,
             useragent,
@@ -171,6 +163,8 @@ impl EpoxyClient {
     async fn get_tls_io(&self, url_host: &str, url_port: u16) -> Result<EpxIoTlsStream, JsError> {
         let channel = self
             .mux
+            .read()
+            .await
             .client_new_stream(StreamType::Tcp, url_host.to_string(), url_port)
             .await
             .replace_err("Failed to create multiplexor channel")?

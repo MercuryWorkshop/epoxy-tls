@@ -26,6 +26,7 @@ pub enum MuxEvent {
 
 pub(crate) enum WsEvent {
     Close(u32, crate::CloseReason, oneshot::Sender<Result<(), crate::WispError>>),
+    EndFut,
 }
 
 /// Read side of a multiplexor stream.

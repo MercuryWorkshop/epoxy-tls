@@ -242,8 +242,8 @@ impl From<PacketType> for Vec<u8> {
 pub struct Packet {
     /// Stream this packet is associated with.
     pub stream_id: u32,
-    /// Packet recieved.
-    pub packet: PacketType,
+    /// Packet type recieved.
+    pub packet_type: PacketType,
 }
 
 impl Packet {
@@ -251,7 +251,7 @@ impl Packet {
     ///
     /// The helper functions should be used for most use cases.
     pub fn new(stream_id: u32, packet: PacketType) -> Self {
-        Self { stream_id, packet }
+        Self { stream_id, packet_type: packet }
     }
 
     /// Create a new connect packet.
@@ -263,7 +263,7 @@ impl Packet {
     ) -> Self {
         Self {
             stream_id,
-            packet: PacketType::Connect(ConnectPacket::new(
+            packet_type: PacketType::Connect(ConnectPacket::new(
                 stream_type,
                 destination_port,
                 destination_hostname,
@@ -275,7 +275,7 @@ impl Packet {
     pub fn new_data(stream_id: u32, data: Bytes) -> Self {
         Self {
             stream_id,
-            packet: PacketType::Data(data),
+            packet_type: PacketType::Data(data),
         }
     }
 
@@ -283,7 +283,7 @@ impl Packet {
     pub fn new_continue(stream_id: u32, buffer_remaining: u32) -> Self {
         Self {
             stream_id,
-            packet: PacketType::Continue(ContinuePacket::new(buffer_remaining)),
+            packet_type: PacketType::Continue(ContinuePacket::new(buffer_remaining)),
         }
     }
 
@@ -291,7 +291,7 @@ impl Packet {
     pub fn new_close(stream_id: u32, reason: CloseReason) -> Self {
         Self {
             stream_id,
-            packet: PacketType::Close(ClosePacket::new(reason)),
+            packet_type: PacketType::Close(ClosePacket::new(reason)),
         }
     }
 }
@@ -306,7 +306,7 @@ impl TryFrom<Bytes> for Packet {
         use PacketType::*;
         Ok(Self {
             stream_id: bytes.get_u32_le(),
-            packet: match packet_type {
+            packet_type: match packet_type {
                 0x01 => Connect(ConnectPacket::try_from(bytes)?),
                 0x02 => Data(bytes),
                 0x03 => Continue(ContinuePacket::try_from(bytes)?),
@@ -320,9 +320,9 @@ impl TryFrom<Bytes> for Packet {
 impl From<Packet> for Vec<u8> {
     fn from(packet: Packet) -> Self {
         let mut encoded = Self::with_capacity(1 + 4);
-        encoded.push(packet.packet.as_u8());
+        encoded.push(packet.packet_type.as_u8());
         encoded.put_u32_le(packet.stream_id);
-        encoded.extend(Vec::<u8>::from(packet.packet));
+        encoded.extend(Vec::<u8>::from(packet.packet_type));
         encoded
     }
 }

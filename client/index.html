@@ -17,6 +17,7 @@
         const should_ws_test = params.has("ws_test");
         const should_tls_test = params.has("rawtls_test");
         const should_udp_test = params.has("udp_test");
+        const should_reconnect_test = params.has("reconnect_test");
         const worker = new Worker("demo.js", {type:'module'});
         worker.onmessage = (msg) => {
             let el = document.createElement("pre");
@@ -32,7 +33,8 @@
             should_perf_test,
             should_ws_test,
             should_tls_test,
-            should_udp_test
+            should_udp_test,
+            should_reconnect_test,
         ]);
     </script>
 </head>

@@ -11,7 +11,6 @@ use hyper::{
     upgrade::Upgraded,
     StatusCode,
 };
-use js_sys::Function;
 use std::str::from_utf8;
 use tokio::io::WriteHalf;
 

@@ -97,7 +97,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let (mux, fut) = ClientMux::new(rx, tx).await?;
 
-    tokio::task::spawn(fut);
+    tokio::task::spawn(async move { println!("err: {:?}", fut.await); });
 
     let mut hi: u64 = 0;
     loop {

@@ -1,8 +1,6 @@
 use crate::*;
 
-use js_sys::Function;
 use tokio::io::{split, AsyncWriteExt, WriteHalf};
-use tokio_util::io::ReaderStream;
 
 #[wasm_bindgen(inspectable)]
 pub struct EpxTlsStream {

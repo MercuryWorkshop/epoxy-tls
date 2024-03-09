@@ -28,11 +28,10 @@ impl From<Frame<'_>> for crate::ws::Frame {
     }
 }
 
-impl TryFrom<crate::ws::Frame> for Frame<'_> {
-    type Error = crate::WispError;
-    fn try_from(frame: crate::ws::Frame) -> Result<Self, Self::Error> {
+impl From<crate::ws::Frame> for Frame<'_> {
+    fn from(frame: crate::ws::Frame) -> Self {
         use crate::ws::OpCode::*;
-        Ok(match frame.opcode {
+        match frame.opcode {
             Text => Self::text(Payload::Owned(frame.payload.to_vec())),
             Binary => Self::binary(Payload::Owned(frame.payload.to_vec())),
             Close => Self::close_raw(Payload::Owned(frame.payload.to_vec())),
@@ -43,13 +42,17 @@ impl TryFrom<crate::ws::Frame> for Frame<'_> {
                 Payload::Owned(frame.payload.to_vec()),
             ),
             Pong => Self::pong(Payload::Owned(frame.payload.to_vec())),
-        })
+        }
     }
 }
 
 impl From<WebSocketError> for crate::WispError {
     fn from(err: WebSocketError) -> Self {
-        Self::WsImplError(Box::new(err))
+        if let WebSocketError::ConnectionClosed = err {
+            Self::WsImplSocketClosed
+        } else {
+            Self::WsImplError(Box::new(err))
+        }
     }
 }
 
@@ -67,6 +70,8 @@ impl<S: AsyncRead + Unpin + Send> crate::ws::WebSocketRead for FragmentCollector
 
 impl<S: AsyncWrite + Unpin + Send> crate::ws::WebSocketWrite for WebSocketWrite<S> {
     async fn wisp_write_frame(&mut self, frame: crate::ws::Frame) -> Result<(), crate::WispError> {
-        self.write_frame(frame.try_into()?).await.map_err(|e| e.into())
+        self.write_frame(frame.into())
+            .await
+            .map_err(|e| e.into())
     }
 }

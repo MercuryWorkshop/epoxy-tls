@@ -10,7 +10,8 @@ onmessage = async (msg) => {
         should_perf_test,
         should_ws_test,
         should_tls_test,
-        should_udp_test
+        should_udp_test,
+        should_reconnect_test,
     ] = msg.data;
     console.log(
         "%cWASM is significantly slower with DevTools open!",
@@ -197,6 +198,14 @@ onmessage = async (msg) => {
         );
         await (new Promise((res, _) => setTimeout(res, 5000)));
         await ws.close();
+    } else if (should_reconnect_test) {
+        while (true) {
+            try {
+                await epoxy_client.fetch("https://httpbin.org/get");
+            } catch(e) {console.error(e)}
+            log("sent req");
+            await (new Promise((res, _) => setTimeout(res, 500)));
+        }
     } else {
         let resp = await epoxy_client.fetch("https://httpbin.org/get");
         console.log(resp, Object.fromEntries(resp.headers));

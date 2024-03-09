@@ -1,7 +1,6 @@
 use crate::*;
 
 use futures_util::{stream::SplitSink, SinkExt};
-use js_sys::Function;
 
 #[wasm_bindgen(inspectable)]
 pub struct EpxUdpStream {
@@ -34,6 +33,8 @@ impl EpxUdpStream {
 
             let io = tcp
                 .mux
+                .read()
+                .await
                 .client_new_stream(StreamType::Udp, url_host.to_string(), url_port)
                 .await
                 .replace_err("Failed to open multiplexor channel")?

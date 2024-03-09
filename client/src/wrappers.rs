@@ -1,11 +1,12 @@
 use crate::*;
 use std::{
     pin::Pin,
+    sync::atomic::{AtomicBool, Ordering},
     task::{Context, Poll},
 };
 
 use event_listener::Event;
-use futures_util::Stream;
+use futures_util::{FutureExt, Stream};
 use hyper::body::Body;
 use js_sys::ArrayBuffer;
 use pin_project_lite::pin_project;
@@ -14,8 +15,6 @@ use std::future::Future;
 use tokio::sync::mpsc;
 use web_sys::{BinaryType, MessageEvent, WebSocket};
 use wisp_mux::{
-    tokioio::TokioIo,
-    tower::ServiceWrapper,
     ws::{Frame, LockedWebSocketWrite, WebSocketRead, WebSocketWrite},
     WispError,
 };
@@ -53,17 +52,49 @@ impl Stream for IncomingBody {
     }
 }
 
-pub struct TlsWispService<W>
-where
-    W: wisp_mux::ws::WebSocketWrite + Send + 'static,
-{
-    pub service: ServiceWrapper<W>,
+#[derive(Clone)]
+pub struct ServiceWrapper(pub Arc<RwLock<ClientMux<WebSocketWrapper>>>, pub String);
+
+impl tower_service::Service<hyper::Uri> for ServiceWrapper {
+    type Response = TokioIo<IoStream<MuxStreamIo, Vec<u8>>>;
+    type Error = WispError;
+    type Future = impl Future<Output = Result<Self::Response, Self::Error>>;
+
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: hyper::Uri) -> Self::Future {
+        let mux = self.0.clone();
+        let mux_url = self.1.clone();
+        async move {
+            let stream = mux
+                .read()
+                .await
+                .client_new_stream(
+                    StreamType::Tcp,
+                    req.host().ok_or(WispError::UriHasNoHost)?.to_string(),
+                    req.port().ok_or(WispError::UriHasNoPort)?.into(),
+                )
+                .await;
+            if stream
+                .as_ref()
+                .is_err_and(|e| matches!(e, WispError::WsImplSocketClosed))
+            {
+                utils::replace_mux(mux, &mux_url).await?;
+            }
+            Ok(TokioIo::new(stream?.into_io().into_asyncrw()))
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct TlsWispService {
+    pub service: ServiceWrapper,
     pub rustls_config: Arc<rustls::ClientConfig>,
 }
 
-impl<W: wisp_mux::ws::WebSocketWrite + Send + 'static> tower_service::Service<hyper::Uri>
-    for TlsWispService<W>
-{
+impl tower_service::Service<hyper::Uri> for TlsWispService {
     type Response = TokioIo<EpxIoStream>;
     type Error = WispError;
     type Future = Pin<Box<impl Future<Output = Result<Self::Response, Self::Error>>>>;
@@ -108,18 +139,8 @@ impl<W: wisp_mux::ws::WebSocketWrite + Send + 'static> tower_service::Service<hy
     }
 }
 
-impl<W: wisp_mux::ws::WebSocketWrite + Send + 'static> Clone for TlsWispService<W> {
-    fn clone(&self) -> Self {
-        Self {
-            rustls_config: self.rustls_config.clone(),
-            service: self.service.clone(),
-        }
-    }
-}
-
 #[derive(Debug)]
 pub enum WebSocketError {
-    Closed,
     Unknown,
     SendFailed,
 }
@@ -128,7 +149,6 @@ impl std::fmt::Display for WebSocketError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         use WebSocketError::*;
         match self {
-            Closed => write!(f, "Websocket closed"),
             Unknown => write!(f, "Unknown error"),
             SendFailed => write!(f, "Send failed"),
         }
@@ -144,13 +164,16 @@ impl From<WebSocketError> for WispError {
 }
 
 pub enum WebSocketMessage {
-    Close,
+    Closed,
     Error,
     Message(Vec<u8>),
 }
 
 pub struct WebSocketWrapper {
     inner: SendWrapper<WebSocket>,
+    open_event: Arc<Event>,
+    error_event: Arc<Event>,
+    closed: Arc<AtomicBool>,
 
     // used to retain the closures
     #[allow(dead_code)]
@@ -165,6 +188,8 @@ pub struct WebSocketWrapper {
 
 pub struct WebSocketReader {
     read_rx: mpsc::UnboundedReceiver<WebSocketMessage>,
+    closed: Arc<AtomicBool>,
+    close_event: Arc<Event>,
 }
 
 impl WebSocketRead for WebSocketReader {
@@ -173,49 +198,36 @@ impl WebSocketRead for WebSocketReader {
         _: &LockedWebSocketWrite<impl WebSocketWrite>,
     ) -> Result<Frame, WispError> {
         use WebSocketMessage::*;
-        match self
-            .read_rx
-            .recv()
-            .await
-            .ok_or(WispError::WsImplError(Box::new(WebSocketError::Closed)))?
-        {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(WispError::WsImplSocketClosed);
+        }
+        let res = futures_util::select! {
+            data = self.read_rx.recv().fuse() => data,
+            _ = self.close_event.listen().fuse() => Some(Closed),
+        };
+        match res.ok_or(WispError::WsImplSocketClosed)? {
             Message(bin) => Ok(Frame::binary(bin.into())),
             Error => Err(WebSocketError::Unknown.into()),
-            Close => Err(WebSocketError::Closed.into()),
+            Closed => Err(WispError::WsImplSocketClosed),
         }
     }
 }
 
 impl WebSocketWrapper {
     pub async fn connect(
-        url: String,
+        url: &str,
         protocols: Vec<String>,
     ) -> Result<(Self, WebSocketReader), JsValue> {
-        let ws = if protocols.is_empty() {
-            WebSocket::new(&url)
-        } else {
-            WebSocket::new_with_str_sequence(
-                &url,
-                &protocols
-                    .iter()
-                    .fold(Array::new(), |acc, x| {
-                        acc.push(&jval!(x));
-                        acc
-                    })
-                    .into(),
-            )
-        }
-        .replace_err("Failed to make websocket")?;
-
-        ws.set_binary_type(BinaryType::Arraybuffer);
-
         let (read_tx, read_rx) = mpsc::unbounded_channel();
+        let closed = Arc::new(AtomicBool::new(false));
 
         let open_event = Arc::new(Event::new());
+        let close_event = Arc::new(Event::new());
+        let error_event = Arc::new(Event::new());
 
-        let open_event_tx = open_event.clone();
+        let onopen_event = open_event.clone();
         let onopen = Closure::wrap(
-            Box::new(move || while open_event_tx.notify(usize::MAX) == 0 {}) as Box<dyn Fn()>,
+            Box::new(move || while onopen_event.notify(usize::MAX) == 0 {}) as Box<dyn Fn()>,
         );
 
         let onmessage_tx = read_tx.clone();
@@ -226,40 +238,78 @@ impl WebSocketWrapper {
             }
         }) as Box<dyn Fn(MessageEvent)>);
 
-        ws.set_onopen(Some(onopen.as_ref().unchecked_ref()));
-        ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
-
-        let onclose_tx = read_tx.clone();
+        let onclose_closed = closed.clone();
+        let onclose_event = close_event.clone();
         let onclose = Closure::wrap(Box::new(move || {
-            let _ = onclose_tx.send(WebSocketMessage::Close);
+            onclose_closed.store(true, Ordering::Release);
+            onclose_event.notify(usize::MAX);
         }) as Box<dyn Fn()>);
 
         let onerror_tx = read_tx.clone();
+        let onerror_closed = closed.clone();
+        let onerror_close = close_event.clone();
+        let onerror_event = error_event.clone();
         let onerror = Closure::wrap(Box::new(move || {
             let _ = onerror_tx.send(WebSocketMessage::Error);
+            onerror_closed.store(true, Ordering::Release);
+            onerror_close.notify(usize::MAX);
+            onerror_event.notify(usize::MAX);
         }) as Box<dyn Fn()>);
 
+        let ws = if protocols.is_empty() {
+            WebSocket::new(url)
+        } else {
+            WebSocket::new_with_str_sequence(
+                url,
+                &protocols
+                    .iter()
+                    .fold(Array::new(), |acc, x| {
+                        acc.push(&jval!(x));
+                        acc
+                    })
+                    .into(),
+            )
+        }
+        .replace_err("Failed to make websocket")?;
+        ws.set_binary_type(BinaryType::Arraybuffer);
+        ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
+        ws.set_onopen(Some(onopen.as_ref().unchecked_ref()));
         ws.set_onclose(Some(onclose.as_ref().unchecked_ref()));
         ws.set_onerror(Some(onerror.as_ref().unchecked_ref()));
-
-        open_event.listen().await;
 
         Ok((
             Self {
                 inner: SendWrapper::new(ws),
+                open_event,
+                error_event,
+                closed: closed.clone(),
                 onopen: SendWrapper::new(onopen),
                 onclose: SendWrapper::new(onclose),
                 onerror: SendWrapper::new(onerror),
                 onmessage: SendWrapper::new(onmessage),
             },
-            WebSocketReader { read_rx },
+            WebSocketReader {
+                read_rx,
+                closed,
+                close_event,
+            },
         ))
+    }
+
+    pub async fn wait_for_open(&self) {
+        futures_util::select! {
+            _ = self.open_event.listen().fuse() => (),
+            _ = self.error_event.listen().fuse() => (),
+        }
     }
 }
 
 impl WebSocketWrite for WebSocketWrapper {
     async fn wisp_write_frame(&mut self, frame: Frame) -> Result<(), WispError> {
         use wisp_mux::ws::OpCode::*;
+        if self.closed.load(Ordering::Acquire) {
+            return Err(WispError::WsImplSocketClosed);
+        }
         match frame.opcode {
             Binary => self
                 .inner
