@@ -13,7 +13,11 @@ use hyper::{
 };
 use hyper_util::rt::TokioIo;
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
+#[cfg(unix)]
+use tokio::net::{UnixListener, UnixStream};
 use tokio_util::codec::{BytesCodec, Framed};
+#[cfg(unix)]
+use tokio_util::either::Either;
 
 use wisp_mux::{
     ws, CloseReason, ConnectPacket, MuxEvent, MuxStream, ServerMux, StreamType, WispError,
@@ -30,14 +34,72 @@ struct Cli {
     port: String,
     #[arg(long = "host", short, value_name = "HOST", default_value = "0.0.0.0")]
     bind_host: String,
+    #[arg(long, short)]
+    unix_socket: bool,
+}
+
+#[cfg(not(unix))]
+type ListenerStream = TcpStream;
+#[cfg(unix)]
+type ListenerStream = Either<TcpStream, UnixStream>;
+
+enum Listener {
+    Tcp(TcpListener),
+    #[cfg(unix)]
+    Unix(UnixListener),
+}
+
+impl Listener {
+    pub async fn accept(&self) -> Result<(ListenerStream, String), std::io::Error> {
+        Ok(match self {
+            Listener::Tcp(listener) => {
+                let (stream, addr) = listener.accept().await?;
+                #[cfg(not(unix))]
+                {
+                    (stream, addr.to_string())
+                }
+                #[cfg(unix)]
+                {
+                    (Either::Left(stream), addr.to_string())
+                }
+            }
+            #[cfg(unix)]
+            Listener::Unix(listener) => {
+                let (stream, addr) = listener.accept().await?;
+                (
+                    Either::Right(stream),
+                    addr.as_pathname()
+                        .map(|x| x.to_string_lossy().into())
+                        .unwrap_or("unknown_unix_socket".into()),
+                )
+            }
+        })
+    }
+}
+
+async fn bind(addr: &str, unix: bool) -> Result<Listener, std::io::Error> {
+    #[cfg(unix)]
+    if unix {
+        return Ok(Listener::Unix(UnixListener::bind(addr)?));
+    }
+    #[cfg(not(unix))]
+    if unix {
+        panic!("Unix sockets are only supported on Unix.");
+    }
+
+    Ok(Listener::Tcp(TcpListener::bind(addr).await?))
 }
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Error> {
     let opt = Cli::parse();
-    let addr = format!("{}:{}", opt.bind_host, opt.port);
+    let addr = if opt.unix_socket {
+        opt.bind_host
+    } else {
+        format!("{}:{}", opt.bind_host, opt.port)
+    };
 
-    let socket = TcpListener::bind(&addr).await.expect("failed to bind");
+    let socket = bind(&addr, opt.unix_socket).await?;
 
     println!("listening on `{}`", addr);
     while let Ok((stream, addr)) = socket.accept().await {
@@ -45,12 +107,12 @@ async fn main() -> Result<(), Error> {
         tokio::spawn(async move {
             let io = TokioIo::new(stream);
             let service =
-                service_fn(move |res| accept_http(res, addr.to_string(), prefix_cloned.clone()));
+                service_fn(move |res| accept_http(res, addr.clone(), prefix_cloned.clone()));
             let conn = http1::Builder::new()
                 .serve_connection(io, service)
                 .with_upgrades();
             if let Err(err) = conn.await {
-                println!("{:?}: failed to serve conn: {:?}", addr, err);
+                println!("failed to serve conn: {:?}", err);
             }
         });
     }

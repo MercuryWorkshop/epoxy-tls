@@ -29,15 +29,20 @@ See `client/demo.js` for more examples.
 $ cargo r -r --bin epoxy-server -- --help
 Implementation of the Wisp protocol in Rust, made for epoxy.
 
-Usage: epoxy-server [OPTIONS] --pubkey <PUBKEY> --privkey <PRIVKEY>
+Usage: epoxy-server [OPTIONS]
 
 Options:
-      --prefix <PREFIX>    [default: ]
-  -l, --port <PORT>        [default: 4000]
-  -p, --pubkey <PUBKEY>    
-  -P, --privkey <PRIVKEY>  
-  -h, --help               Print help
-  -V, --version            Print version
+      --prefix <PREFIX>  [default: ]
+  -p, --port <PORT>      [default: 4000]
+  -b, --host <HOST>      [default: 0.0.0.0]
+  -u, --unix-socket      
+  -h, --help             Print help
+  -V, --version          Print version
+```
+
+You can listen on a unix socket by passing the `--unix-socket` flag and the unix socket path in the `--host` flag. Example:
+```
+cargo r -r -- -u -b "/home/user/epoxy-socket"
 ```
 
 ## Building
