@@ -80,6 +80,10 @@ impl Listener {
 async fn bind(addr: &str, unix: bool) -> Result<Listener, std::io::Error> {
     #[cfg(unix)]
     if unix {
+        if std::fs::metadata(addr).is_ok() {
+            println!("attempting to remove old socket {:?}", addr);
+            std::fs::remove_file(addr)?;
+        }
         return Ok(Listener::Unix(UnixListener::bind(addr)?));
     }
     #[cfg(not(unix))]
