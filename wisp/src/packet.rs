@@ -1,5 +1,4 @@
-use crate::ws;
-use crate::WispError;
+use crate::{ws, WispError};
 use bytes::{Buf, BufMut, Bytes};
 
 /// Wisp stream type.
