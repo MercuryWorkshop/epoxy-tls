@@ -182,7 +182,12 @@ impl<W: ws::WebSocketWrite + Send + 'static> ServerMuxInner<W> {
             .await?;
 
         loop {
-            let packet: Packet = rx.wisp_read_frame(&self.tx).await?.try_into()?;
+            let frame = rx.wisp_read_frame(&self.tx).await?;
+            if frame.opcode == ws::OpCode::Close {
+                break Ok(());
+            }
+            let packet = Packet::try_from(frame)?;
+
             use PacketType::*;
             match packet.packet_type {
                 Connect(inner_packet) => {
@@ -368,29 +373,32 @@ impl<W: ws::WebSocketWrite + Send> ClientMuxInner<W> {
     {
         loop {
             let frame = rx.wisp_read_frame(&self.tx).await?;
-            if let Ok(packet) = Packet::try_from(frame) {
-                use PacketType::*;
-                match packet.packet_type {
-                    Connect(_) => unreachable!(),
-                    Data(data) => {
-                        if let Some(stream) = self.stream_map.lock().await.get(&packet.stream_id) {
-                            let _ = stream.stream.unbounded_send(MuxEvent::Send(data));
-                        }
+            if frame.opcode == ws::OpCode::Close {
+                break Ok(());
+            }
+            let packet = Packet::try_from(frame)?;
+
+            use PacketType::*;
+            match packet.packet_type {
+                Connect(_) => unreachable!(),
+                Data(data) => {
+                    if let Some(stream) = self.stream_map.lock().await.get(&packet.stream_id) {
+                        let _ = stream.stream.unbounded_send(MuxEvent::Send(data));
                     }
-                    Continue(inner_packet) => {
-                        if let Some(stream) = self.stream_map.lock().await.get(&packet.stream_id) {
-                            stream
-                                .flow_control
-                                .store(inner_packet.buffer_remaining, Ordering::Release);
-                            let _ = stream.flow_control_event.notify(u32::MAX);
-                        }
+                }
+                Continue(inner_packet) => {
+                    if let Some(stream) = self.stream_map.lock().await.get(&packet.stream_id) {
+                        stream
+                            .flow_control
+                            .store(inner_packet.buffer_remaining, Ordering::Release);
+                        let _ = stream.flow_control_event.notify(u32::MAX);
                     }
-                    Close(inner_packet) => {
-                        if let Some(stream) = self.stream_map.lock().await.get(&packet.stream_id) {
-                            let _ = stream.stream.unbounded_send(MuxEvent::Close(inner_packet));
-                        }
-                        self.stream_map.lock().await.remove(&packet.stream_id);
+                }
+                Close(inner_packet) => {
+                    if let Some(stream) = self.stream_map.lock().await.get(&packet.stream_id) {
+                        let _ = stream.stream.unbounded_send(MuxEvent::Close(inner_packet));
                     }
+                    self.stream_map.lock().await.remove(&packet.stream_id);
                 }
             }
         }

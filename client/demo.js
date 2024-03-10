@@ -171,7 +171,7 @@ onmessage = async (msg) => {
         );
         while (true) {
             log("sending `data`");
-            await ws.send("data");
+            await ws.send_text("data");
             await (new Promise((res, _) => setTimeout(res, 50)));
         }
     } else if (should_tls_test) {
@@ -181,14 +181,14 @@ onmessage = async (msg) => {
             () => log("closed"),
             err => console.error(err),
             msg => { console.log(msg); log(decoder.decode(msg)) },
-            "alicesworld.tech:443",
+            "google.com:443",
         );
-        await ws.send("GET / HTTP 1.1\r\nHost: alicesworld.tech\r\nConnection: close\r\n\r\n");
+        await ws.send((new TextEncoder()).encode("GET / HTTP 1.1\r\nHost: google.com\r\nConnection: close\r\n\r\n"));
         await (new Promise((res, _) => setTimeout(res, 500)));
         await ws.close();
     } else if (should_udp_test) {
         let decoder = new TextDecoder();
-        // nc -ulp 5000
+        // tokio example: `cargo r --example echo-udp -- 127.0.0.1:5000`
         let ws = await epoxy_client.connect_udp(
             () => log("opened"),
             () => log("closed"),
@@ -196,8 +196,11 @@ onmessage = async (msg) => {
             msg => { console.log(msg); log(decoder.decode(msg)) },
             "127.0.0.1:5000",
         );
-        await (new Promise((res, _) => setTimeout(res, 5000)));
-        await ws.close();
+        while (true) {
+            log("sending `data`");
+            await ws.send((new TextEncoder()).encode("data"));
+            await (new Promise((res, _) => setTimeout(res, 50)));
+        }
     } else if (should_reconnect_test) {
         while (true) {
             try {
