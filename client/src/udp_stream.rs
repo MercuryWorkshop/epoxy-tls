@@ -71,9 +71,17 @@ impl EpxUdpStream {
     }
 
     #[wasm_bindgen]
-    pub async fn send(&mut self, payload: Uint8Array) -> Result<(), JsError> {
+    pub async fn send(&mut self, payload: JsValue) -> Result<(), JsError> {
         let onerr = self.onerror.clone();
-        let ret = self.tx.send(payload.to_vec()).await;
+        let ret = self
+            .tx
+            .send(
+                utils::jval_to_u8_array(payload)
+                    .await
+                    .replace_err("Invalid payload")?
+                    .to_vec(),
+            )
+            .await;
         if let Err(ret) = ret {
             let _ = onerr.call1(&JsValue::null(), &jval!(format!("{}", ret)));
             Err(ret.into())

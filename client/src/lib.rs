@@ -32,7 +32,6 @@ use tokio_util::{
     io::{ReaderStream, StreamReader},
 };
 use wasm_bindgen::{intern, prelude::*};
-use web_sys::TextEncoder;
 use wisp_mux::{ClientMux, MuxStreamIo, StreamType};
 
 type HttpBody = http_body_util::Full<Bytes>;
@@ -58,6 +57,7 @@ fn init() {
     // utils.rs
     intern("value");
     intern("writable");
+    intern("POST");
 
     // main.rs
     intern("method");
@@ -67,6 +67,7 @@ fn init() {
     intern("url");
     intern("redirected");
     intern("rawHeaders");
+    intern("Content-Type");
 }
 
 fn cert_to_jval(cert: &TrustAnchor) -> Result<JsValue, JsValue> {
@@ -310,31 +311,24 @@ impl EpoxyClient {
             Err(_) => true,
         };
 
+        let mut body_content_type: Option<String> = None;
         let body_jsvalue: Option<JsValue> = Reflect::get(&options, &jval!("body")).ok();
-        let body = if let Some(val) = body_jsvalue {
-            if val.is_string() {
-                let str = val
-                    .as_string()
-                    .replace_err("Failed to get string from body")?;
-                let encoder =
-                    TextEncoder::new().replace_err("Failed to create TextEncoder for body")?;
-                let encoded = encoder.encode_with_input(str.as_ref());
-                Some(encoded)
-            } else {
-                Some(Uint8Array::new(&val).to_vec())
+        let body_bytes: Bytes = match body_jsvalue {
+            Some(buf) => {
+                let (body, req) = utils::jval_to_u8_array_req(buf)
+                    .await
+                    .replace_err("Invalid body")?;
+                body_content_type = req.headers().get("Content-Type").ok().flatten();
+                Bytes::from(body.to_vec())
             }
-        } else {
-            None
-        };
-
-        let body_bytes: Bytes = match body {
-            Some(vec) => Bytes::from(vec),
             None => Bytes::new(),
         };
 
         let headers = Reflect::get(&options, &jval!("headers"))
             .map(|val| {
-                if val.is_truthy() {
+                if web_sys::Headers::instanceof(&val) {
+                    Some(utils::entries_of_object(&Object::from_entries(&val).ok()?))
+                } else if val.is_truthy() {
                     Some(utils::entries_of_object(&Object::from(val)))
                 } else {
                     None
@@ -351,6 +345,9 @@ impl EpoxyClient {
         headers_map.insert("Host", HeaderValue::from_str(uri_host)?);
         if body_bytes.is_empty() {
             headers_map.insert("Content-Length", HeaderValue::from_static("0"));
+        }
+        if let Some(content_type) = body_content_type {
+            headers_map.insert("Content-Type", HeaderValue::from_str(&content_type)?);
         }
 
         if let Some(headers) = headers {

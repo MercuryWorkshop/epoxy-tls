@@ -1,8 +1,10 @@
 use crate::*;
 
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::JsFuture;
 
 use hyper::rt::Executor;
+use js_sys::ArrayBuffer;
 use std::future::Future;
 use wisp_mux::{CloseReason, WispError};
 
@@ -188,7 +190,15 @@ pub fn get_url_port(url: &Uri) -> Result<u16, JsError> {
     }
 }
 
-pub async fn make_mux(url: &str) -> Result<(ClientMux<WebSocketWrapper>, impl Future<Output = Result<(), WispError>>), WispError> {
+pub async fn make_mux(
+    url: &str,
+) -> Result<
+    (
+        ClientMux<WebSocketWrapper>,
+        impl Future<Output = Result<(), WispError>>,
+    ),
+    WispError,
+> {
     let (wtx, wrx) = WebSocketWrapper::connect(url, vec![])
         .await
         .map_err(|_| WispError::WsImplSocketClosed)?;
@@ -198,7 +208,11 @@ pub async fn make_mux(url: &str) -> Result<(ClientMux<WebSocketWrapper>, impl Fu
     Ok(mux)
 }
 
-pub fn spawn_mux_fut(mux: Arc<RwLock<ClientMux<WebSocketWrapper>>>, fut: impl Future<Output = Result<(), WispError>> + 'static, url: String) {
+pub fn spawn_mux_fut(
+    mux: Arc<RwLock<ClientMux<WebSocketWrapper>>>,
+    fut: impl Future<Output = Result<(), WispError>> + 'static,
+    url: String,
+) {
     wasm_bindgen_futures::spawn_local(async move {
         if let Err(e) = fut.await {
             error!("epoxy: error in mux future, restarting: {:?}", e);
@@ -222,4 +236,31 @@ pub async fn replace_mux(
     drop(mux_write);
     spawn_mux_fut(mux, fut, url.into());
     Ok(())
+}
+
+pub async fn jval_to_u8_array(val: JsValue) -> Result<Uint8Array, JsValue> {
+    JsFuture::from(
+        web_sys::Request::new_with_str_and_init(
+            "/",
+            web_sys::RequestInit::new().method("POST").body(Some(&val)),
+        )?
+        .array_buffer()?,
+    )
+    .await?
+    .dyn_into::<ArrayBuffer>()
+    .map(|x| Uint8Array::new(&x))
+}
+
+pub async fn jval_to_u8_array_req(val: JsValue) -> Result<(Uint8Array, web_sys::Request), JsValue> {
+    let req = web_sys::Request::new_with_str_and_init(
+        "/",
+        web_sys::RequestInit::new().method("POST").body(Some(&val)),
+    )?;
+    Ok((
+        JsFuture::from(req.array_buffer()?)
+            .await?
+            .dyn_into::<ArrayBuffer>()
+            .map(|x| Uint8Array::new(&x))?,
+        req,
+    ))
 }

@@ -49,7 +49,11 @@ impl EpxTlsStream {
                 .call0(&Object::default())
                 .replace_err("Failed to call onopen")?;
 
-            Ok(Self { tx, onerror, url: url.to_string() })
+            Ok(Self {
+                tx,
+                onerror,
+                url: url.to_string(),
+            })
         }
         .await;
         if let Err(ret) = ret {
@@ -61,9 +65,17 @@ impl EpxTlsStream {
     }
 
     #[wasm_bindgen]
-    pub async fn send(&mut self, payload: Uint8Array) -> Result<(), JsError> {
+    pub async fn send(&mut self, payload: JsValue) -> Result<(), JsError> {
         let onerr = self.onerror.clone();
-        let ret = self.tx.write_all(&payload.to_vec()).await;
+        let ret = self
+            .tx
+            .write_all(
+                &utils::jval_to_u8_array(payload)
+                    .await
+                    .replace_err("Invalid payload")?
+                    .to_vec(),
+            )
+            .await;
         if let Err(ret) = ret {
             let _ = onerr.call1(&JsValue::null(), &jval!(format!("{}", ret)));
             Err(ret.into())

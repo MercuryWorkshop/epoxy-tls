@@ -58,16 +58,24 @@ onmessage = async (msg) => {
     };
 
     if (should_feature_test) {
+        let formdata = new FormData();
+        formdata.append("a", "b");
         for (const url of [
             ["https://httpbin.org/get", {}],
             ["https://httpbin.org/gzip", {}],
             ["https://httpbin.org/brotli", {}],
             ["https://httpbin.org/redirect/11", {}],
             ["https://httpbin.org/redirect/1", { redirect: "manual" }],
+            ["https://httpbin.org/post", { method: "POST", body: new URLSearchParams("a=b") }],
+            ["https://httpbin.org/post", { method: "POST", body: formdata }],
+            ["https://httpbin.org/post", { method: "POST", body: "a" }],
+            ["https://httpbin.org/post", { method: "POST", body: (new TextEncoder()).encode("abc") }],
+            ["https://httpbin.org/get", { headers: {"a": "b", "b": "c"} }],
+            ["https://httpbin.org/get", { headers: new Headers({"a": "b", "b": "c"}) }]
         ]) {
             let resp = await epoxy_client.fetch(url[0], url[1]);
             console.warn(url, resp, Object.fromEntries(resp.headers));
-            console.warn(await resp.text());
+            log(await resp.text());
         }
     } else if (should_multiparallel_test) {
         const num_tests = 10;
@@ -183,7 +191,7 @@ onmessage = async (msg) => {
             msg => { console.log(msg); log(decoder.decode(msg)) },
             "google.com:443",
         );
-        await ws.send((new TextEncoder()).encode("GET / HTTP 1.1\r\nHost: google.com\r\nConnection: close\r\n\r\n"));
+        await ws.send("GET / HTTP 1.1\r\nHost: google.com\r\nConnection: close\r\n\r\n");
         await (new Promise((res, _) => setTimeout(res, 500)));
         await ws.close();
     } else if (should_udp_test) {
@@ -198,7 +206,7 @@ onmessage = async (msg) => {
         );
         while (true) {
             log("sending `data`");
-            await ws.send((new TextEncoder()).encode("data"));
+            await ws.send("data");
             await (new Promise((res, _) => setTimeout(res, 50)));
         }
     } else if (should_reconnect_test) {

@@ -1,6 +1,6 @@
 {
   "name": "@mercuryworkshop/epoxy-tls",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "A wasm library for using raw encrypted tls/ssl/https/websocket streams on the browser",
   "scripts": {
     "build": "./build.sh"
