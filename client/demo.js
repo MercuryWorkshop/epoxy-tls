@@ -12,6 +12,7 @@ onmessage = async (msg) => {
         should_tls_test,
         should_udp_test,
         should_reconnect_test,
+        should_perf2_test,
     ] = msg.data;
     console.log(
         "%cWASM is significantly slower with DevTools open!",
@@ -217,6 +218,24 @@ onmessage = async (msg) => {
             log("sent req");
             await (new Promise((res, _) => setTimeout(res, 500)));
         }
+    } else if (should_perf2_test) {
+        const num_outer_tests = 10;
+        const num_inner_tests = 50;
+        let total_mux_multi = 0;
+        for (const _ of Array(num_outer_tests).keys()) {
+            let total_mux = 0;
+            await Promise.all([...Array(num_inner_tests).keys()].map(async i => {
+                log(`running mux test ${i}`);
+                return await test_mux("https://httpbin.org/get");
+            })).then((vals) => { total_mux = vals.reduce((acc, x) => acc + x, 0) });
+            total_mux = total_mux / num_inner_tests;
+
+            log(`avg mux (${num_inner_tests}) took ${total_mux} ms or ${total_mux / 1000} s`);
+            total_mux_multi += total_mux;
+        }
+        total_mux_multi = total_mux_multi / num_outer_tests;
+        log(`total avg mux (${num_outer_tests} tests of ${num_inner_tests} reqs): ${total_mux_multi} ms or ${total_mux_multi / 1000} s`);
+
     } else {
         let resp = await epoxy_client.fetch("https://httpbin.org/get");
         console.log(resp, Object.fromEntries(resp.headers));

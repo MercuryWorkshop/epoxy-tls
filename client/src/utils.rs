@@ -6,7 +6,7 @@ use wasm_bindgen_futures::JsFuture;
 use hyper::rt::Executor;
 use js_sys::ArrayBuffer;
 use std::future::Future;
-use wisp_mux::{CloseReason, WispError};
+use wisp_mux::WispError;
 
 #[wasm_bindgen]
 extern "C" {
@@ -22,11 +22,11 @@ macro_rules! debug {
     ($($t:tt)*) => (utils::console_debug(&format_args!($($t)*).to_string()))
 }
 
-#[allow(unused_macros)]
 macro_rules! log {
     ($($t:tt)*) => (utils::console_log(&format_args!($($t)*).to_string()))
 }
 
+#[allow(unused_macros)]
 macro_rules! error {
     ($($t:tt)*) => (utils::console_error(&format_args!($($t)*).to_string()))
 }
@@ -215,9 +215,9 @@ pub fn spawn_mux_fut(
 ) {
     wasm_bindgen_futures::spawn_local(async move {
         if let Err(e) = fut.await {
-            error!("epoxy: error in mux future, restarting: {:?}", e);
+            log!("epoxy: error in mux future, restarting: {:?}", e);
             while let Err(e) = replace_mux(mux.clone(), &url).await {
-                error!("epoxy: failed to restart mux future: {:?}", e);
+                log!("epoxy: failed to restart mux future: {:?}", e);
                 wasmtimer::tokio::sleep(std::time::Duration::from_millis(500)).await;
             }
         }
@@ -231,7 +231,7 @@ pub async fn replace_mux(
 ) -> Result<(), WispError> {
     let (mux_replace, fut) = make_mux(url).await?;
     let mut mux_write = mux.write().await;
-    mux_write.close(CloseReason::Unknown).await;
+    mux_write.close().await;
     *mux_write = mux_replace;
     drop(mux_write);
     spawn_mux_fut(mux, fut, url.into());

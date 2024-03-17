@@ -19,14 +19,12 @@ use tokio_util::codec::{BytesCodec, Framed};
 #[cfg(unix)]
 use tokio_util::either::Either;
 
-use wisp_mux::{
-    ws, CloseReason, ConnectPacket, MuxEvent, MuxStream, ServerMux, StreamType, WispError,
-};
+use wisp_mux::{CloseReason, ConnectPacket, MuxStream, ServerMux, StreamType, WispError};
 
 type HttpBody = http_body_util::Full<hyper::body::Bytes>;
 
 #[derive(Parser)]
-#[command(version = clap::crate_version!(), about = "Implementation of the Wisp protocol in Rust, made for epoxy.")]
+#[command(version = clap::crate_version!(), about = "Server implementation of the Wisp protocol in Rust, made for epoxy.")]
 struct Cli {
     #[arg(long, default_value = "")]
     prefix: String,
@@ -96,6 +94,8 @@ async fn bind(addr: &str, unix: bool) -> Result<Listener, std::io::Error> {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Error> {
+    #[cfg(feature = "tokio-console")]
+    console_subscriber::init();
     let opt = Cli::parse();
     let addr = if opt.unix_socket {
         opt.bind_host
@@ -137,8 +137,7 @@ async fn accept_http(
 
         if uri.is_empty() || uri == "/" {
             tokio::spawn(async move { accept_ws(fut, addr.clone()).await });
-        } else {
-            let uri = uri.strip_prefix('/').unwrap_or(uri).to_string();
+        } else if let Some(uri) = uri.strip_prefix('/').map(|x| x.to_string()) {
             tokio::spawn(async move { accept_wsproxy(fut, uri, addr.clone()).await });
         }
 
@@ -155,10 +154,7 @@ async fn accept_http(
     }
 }
 
-async fn handle_mux(
-    packet: ConnectPacket,
-    mut stream: MuxStream<impl ws::WebSocketWrite + Send + 'static>,
-) -> Result<bool, WispError> {
+async fn handle_mux(packet: ConnectPacket, mut stream: MuxStream) -> Result<bool, WispError> {
     let uri = format!(
         "{}:{}",
         packet.destination_hostname, packet.destination_port
@@ -190,12 +186,9 @@ async fn handle_mux(
                     },
                     event = stream.read() => {
                         match event {
-                            Some(event) => match event {
-                                MuxEvent::Send(data) => {
-                                    udp_socket.send(&data).await.map_err(|x| WispError::Other(Box::new(x)))?;
-                                }
-                                MuxEvent::Close(_) => return Ok(false),
-                            },
+                            Some(event) => {
+                                let _ = udp_socket.send(&event).await.map_err(|x| WispError::Other(Box::new(x)))?;
+                            }
                             None => break,
                         }
                     }

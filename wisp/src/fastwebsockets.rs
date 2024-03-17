@@ -56,10 +56,10 @@ impl From<WebSocketError> for crate::WispError {
     }
 }
 
-impl<S: AsyncRead + Unpin + Send> crate::ws::WebSocketRead for FragmentCollectorRead<S> {
+impl<S: AsyncRead + Unpin> crate::ws::WebSocketRead for FragmentCollectorRead<S> {
     async fn wisp_read_frame(
         &mut self,
-        tx: &crate::ws::LockedWebSocketWrite<impl crate::ws::WebSocketWrite + Send>,
+        tx: &crate::ws::LockedWebSocketWrite<impl crate::ws::WebSocketWrite>,
     ) -> Result<crate::ws::Frame, crate::WispError> {
         Ok(self
             .read_frame(&mut |frame| async { tx.write_frame(frame.into()).await })
@@ -68,7 +68,7 @@ impl<S: AsyncRead + Unpin + Send> crate::ws::WebSocketRead for FragmentCollector
     }
 }
 
-impl<S: AsyncWrite + Unpin + Send> crate::ws::WebSocketWrite for WebSocketWrite<S> {
+impl<S: AsyncWrite + Unpin> crate::ws::WebSocketWrite for WebSocketWrite<S> {
     async fn wisp_write_frame(&mut self, frame: crate::ws::Frame) -> Result<(), crate::WispError> {
         self.write_frame(frame.into())
             .await

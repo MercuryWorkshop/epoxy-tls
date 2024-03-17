@@ -2,5 +2,3 @@ build.sh
 Cargo.toml
 serve.py
 src
-pkg/epoxy.wasm
-

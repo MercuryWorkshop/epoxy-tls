@@ -1,10 +1,9 @@
 //! Abstraction over WebSocket implementations.
 //!
-//! Use the [`fastwebsockets`] and [`ws_stream_wasm`] implementations of these traits as an example
-//! for implementing them for other WebSocket implementations.
+//! Use the [`fastwebsockets`] implementation of these traits as an example for implementing them
+//! for other WebSocket implementations.
 //!
 //! [`fastwebsockets`]: https://github.com/MercuryWorkshop/epoxy-tls/blob/multiplexed/wisp/src/fastwebsockets.rs
-//! [`ws_stream_wasm`]: https://github.com/MercuryWorkshop/epoxy-tls/blob/multiplexed/wisp/src/ws_stream_wasm.rs
 use bytes::Bytes;
 use futures::lock::Mutex;
 use std::sync::Arc;
@@ -68,8 +67,8 @@ pub trait WebSocketRead {
     /// Read a frame from the socket.
     fn wisp_read_frame(
         &mut self,
-        tx: &crate::ws::LockedWebSocketWrite<impl crate::ws::WebSocketWrite + Send>,
-    ) -> impl std::future::Future<Output = Result<Frame, crate::WispError>> + Send;
+        tx: &crate::ws::LockedWebSocketWrite<impl crate::ws::WebSocketWrite>,
+    ) -> impl std::future::Future<Output = Result<Frame, crate::WispError>>;
 }
 
 /// Generic WebSocket write trait.
@@ -78,13 +77,13 @@ pub trait WebSocketWrite {
     fn wisp_write_frame(
         &mut self,
         frame: Frame,
-    ) -> impl std::future::Future<Output = Result<(), crate::WispError>> + Send;
+    ) -> impl std::future::Future<Output = Result<(), crate::WispError>>;
 }
 
 /// Locked WebSocket that can be shared between threads.
 pub struct LockedWebSocketWrite<S>(Arc<Mutex<S>>);
 
-impl<S: WebSocketWrite + Send> LockedWebSocketWrite<S> {
+impl<S: WebSocketWrite> LockedWebSocketWrite<S> {
     /// Create a new locked websocket.
     pub fn new(ws: S) -> Self {
         Self(Arc::new(Mutex::new(ws)))

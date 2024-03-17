@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["server", "client", "wisp", "simple-wisp-client"]
+default-members = ["server"]
 
 [patch.crates-io]
 rustls-pki-types = { git = "https://github.com/r58Playz/rustls-pki-types" }
@@ -8,4 +9,7 @@ rustls-pki-types = { git = "https://github.com/r58Playz/rustls-pki-types" }
 [profile.release]
 lto = true
 opt-level = 'z'
+strip = true
+panic = "abort"
 codegen-units = 1
+

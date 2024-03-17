@@ -41,8 +41,10 @@ where
     }
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    #[cfg(feature = "tokio-console")]
+    console_subscriber::init();
     let addr = std::env::args()
         .nth(1)
         .ok_or(StrError::new("no src addr"))?;
@@ -106,7 +108,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             .await?
             .into_io()
             .into_asyncrw();
-        for _ in 0..10 {
+        for _ in 0..256 {
             channel.write_all(b"hiiiiiiii").await?;
             hi += 1;
             println!("said hi {}", hi);

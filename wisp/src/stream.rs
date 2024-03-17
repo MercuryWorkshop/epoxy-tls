@@ -1,4 +1,4 @@
-use crate::{sink_unfold, ws, ClosePacket, CloseReason, Packet, Role, StreamType, WispError};
+use crate::{sink_unfold, CloseReason, Packet, Role, StreamType, WispError};
 
 use async_io_stream::IoStream;
 use bytes::Bytes;
@@ -18,91 +18,75 @@ use std::{
     },
 };
 
-/// Multiplexor event recieved from a Wisp stream.
-pub enum MuxEvent {
-    /// The other side has sent data.
-    Send(Bytes),
-    /// The other side has closed.
-    Close(ClosePacket),
-}
-
 pub(crate) enum WsEvent {
-    Close(u32, CloseReason, oneshot::Sender<Result<(), WispError>>),
+    SendPacket(Packet, oneshot::Sender<Result<(), WispError>>),
+    Close(Packet, oneshot::Sender<Result<(), WispError>>),
     EndFut,
 }
 
 /// Read side of a multiplexor stream.
-pub struct MuxStreamRead<W>
-where
-    W: ws::WebSocketWrite,
-{
+pub struct MuxStreamRead {
     /// ID of the stream.
     pub stream_id: u32,
     /// Type of the stream.
     pub stream_type: StreamType,
     role: Role,
-    tx: ws::LockedWebSocketWrite<W>,
-    rx: mpsc::UnboundedReceiver<MuxEvent>,
+    tx: mpsc::UnboundedSender<WsEvent>,
+    rx: mpsc::UnboundedReceiver<Bytes>,
     is_closed: Arc<AtomicBool>,
     flow_control: Arc<AtomicU32>,
+    flow_control_read: AtomicU32,
+    target_flow_control: u32,
 }
 
-impl<W: ws::WebSocketWrite + Send + 'static> MuxStreamRead<W> {
+impl MuxStreamRead {
     /// Read an event from the stream.
-    pub async fn read(&mut self) -> Option<MuxEvent> {
+    pub async fn read(&mut self) -> Option<Bytes> {
         if self.is_closed.load(Ordering::Acquire) {
             return None;
         }
-        match self.rx.next().await? {
-            MuxEvent::Send(bytes) => {
-                if self.role == Role::Server && self.stream_type == StreamType::Tcp {
-                    let old_val = self.flow_control.fetch_add(1, Ordering::AcqRel);
-                    self.tx
-                        .write_frame(Packet::new_continue(self.stream_id, old_val + 1).into())
-                        .await
-                        .ok()?;
-                }
-                Some(MuxEvent::Send(bytes))
-            }
-            MuxEvent::Close(packet) => {
-                self.is_closed.store(true, Ordering::Release);
-                Some(MuxEvent::Close(packet))
+        let bytes = self.rx.next().await?;
+        if self.role == Role::Server && self.stream_type == StreamType::Tcp {
+            let val = self.flow_control_read.fetch_add(1, Ordering::AcqRel) + 1;
+            if val > self.target_flow_control {
+                let (tx, rx) = oneshot::channel::<Result<(), WispError>>();
+                self.tx
+                    .unbounded_send(WsEvent::SendPacket(
+                        Packet::new_continue(
+                            self.stream_id,
+                            self.flow_control.fetch_add(val, Ordering::AcqRel) + val,
+                        ),
+                        tx,
+                    ))
+                    .ok()?;
+                rx.await.ok()?.ok()?;
+                self.flow_control_read.store(0, Ordering::Release);
             }
         }
+        Some(bytes)
     }
 
     pub(crate) fn into_stream(self) -> Pin<Box<dyn Stream<Item = Bytes> + Send>> {
         Box::pin(stream::unfold(self, |mut rx| async move {
-            let evt = rx.read().await?;
-            Some((
-                match evt {
-                    MuxEvent::Send(bytes) => bytes,
-                    MuxEvent::Close(_) => return None,
-                },
-                rx,
-            ))
+            Some((rx.read().await?, rx))
         }))
     }
 }
 
 /// Write side of a multiplexor stream.
-pub struct MuxStreamWrite<W>
-where
-    W: ws::WebSocketWrite,
-{
+pub struct MuxStreamWrite {
     /// ID of the stream.
     pub stream_id: u32,
     /// Type of the stream.
     pub stream_type: StreamType,
     role: Role,
-    tx: ws::LockedWebSocketWrite<W>,
-    close_channel: mpsc::UnboundedSender<WsEvent>,
+    tx: mpsc::UnboundedSender<WsEvent>,
     is_closed: Arc<AtomicBool>,
     continue_recieved: Arc<Event>,
     flow_control: Arc<AtomicU32>,
 }
 
-impl<W: ws::WebSocketWrite + Send + 'static> MuxStreamWrite<W> {
+impl MuxStreamWrite {
     /// Write data to the stream.
     pub async fn write(&self, data: Bytes) -> Result<(), WispError> {
         if self.is_closed.load(Ordering::Acquire) {
@@ -114,9 +98,14 @@ impl<W: ws::WebSocketWrite + Send + 'static> MuxStreamWrite<W> {
         {
             self.continue_recieved.listen().await;
         }
+        let (tx, rx) = oneshot::channel::<Result<(), WispError>>();
         self.tx
-            .write_frame(Packet::new_data(self.stream_id, data).into())
-            .await?;
+            .unbounded_send(WsEvent::SendPacket(
+                Packet::new_data(self.stream_id, data),
+                tx,
+            ))
+            .map_err(|x| WispError::Other(Box::new(x)))?;
+        rx.await.map_err(|x| WispError::Other(Box::new(x)))??;
         if self.role == Role::Client && self.stream_type == StreamType::Tcp {
             self.flow_control.store(
                 self.flow_control.load(Ordering::Acquire).saturating_sub(1),
@@ -140,7 +129,7 @@ impl<W: ws::WebSocketWrite + Send + 'static> MuxStreamWrite<W> {
     pub fn get_close_handle(&self) -> MuxStreamCloser {
         MuxStreamCloser {
             stream_id: self.stream_id,
-            close_channel: self.close_channel.clone(),
+            close_channel: self.tx.clone(),
             is_closed: self.is_closed.clone(),
         }
     }
@@ -150,13 +139,17 @@ impl<W: ws::WebSocketWrite + Send + 'static> MuxStreamWrite<W> {
         if self.is_closed.load(Ordering::Acquire) {
             return Err(WispError::StreamAlreadyClosed);
         }
+        self.is_closed.store(true, Ordering::Release);
+
         let (tx, rx) = oneshot::channel::<Result<(), WispError>>();
-        self.close_channel
-            .unbounded_send(WsEvent::Close(self.stream_id, reason, tx))
+        self.tx
+            .unbounded_send(WsEvent::Close(
+                Packet::new_close(self.stream_id, reason),
+                tx,
+            ))
             .map_err(|x| WispError::Other(Box::new(x)))?;
         rx.await.map_err(|x| WispError::Other(Box::new(x)))??;
 
-        self.is_closed.store(true, Ordering::Release);
         Ok(())
     }
 
@@ -173,40 +166,36 @@ impl<W: ws::WebSocketWrite + Send + 'static> MuxStreamWrite<W> {
     }
 }
 
-impl<W: ws::WebSocketWrite> Drop for MuxStreamWrite<W> {
+impl Drop for MuxStreamWrite {
     fn drop(&mut self) {
         let (tx, _) = oneshot::channel::<Result<(), WispError>>();
-        let _ = self.close_channel.unbounded_send(WsEvent::Close(
-            self.stream_id,
-            CloseReason::Unknown,
+        let _ = self.tx.unbounded_send(WsEvent::Close(
+            Packet::new_close(self.stream_id, CloseReason::Unknown),
             tx,
         ));
     }
 }
 
 /// Multiplexor stream.
-pub struct MuxStream<W>
-where
-    W: ws::WebSocketWrite,
-{
+pub struct MuxStream {
     /// ID of the stream.
     pub stream_id: u32,
-    rx: MuxStreamRead<W>,
-    tx: MuxStreamWrite<W>,
+    rx: MuxStreamRead,
+    tx: MuxStreamWrite,
 }
 
-impl<W: ws::WebSocketWrite + Send + 'static> MuxStream<W> {
+impl MuxStream {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         stream_id: u32,
         role: Role,
         stream_type: StreamType,
-        rx: mpsc::UnboundedReceiver<MuxEvent>,
-        tx: ws::LockedWebSocketWrite<W>,
-        close_channel: mpsc::UnboundedSender<WsEvent>,
+        rx: mpsc::UnboundedReceiver<Bytes>,
+        tx: mpsc::UnboundedSender<WsEvent>,
         is_closed: Arc<AtomicBool>,
         flow_control: Arc<AtomicU32>,
         continue_recieved: Arc<Event>,
+        target_flow_control: u32,
     ) -> Self {
         Self {
             stream_id,
@@ -218,13 +207,14 @@ impl<W: ws::WebSocketWrite + Send + 'static> MuxStream<W> {
                 rx,
                 is_closed: is_closed.clone(),
                 flow_control: flow_control.clone(),
+                flow_control_read: AtomicU32::new(0),
+                target_flow_control,
             },
             tx: MuxStreamWrite {
                 stream_id,
                 stream_type,
                 role,
                 tx,
-                close_channel,
                 is_closed: is_closed.clone(),
                 flow_control: flow_control.clone(),
                 continue_recieved: continue_recieved.clone(),
@@ -233,7 +223,7 @@ impl<W: ws::WebSocketWrite + Send + 'static> MuxStream<W> {
     }
 
     /// Read an event from the stream.
-    pub async fn read(&mut self) -> Option<MuxEvent> {
+    pub async fn read(&mut self) -> Option<Bytes> {
         self.rx.read().await
     }
 
@@ -263,7 +253,7 @@ impl<W: ws::WebSocketWrite + Send + 'static> MuxStream<W> {
     }
 
     /// Split the stream into read and write parts, consuming it.
-    pub fn into_split(self) -> (MuxStreamRead<W>, MuxStreamWrite<W>) {
+    pub fn into_split(self) -> (MuxStreamRead, MuxStreamWrite) {
         (self.rx, self.tx)
     }
 
@@ -291,25 +281,34 @@ impl MuxStreamCloser {
         if self.is_closed.load(Ordering::Acquire) {
             return Err(WispError::StreamAlreadyClosed);
         }
+        self.is_closed.store(true, Ordering::Release);
+
         let (tx, rx) = oneshot::channel::<Result<(), WispError>>();
         self.close_channel
-            .unbounded_send(WsEvent::Close(self.stream_id, reason, tx))
+            .unbounded_send(WsEvent::Close(
+                Packet::new_close(self.stream_id, reason),
+                tx,
+            ))
             .map_err(|x| WispError::Other(Box::new(x)))?;
         rx.await.map_err(|x| WispError::Other(Box::new(x)))??;
-        self.is_closed.store(true, Ordering::Release);
+
         Ok(())
     }
 
-    /// Close the stream. This function does not check if it was actually closed.
     pub(crate) fn close_sync(&self, reason: CloseReason) -> Result<(), WispError> {
         if self.is_closed.load(Ordering::Acquire) {
             return Err(WispError::StreamAlreadyClosed);
         }
+        self.is_closed.store(true, Ordering::Release);
+
         let (tx, _) = oneshot::channel::<Result<(), WispError>>();
         self.close_channel
-            .unbounded_send(WsEvent::Close(self.stream_id, reason, tx))
+            .unbounded_send(WsEvent::Close(
+                Packet::new_close(self.stream_id, reason),
+                tx,
+            ))
             .map_err(|x| WispError::Other(Box::new(x)))?;
-        self.is_closed.store(true, Ordering::Release);
+
         Ok(())
     }
 }
