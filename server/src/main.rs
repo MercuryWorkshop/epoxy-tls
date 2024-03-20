@@ -44,7 +44,7 @@ struct Cli {
     ///
     /// See https://doc.rust-lang.org/std/net/struct.Ipv4Addr.html#method.is_global for which IP
     /// addresses are blocked
-    #[arg(long, short)]
+    #[arg(long, short = 'B')]
     block_local: bool,
 }
 
