@@ -1,6 +1,6 @@
 [package]
 name = "wisp-mux"
-version = "2.0.0"
+version = "2.0.1"
 license = "LGPL-3.0-only"
 description = "A library for easily creating Wisp servers and clients."
 homepage = "https://github.com/MercuryWorkshop/epoxy-tls/tree/multiplexed/wisp"
@@ -12,7 +12,7 @@ edition = "2021"
 async_io_stream = "0.3.3"
 bytes = "1.5.0"
 event-listener = "5.0.0"
-fastwebsockets = { version = "0.6.0", features = ["unstable-split"], optional = true }
+fastwebsockets = { version = "0.7.1", features = ["unstable-split"], optional = true }
 futures = "0.3.30"
 futures-util = "0.3.30"
 pin-project-lite = "0.2.13"

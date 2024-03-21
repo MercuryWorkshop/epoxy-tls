@@ -24,6 +24,7 @@ pub enum OpCode {
 }
 
 /// WebSocket frame.
+#[derive(Debug, Clone)]
 pub struct Frame {
     /// Whether the frame is finished or not.
     pub finished: bool,
