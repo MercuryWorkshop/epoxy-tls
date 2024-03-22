@@ -184,7 +184,8 @@ async fn handle_mux(packet: ConnectPacket, mut stream: MuxStream) -> Result<bool
                 .map_err(|x| WispError::Other(Box::new(x)))?;
         }
         StreamType::Udp => {
-            let udp_socket = UdpSocket::bind("0.0.0.0:0")
+            let uri = lookup_host(uri).await.map_err(|x| WispError::Other(Box::new(x)))?.next().ok_or(WispError::InvalidUri)?;
+            let udp_socket = UdpSocket::bind(if uri.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" })
                 .await
                 .map_err(|x| WispError::Other(Box::new(x)))?;
             udp_socket

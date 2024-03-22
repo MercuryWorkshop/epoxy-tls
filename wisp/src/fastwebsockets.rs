@@ -8,7 +8,7 @@ impl From<OpCode> for crate::ws::OpCode {
     fn from(opcode: OpCode) -> Self {
         use OpCode::*;
         match opcode {
-            Continuation => unreachable!(),
+            Continuation => unreachable!("continuation should never be recieved when using a fragmentcollector"),
             Text => Self::Text,
             Binary => Self::Binary,
             Close => Self::Close,

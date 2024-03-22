@@ -255,7 +255,7 @@ impl<W: ws::WebSocketWrite> ServerMuxInner<W> {
                         }
                     }
                 }
-                Continue(_) => unreachable!(),
+                Continue(_) => break Err(WispError::InvalidPacketType),
                 Close(_) => {
                     if let Some(mut stream) =
                         self.stream_map.lock().await.remove(&packet.stream_id)
@@ -421,7 +421,7 @@ impl<W: ws::WebSocketWrite> ClientMuxInner<W> {
 
             use PacketType::*;
             match packet.packet_type {
-                Connect(_) => unreachable!(),
+                Connect(_) => break Err(WispError::InvalidPacketType),
                 Data(data) => {
                     if let Some(stream) = self.stream_map.lock().await.get(&packet.stream_id) {
                         let _ = stream.stream.unbounded_send(data);

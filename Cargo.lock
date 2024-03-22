@@ -2421,7 +2421,7 @@ checksum = "32b752e52a2da0ddfbdbcc6fceadfeede4c939ed16d13e648833a61dfb611ed8"
 
 [[package]]
 name = "wisp-mux"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "async_io_stream",
  "bytes",
