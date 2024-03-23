@@ -1,0 +1,25 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "multiplexed" ]
+  pull_request:
+    branches: [ "multiplexed" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - uses: dtolnay/rust-toolchain@v1
+      with:
+        toolchain: nightly
+        targets: wasm32-unknown-unknown
+        components: rust-src
+    - name: Test
+    - run: bash -c "cd client; exec bash test.sh"
