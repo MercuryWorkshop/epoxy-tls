@@ -5,7 +5,7 @@ edition = "2021"
 license = "LGPL-3.0-only"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 bytes = "1.5.0"
@@ -38,3 +38,8 @@ wasmtimer = "0.2.0"
 
 [dependencies.ring]
 features = ["wasm32_unknown_unknown_js"]
+
+[dev-dependencies]
+default-env = "0.1.1"
+wasm-bindgen-test = "0.3.42"
+web-sys = { version = "0.3.69", features = ["FormData", "UrlSearchParams"] }

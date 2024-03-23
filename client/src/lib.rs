@@ -10,7 +10,7 @@ mod wrappers;
 use tls_stream::EpxTlsStream;
 use tokioio::TokioIo;
 use udp_stream::EpxUdpStream;
-use utils::{Boolinator, ReplaceErr, UriExt};
+pub use utils::{Boolinator, ReplaceErr, UriExt};
 use websocket::EpxWebSocket;
 use wrappers::{IncomingBody, ServiceWrapper, TlsWispService, WebSocketWrapper};
 
@@ -231,7 +231,7 @@ impl EpoxyClient {
         let mut redirected = false;
         let mut current_url = req.uri().clone();
         let mut current_resp: EpxResponse = self.send_req_inner(req, should_redirect).await?;
-        for _ in 0..self.redirect_limit - 1 {
+        for _ in 0..self.redirect_limit {
             match current_resp {
                 EpxResponse::Success(_) => break,
                 EpxResponse::Redirect((_, req)) => {

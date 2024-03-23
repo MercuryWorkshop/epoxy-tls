@@ -173,6 +173,7 @@ pub struct WebSocketWrapper {
     inner: SendWrapper<WebSocket>,
     open_event: Arc<Event>,
     error_event: Arc<Event>,
+    close_event: Arc<Event>,
     closed: Arc<AtomicBool>,
 
     // used to retain the closures
@@ -282,6 +283,7 @@ impl WebSocketWrapper {
                 inner: SendWrapper::new(ws),
                 open_event,
                 error_event,
+                close_event: close_event.clone(),
                 closed: closed.clone(),
                 onopen: SendWrapper::new(onopen),
                 onclose: SendWrapper::new(onclose),
@@ -334,5 +336,8 @@ impl Drop for WebSocketWrapper {
         self.inner.set_onclose(None);
         self.inner.set_onerror(None);
         self.inner.set_onmessage(None);
+        self.closed.store(true, Ordering::Release);
+        self.close_event.notify(usize::MAX);
+        let _ = self.inner.close();
     }
 }
