@@ -21,5 +21,7 @@ jobs:
         toolchain: nightly
         targets: wasm32-unknown-unknown
         components: rust-src
+    - name: Install wasm-bindgen-cli
+      run: cargo install wasm-bindgen-cli
     - name: Test
       run: bash -c "cd client; exec bash test.sh"
