@@ -22,4 +22,4 @@ jobs:
         targets: wasm32-unknown-unknown
         components: rust-src
     - name: Test
-    - run: bash -c "cd client; exec bash test.sh"
+      run: bash -c "cd client; exec bash test.sh"
