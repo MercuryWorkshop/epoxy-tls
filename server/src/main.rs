@@ -117,9 +117,15 @@ async fn main() -> Result<(), Error> {
 
     let socket = bind(&addr, opt.unix_socket).await?;
 
+    let prefix = if opt.prefix.starts_with('/') {
+        opt.prefix
+    } else {
+        "/".to_string() + &opt.prefix
+    };
+
     println!("listening on `{}`", addr);
     while let Ok((stream, addr)) = socket.accept().await {
-        let prefix = opt.prefix.clone();
+        let prefix = prefix.clone();
         tokio::spawn(async move {
             let io = TokioIo::new(stream);
             let service = service_fn(move |res| {
@@ -184,7 +190,11 @@ async fn handle_mux(packet: ConnectPacket, mut stream: MuxStream) -> Result<bool
                 .map_err(|x| WispError::Other(Box::new(x)))?;
         }
         StreamType::Udp => {
-            let uri = lookup_host(uri).await.map_err(|x| WispError::Other(Box::new(x)))?.next().ok_or(WispError::InvalidUri)?;
+            let uri = lookup_host(uri)
+                .await
+                .map_err(|x| WispError::Other(Box::new(x)))?
+                .next()
+                .ok_or(WispError::InvalidUri)?;
             let udp_socket = UdpSocket::bind(if uri.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" })
                 .await
                 .map_err(|x| WispError::Other(Box::new(x)))?;
