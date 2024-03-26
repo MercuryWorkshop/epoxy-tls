@@ -28,8 +28,8 @@ type HttpBody = http_body_util::Full<hyper::body::Bytes>;
 #[command(version = clap::crate_version!())]
 struct Cli {
     /// URL prefix the server should serve on
-    #[arg(long, default_value = "")]
-    prefix: String,
+    #[arg(long)]
+    prefix: Option<String>,
     /// Port the server should bind to
     #[arg(long, short, default_value = "4000")]
     port: String,
@@ -117,13 +117,18 @@ async fn main() -> Result<(), Error> {
 
     let socket = bind(&addr, opt.unix_socket).await?;
 
-    let prefix = if opt.prefix.starts_with('/') {
-        opt.prefix
+    let prefix = if let Some(prefix) = opt.prefix {
+        match (prefix.starts_with('/'), prefix.ends_with('/')) {
+            (true, true) => prefix,
+            (true, false) => prefix + "/",
+            (false, true) => "/".to_string() + &prefix,
+            (false, false) => "/".to_string() + &prefix + "/",
+        }
     } else {
-        "/".to_string() + &opt.prefix
+        "/".to_string()
     };
 
-    println!("listening on `{}`", addr);
+    println!("listening on `{}` with prefix `{}`", addr, prefix);
     while let Ok((stream, addr)) = socket.accept().await {
         let prefix = prefix.clone();
         tokio::spawn(async move {
@@ -155,7 +160,7 @@ async fn accept_http(
     {
         let (res, fut) = upgrade::upgrade(&mut req)?;
 
-        if uri == "/" {
+        if uri.is_empty() {
             tokio::spawn(async move { accept_ws(fut, addr.clone(), block_local).await });
         } else if let Some(uri) = uri.strip_prefix('/').map(|x| x.to_string()) {
             tokio::spawn(async move { accept_wsproxy(fut, uri, addr.clone(), block_local).await });
