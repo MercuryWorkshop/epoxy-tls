@@ -239,7 +239,7 @@ async fn accept_ws(
 
     println!("{:?}: connected", addr);
 
-    let (mut mux, fut) = ServerMux::new(rx, tx, 128);
+    let (mut mux, fut) = ServerMux::new(rx, tx, u32::MAX);
 
     tokio::spawn(async move {
         if let Err(e) = fut.await {
@@ -247,7 +247,7 @@ async fn accept_ws(
         }
     });
 
-    while let Some((packet, stream)) = mux.server_new_stream().await {
+    while let Some((packet, mut stream)) = mux.server_new_stream().await {
         tokio::spawn(async move {
             if block_local {
                 match lookup_host(format!(
@@ -272,8 +272,8 @@ async fn accept_ws(
                     }
                 }
             }
-            let close_err = stream.get_close_handle();
-            let close_ok = stream.get_close_handle();
+            let mut close_err = stream.get_close_handle();
+            let mut close_ok = stream.get_close_handle();
             let _ = handle_mux(packet, stream)
                 .or_else(|err| async move {
                     let _ = close_err.close(CloseReason::Unexpected).await;

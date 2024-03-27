@@ -1,5 +1,5 @@
 use crate::{ws, WispError};
-use bytes::{Buf, BufMut, Bytes};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 /// Wisp stream type.
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -115,13 +115,13 @@ impl TryFrom<Bytes> for ConnectPacket {
     }
 }
 
-impl From<ConnectPacket> for Vec<u8> {
+impl From<ConnectPacket> for Bytes {
     fn from(packet: ConnectPacket) -> Self {
-        let mut encoded = Self::with_capacity(1 + 2 + packet.destination_hostname.len());
+        let mut encoded = BytesMut::with_capacity(1 + 2 + packet.destination_hostname.len());
         encoded.put_u8(packet.stream_type as u8);
         encoded.put_u16_le(packet.destination_port);
         encoded.extend(packet.destination_hostname.bytes());
-        encoded
+        encoded.freeze()
     }
 }
 
@@ -153,11 +153,11 @@ impl TryFrom<Bytes> for ContinuePacket {
     }
 }
 
-impl From<ContinuePacket> for Vec<u8> {
+impl From<ContinuePacket> for Bytes {
     fn from(packet: ContinuePacket) -> Self {
-        let mut encoded = Self::with_capacity(4);
+        let mut encoded = BytesMut::with_capacity(4);
         encoded.put_u32_le(packet.buffer_remaining);
-        encoded
+        encoded.freeze()
     }
 }
 
@@ -190,11 +190,11 @@ impl TryFrom<Bytes> for ClosePacket {
     }
 }
 
-impl From<ClosePacket> for Vec<u8> {
+impl From<ClosePacket> for Bytes {
     fn from(packet: ClosePacket) -> Self {
-        let mut encoded = Self::with_capacity(1);
+        let mut encoded = BytesMut::with_capacity(1);
         encoded.put_u8(packet.reason as u8);
-        encoded
+        encoded.freeze()
     }
 }
 
@@ -224,12 +224,12 @@ impl PacketType {
     }
 }
 
-impl From<PacketType> for Vec<u8> {
+impl From<PacketType> for Bytes {
     fn from(packet: PacketType) -> Self {
         use PacketType::*;
         match packet {
             Connect(x) => x.into(),
-            Data(x) => x.to_vec(),
+            Data(x) => x,
             Continue(x) => x.into(),
             Close(x) => x.into(),
         }
@@ -250,7 +250,10 @@ impl Packet {
     ///
     /// The helper functions should be used for most use cases.
     pub fn new(stream_id: u32, packet: PacketType) -> Self {
-        Self { stream_id, packet_type: packet }
+        Self {
+            stream_id,
+            packet_type: packet,
+        }
     }
 
     /// Create a new connect packet.
@@ -316,13 +319,15 @@ impl TryFrom<Bytes> for Packet {
     }
 }
 
-impl From<Packet> for Vec<u8> {
+impl From<Packet> for Bytes {
     fn from(packet: Packet) -> Self {
-        let mut encoded = Self::with_capacity(1 + 4);
-        encoded.push(packet.packet_type.as_u8());
+        let inner_u8 = packet.packet_type.as_u8();
+        let inner = Bytes::from(packet.packet_type);
+        let mut encoded = BytesMut::with_capacity(1 + 4 + inner.len());
+        encoded.put_u8(inner_u8);
         encoded.put_u32_le(packet.stream_id);
-        encoded.extend(Vec::<u8>::from(packet.packet_type));
-        encoded
+        encoded.extend(inner);
+        encoded.freeze()
     }
 }
 
@@ -341,6 +346,6 @@ impl TryFrom<ws::Frame> for Packet {
 
 impl From<Packet> for ws::Frame {
     fn from(packet: Packet) -> Self {
-        Self::binary(Vec::<u8>::from(packet).into())
+        Self::binary(packet.into())
     }
 }

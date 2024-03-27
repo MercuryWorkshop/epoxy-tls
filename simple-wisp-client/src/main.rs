@@ -1,16 +1,25 @@
+use atomic_counter::{AtomicCounter, RelaxedCounter};
 use bytes::Bytes;
 use fastwebsockets::{handshake, FragmentCollectorRead};
-use futures::io::AsyncWriteExt;
+use futures::future::select_all;
 use http_body_util::Empty;
 use hyper::{
     header::{CONNECTION, UPGRADE},
     Request,
 };
-use std::{error::Error, future::Future};
-use tokio::net::TcpStream;
+use simple_moving_average::{SingleSumSMA, SMA};
+use std::{
+    error::Error,
+    future::Future,
+    io::{stdout, IsTerminal, Write},
+    sync::Arc,
+    time::Duration,
+    usize,
+};
+use tokio::{net::TcpStream, time::interval};
 use tokio_native_tls::{native_tls, TlsConnector};
-use wisp_mux::{ClientMux, StreamType};
 use tokio_util::either::Either;
+use wisp_mux::{ClientMux, StreamType, WispError};
 
 #[derive(Debug)]
 struct StrError(String);
@@ -70,6 +79,18 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .nth(6)
         .ok_or(StrError::new("no should tls"))?
         .parse()?;
+    let thread_cnt: usize = std::env::args().nth(7).unwrap_or("10".into()).parse()?;
+
+    println!(
+        "connecting to {}://{}:{}{} and sending &[0; 1024] to {}:{} with threads {}",
+        if should_tls { "wss" } else { "ws" },
+        addr,
+        addr_port,
+        addr_path,
+        addr_dest,
+        addr_dest_port,
+        thread_cnt
+    );
 
     let socket = TcpStream::connect(format!("{}:{}", &addr, addr_port)).await?;
     let socket = if should_tls {
@@ -98,23 +119,59 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let rx = FragmentCollectorRead::new(rx);
 
     let (mux, fut) = ClientMux::new(rx, tx).await?;
+    let mut threads = Vec::with_capacity(thread_cnt + 1);
 
-    tokio::task::spawn(async move { println!("err: {:?}", fut.await); });
+    threads.push(tokio::spawn(fut));
 
-    let mut hi: u64 = 0;
-    loop {
+    let payload = Bytes::from_static(&[0; 1024]);
+
+    let cnt = Arc::new(RelaxedCounter::new(0));
+
+    for _ in 0..thread_cnt {
         let mut channel = mux
             .client_new_stream(StreamType::Tcp, addr_dest.clone(), addr_dest_port)
-            .await?
-            .into_io()
-            .into_asyncrw();
-        for _ in 0..256 {
-            channel.write_all(b"hiiiiiiii").await?;
-            hi += 1;
-            println!("said hi {}", hi);
-        }
+            .await?;
+        let cnt = cnt.clone();
+        let payload = payload.clone();
+        threads.push(tokio::spawn(async move {
+            loop {
+                channel.write(payload.clone()).await?;
+                channel.read().await;
+                cnt.inc();
+            }
+            #[allow(unreachable_code)]
+            Ok::<(), WispError>(())
+        }));
     }
 
-    #[allow(unreachable_code)]
+    threads.push(tokio::spawn(async move {
+        let mut interval = interval(Duration::from_millis(100));
+        let mut avg: SingleSumSMA<usize, usize, 100> = SingleSumSMA::new();
+        let mut last_time = 0;
+        let is_term = stdout().is_terminal();
+        loop {
+            interval.tick().await;
+            let now = cnt.get();
+            let stat = format!(
+                "sent &[0; 1024] cnt: {:?}, +{:?}, moving average (100): {:?}",
+                now,
+                now - last_time,
+                avg.get_average()
+            );
+            if is_term {
+                print!("\x1b[2K{}\r", stat);
+            } else {
+                println!("{}", stat);
+            }
+            stdout().flush().unwrap();
+            avg.add_sample(now - last_time);
+            last_time = now;
+        }
+    }));
+
+    let out = select_all(threads.into_iter()).await;
+
+    println!("\n\nout: {:?}", out.0);
+
     Ok(())
 }

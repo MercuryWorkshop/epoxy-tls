@@ -7,7 +7,7 @@ use futures::{
     channel::{mpsc, oneshot},
     stream,
     task::{Context, Poll},
-    Sink, Stream, StreamExt,
+    Sink, SinkExt, Stream, StreamExt,
 };
 use pin_project_lite::pin_project;
 use std::{
@@ -31,7 +31,7 @@ pub struct MuxStreamRead {
     /// Type of the stream.
     pub stream_type: StreamType,
     role: Role,
-    tx: mpsc::UnboundedSender<WsEvent>,
+    tx: mpsc::Sender<WsEvent>,
     rx: mpsc::UnboundedReceiver<Bytes>,
     is_closed: Arc<AtomicBool>,
     flow_control: Arc<AtomicU32>,
@@ -51,13 +51,14 @@ impl MuxStreamRead {
             if val > self.target_flow_control {
                 let (tx, rx) = oneshot::channel::<Result<(), WispError>>();
                 self.tx
-                    .unbounded_send(WsEvent::SendPacket(
+                    .send(WsEvent::SendPacket(
                         Packet::new_continue(
                             self.stream_id,
                             self.flow_control.fetch_add(val, Ordering::AcqRel) + val,
                         ),
                         tx,
                     ))
+                    .await
                     .ok()?;
                 rx.await.ok()?.ok()?;
                 self.flow_control_read.store(0, Ordering::Release);
@@ -80,7 +81,7 @@ pub struct MuxStreamWrite {
     /// Type of the stream.
     pub stream_type: StreamType,
     role: Role,
-    tx: mpsc::UnboundedSender<WsEvent>,
+    tx: mpsc::Sender<WsEvent>,
     is_closed: Arc<AtomicBool>,
     continue_recieved: Arc<Event>,
     flow_control: Arc<AtomicU32>,
@@ -88,7 +89,7 @@ pub struct MuxStreamWrite {
 
 impl MuxStreamWrite {
     /// Write data to the stream.
-    pub async fn write(&self, data: Bytes) -> Result<(), WispError> {
+    pub async fn write(&mut self, data: Bytes) -> Result<(), WispError> {
         if self.is_closed.load(Ordering::Acquire) {
             return Err(WispError::StreamAlreadyClosed);
         }
@@ -100,10 +101,11 @@ impl MuxStreamWrite {
         }
         let (tx, rx) = oneshot::channel::<Result<(), WispError>>();
         self.tx
-            .unbounded_send(WsEvent::SendPacket(
+            .send(WsEvent::SendPacket(
                 Packet::new_data(self.stream_id, data),
                 tx,
             ))
+            .await
             .map_err(|x| WispError::Other(Box::new(x)))?;
         rx.await.map_err(|x| WispError::Other(Box::new(x)))??;
         if self.role == Role::Client && self.stream_type == StreamType::Tcp {
@@ -135,7 +137,7 @@ impl MuxStreamWrite {
     }
 
     /// Close the stream. You will no longer be able to write or read after this has been called.
-    pub async fn close(&self, reason: CloseReason) -> Result<(), WispError> {
+    pub async fn close(&mut self, reason: CloseReason) -> Result<(), WispError> {
         if self.is_closed.load(Ordering::Acquire) {
             return Err(WispError::StreamAlreadyClosed);
         }
@@ -143,10 +145,11 @@ impl MuxStreamWrite {
 
         let (tx, rx) = oneshot::channel::<Result<(), WispError>>();
         self.tx
-            .unbounded_send(WsEvent::Close(
+            .send(WsEvent::Close(
                 Packet::new_close(self.stream_id, reason),
                 tx,
             ))
+            .await
             .map_err(|x| WispError::Other(Box::new(x)))?;
         rx.await.map_err(|x| WispError::Other(Box::new(x)))??;
 
@@ -157,22 +160,16 @@ impl MuxStreamWrite {
         let handle = self.get_close_handle();
         Box::pin(sink_unfold::unfold(
             self,
-            |tx, data| async move {
+            |mut tx, data| async move {
                 tx.write(data).await?;
                 Ok(tx)
             },
-            move || handle.close_sync(CloseReason::Unknown),
+            handle,
+            move |mut handle| async {
+                handle.close(CloseReason::Unknown).await?;
+                Ok(handle)
+            },
         ))
-    }
-}
-
-impl Drop for MuxStreamWrite {
-    fn drop(&mut self) {
-        let (tx, _) = oneshot::channel::<Result<(), WispError>>();
-        let _ = self.tx.unbounded_send(WsEvent::Close(
-            Packet::new_close(self.stream_id, CloseReason::Unknown),
-            tx,
-        ));
     }
 }
 
@@ -191,7 +188,7 @@ impl MuxStream {
         role: Role,
         stream_type: StreamType,
         rx: mpsc::UnboundedReceiver<Bytes>,
-        tx: mpsc::UnboundedSender<WsEvent>,
+        tx: mpsc::Sender<WsEvent>,
         is_closed: Arc<AtomicBool>,
         flow_control: Arc<AtomicU32>,
         continue_recieved: Arc<Event>,
@@ -228,7 +225,7 @@ impl MuxStream {
     }
 
     /// Write data to the stream.
-    pub async fn write(&self, data: Bytes) -> Result<(), WispError> {
+    pub async fn write(&mut self, data: Bytes) -> Result<(), WispError> {
         self.tx.write(data).await
     }
 
@@ -248,7 +245,7 @@ impl MuxStream {
     }
 
     /// Close the stream. You will no longer be able to write or read after this has been called.
-    pub async fn close(&self, reason: CloseReason) -> Result<(), WispError> {
+    pub async fn close(&mut self, reason: CloseReason) -> Result<(), WispError> {
         self.tx.close(reason).await
     }
 
@@ -271,13 +268,13 @@ impl MuxStream {
 pub struct MuxStreamCloser {
     /// ID of the stream.
     pub stream_id: u32,
-    close_channel: mpsc::UnboundedSender<WsEvent>,
+    close_channel: mpsc::Sender<WsEvent>,
     is_closed: Arc<AtomicBool>,
 }
 
 impl MuxStreamCloser {
     /// Close the stream. You will no longer be able to write or read after this has been called.
-    pub async fn close(&self, reason: CloseReason) -> Result<(), WispError> {
+    pub async fn close(&mut self, reason: CloseReason) -> Result<(), WispError> {
         if self.is_closed.load(Ordering::Acquire) {
             return Err(WispError::StreamAlreadyClosed);
         }
@@ -285,29 +282,13 @@ impl MuxStreamCloser {
 
         let (tx, rx) = oneshot::channel::<Result<(), WispError>>();
         self.close_channel
-            .unbounded_send(WsEvent::Close(
+            .send(WsEvent::Close(
                 Packet::new_close(self.stream_id, reason),
                 tx,
             ))
+            .await
             .map_err(|x| WispError::Other(Box::new(x)))?;
         rx.await.map_err(|x| WispError::Other(Box::new(x)))??;
-
-        Ok(())
-    }
-
-    pub(crate) fn close_sync(&self, reason: CloseReason) -> Result<(), WispError> {
-        if self.is_closed.load(Ordering::Acquire) {
-            return Err(WispError::StreamAlreadyClosed);
-        }
-        self.is_closed.store(true, Ordering::Release);
-
-        let (tx, _) = oneshot::channel::<Result<(), WispError>>();
-        self.close_channel
-            .unbounded_send(WsEvent::Close(
-                Packet::new_close(self.stream_id, reason),
-                tx,
-            ))
-            .map_err(|x| WispError::Other(Box::new(x)))?;
 
         Ok(())
     }
@@ -336,10 +317,7 @@ impl MuxStreamIo {
 impl Stream for MuxStreamIo {
     type Item = Result<Vec<u8>, std::io::Error>;
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.project()
-            .rx
-            .poll_next(cx)
-            .map(|x| x.map(|x| Ok(x.to_vec())))
+        self.project().rx.poll_next(cx).map(|x| x.map(|x| Ok(x.to_vec())))
     }
 }
 

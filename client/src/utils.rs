@@ -231,7 +231,7 @@ pub async fn replace_mux(
 ) -> Result<(), WispError> {
     let (mux_replace, fut) = make_mux(url).await?;
     let mut mux_write = mux.write().await;
-    mux_write.close().await;
+    mux_write.close().await?;
     *mux_write = mux_replace;
     drop(mux_write);
     spawn_mux_fut(mux, fut, url.into());

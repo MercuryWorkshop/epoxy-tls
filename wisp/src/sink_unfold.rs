@@ -45,28 +45,42 @@ pin_project! {
     /// Sink for the [`unfold`] function.
     #[derive(Debug)]
     #[must_use = "sinks do nothing unless polled"]
-    pub struct Unfold<T, F, FC, R> {
+    pub struct Unfold<T, F, R, CT, CF, CR> {
         function: F,
-        close_function: FC,
+        close_function: CF,
         #[pin]
         state: UnfoldState<T, R>,
+        #[pin]
+        close_state: UnfoldState<CT, CR>
     }
 }
 
-pub(crate) fn unfold<T, F, FC, R, Item, E>(init: T, function: F, close_function: FC) -> Unfold<T, F, FC, R>
+pub(crate) fn unfold<T, F, R, CT, CF, CR, Item, E>(
+    init: T,
+    function: F,
+    close_init: CT,
+    close_function: CF,
+) -> Unfold<T, F, R, CT, CF, CR>
 where
     F: FnMut(T, Item) -> R,
     R: Future<Output = Result<T, E>>,
-    FC: Fn() -> Result<(), E>,
+    CF: FnMut(CT) -> CR,
+    CR: Future<Output = Result<CT, E>>,
 {
-    Unfold { function, close_function, state: UnfoldState::Value { value: init } }
+    Unfold {
+        function,
+        close_function,
+        state: UnfoldState::Value { value: init },
+        close_state: UnfoldState::Value { value: close_init },
+    }
 }
 
-impl<T, F, FC, R, Item, E> Sink<Item> for Unfold<T, F, FC, R>
+impl<T, F, R, CT, CF, CR, Item, E> Sink<Item> for Unfold<T, F, R, CT, CF, CR>
 where
     F: FnMut(T, Item) -> R,
     R: Future<Output = Result<T, E>>,
-    FC: Fn() -> Result<(), E>,
+    CF: FnMut(CT) -> CR,
+    CR: Future<Output = Result<CT, E>>,
 {
     type Error = E;
 
@@ -104,6 +118,27 @@ where
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         ready!(self.as_mut().poll_flush(cx))?;
-        Poll::Ready((self.close_function)())
+        let mut this = self.project();
+        Poll::Ready(
+            if let Some(future) = this.close_state.as_mut().project_future() {
+                match ready!(future.poll(cx)) {
+                    Ok(state) => {
+                        this.close_state.set(UnfoldState::Value { value: state });
+                        Ok(())
+                    }
+                    Err(err) => {
+                        this.close_state.set(UnfoldState::Empty);
+                        Err(err)
+                    }
+                }
+            } else {
+                let future = match this.close_state.as_mut().take_value() {
+                    Some(value) => (this.close_function)(value),
+                    None => panic!("start_send called without poll_ready being called first"),
+                };
+                this.close_state.set(UnfoldState::Future { future });
+                return Poll::Pending;
+            },
+        )
     }
 }

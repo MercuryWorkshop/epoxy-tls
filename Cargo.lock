@@ -154,6 +154,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "atomic-counter"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62f447d68cfa5a9ab0c1c862a703da2a65b5ed1b7ce1153c9eb0169506d56019"
+
+[[package]]
 name = "autocfg"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -516,7 +522,7 @@ checksum = "11157ac094ffbdde99aa67b23417ebdd801842852b500e395a45a9c0aac03e4a"
 
 [[package]]
 name = "epoxy-client"
-version = "1.4.2"
+version = "1.5.0"
 dependencies = [
  "async-compression",
  "async_io_stream",
@@ -1727,16 +1733,27 @@ checksum = "f27f6278552951f1f2b8cf9da965d10969b2efdea95a6ec47987ab46edfe263a"
 name = "simple-wisp-client"
 version = "1.0.0"
 dependencies = [
+ "atomic-counter",
  "bytes",
  "console-subscriber",
  "fastwebsockets 0.7.1",
  "futures",
  "http-body-util",
  "hyper 1.2.0",
+ "simple_moving_average",
  "tokio",
  "tokio-native-tls",
  "tokio-util",
  "wisp-mux",
+]
+
+[[package]]
+name = "simple_moving_average"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a4b144ad185430cd033299e2c93e465d5a7e65fbb858593dc57181fa13cd310"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]
@@ -2500,10 +2517,11 @@ checksum = "32b752e52a2da0ddfbdbcc6fceadfeede4c939ed16d13e648833a61dfb611ed8"
 
 [[package]]
 name = "wisp-mux"
-version = "2.0.2"
+version = "3.0.0"
 dependencies = [
  "async_io_stream",
  "bytes",
+ "dashmap",
  "event-listener",
  "fastwebsockets 0.7.1",
  "futures",

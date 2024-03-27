@@ -56,7 +56,7 @@ impl Stream for IncomingBody {
 pub struct ServiceWrapper(pub Arc<RwLock<ClientMux<WebSocketWrapper>>>, pub String);
 
 impl tower_service::Service<hyper::Uri> for ServiceWrapper {
-    type Response = TokioIo<IoStream<MuxStreamIo, Vec<u8>>>;
+    type Response = TokioIo<EpxIoUnencryptedStream>;
     type Error = WispError;
     type Future = impl Future<Output = Result<Self::Response, Self::Error>>;
 

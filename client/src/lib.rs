@@ -47,8 +47,8 @@ enum EpxCompression {
     Gzip,
 }
 
-type EpxIoTlsStream = TlsStream<IoStream<MuxStreamIo, Vec<u8>>>;
 type EpxIoUnencryptedStream = IoStream<MuxStreamIo, Vec<u8>>;
+type EpxIoTlsStream = TlsStream<EpxIoUnencryptedStream>;
 type EpxIoStream = Either<EpxIoTlsStream, EpxIoUnencryptedStream>;
 
 #[wasm_bindgen(start)]

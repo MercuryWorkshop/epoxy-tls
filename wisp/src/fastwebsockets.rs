@@ -8,7 +8,9 @@ impl From<OpCode> for crate::ws::OpCode {
     fn from(opcode: OpCode) -> Self {
         use OpCode::*;
         match opcode {
-            Continuation => unreachable!("continuation should never be recieved when using a fragmentcollector"),
+            Continuation => {
+                unreachable!("continuation should never be recieved when using a fragmentcollector")
+            }
             Text => Self::Text,
             Binary => Self::Binary,
             Close => Self::Close,
@@ -70,8 +72,6 @@ impl<S: AsyncRead + Unpin> crate::ws::WebSocketRead for FragmentCollectorRead<S>
 
 impl<S: AsyncWrite + Unpin> crate::ws::WebSocketWrite for WebSocketWrite<S> {
     async fn wisp_write_frame(&mut self, frame: crate::ws::Frame) -> Result<(), crate::WispError> {
-        self.write_frame(frame.into())
-            .await
-            .map_err(|e| e.into())
+        self.write_frame(frame.into()).await.map_err(|e| e.into())
     }
 }
