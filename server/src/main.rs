@@ -37,8 +37,7 @@ struct Cli {
     /// Host the server should bind to
     #[arg(long = "host", short, value_name = "HOST", default_value = "0.0.0.0")]
     bind_host: String,
-    /// Whether the server should listen on a Unix socket located at the value of the bind_host
-    /// argument
+    /// Whether the server should listen on a Unix socket located at the value of the host argument
     #[arg(long, short)]
     unix_socket: bool,
     /// Whether the server should block IP addresses that are not globally reachable
