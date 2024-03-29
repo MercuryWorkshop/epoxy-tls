@@ -126,6 +126,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .header("Sec-WebSocket-Protocol", "wisp-v1")
         .body(Empty::<Bytes>::new())?;
 
+    println!("{:?}", req);
+
     let (ws, _) = handshake::client(&SpawnExecutor, req, socket).await?;
 
     let (rx, tx) = ws.split(tokio::io::split);
@@ -136,7 +138,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     threads.push(tokio::spawn(fut));
 
-    let payload = Bytes::from_static(&[0; 1024]);
+    let payload = Bytes::from(vec![0; 1024 * opts.packet_size]);
 
     let cnt = Arc::new(RelaxedCounter::new(0));
 
@@ -173,10 +175,14 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             interval.tick().await;
             let now = cnt_avg.get();
             let stat = format!(
-                "sent &[0; 1024] cnt: {:?}, +{:?}, moving average (100): {:?}",
+                "sent &[0; 1024 * {}] cnt: {:?} ({} KiB), +{:?} ({} KiB / 100ms), moving average (10 s): {:?} ({} KiB / 10 s)",
+                opts.packet_size,
                 now,
+                now * opts.packet_size,
                 now - last_time,
-                avg.get_average()
+                (now - last_time) * opts.packet_size,
+                avg.get_average(),
+                avg.get_average() * opts.packet_size,
             );
             if is_term {
                 print!("\x1b[2K{}\r", stat);
@@ -208,13 +214,23 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }));
     }
 
-    let _ = select_all(threads.into_iter()).await;
+    let out = select_all(threads.into_iter()).await;
+
+    if let Err(err) = out.0? {
+        println!("\n\nerr: {:?}", err);
+    }
+
+    out.2.into_iter().for_each(|x| x.abort());
+
+    let duration_since = Instant::now().duration_since(start_time);
 
     println!(
-        "\n\nresults: {} packets of &[0; 1024 * {}] sent in {}",
+        "\n\nresults: {} packets of &[0; 1024 * {}] ({} KiB) sent in {} ({} KiB/s)",
         cnt.get(),
         opts.packet_size,
-        format_duration(Instant::now().duration_since(start_time))
+        cnt.get() * opts.packet_size,
+        format_duration(duration_since),
+        (cnt.get() * opts.packet_size) as u64 / duration_since.as_secs(),
     );
 
     Ok(())

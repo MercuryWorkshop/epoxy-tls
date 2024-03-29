@@ -5,11 +5,12 @@ use bytes::Bytes;
 use clap::Parser;
 use fastwebsockets::{
     upgrade, CloseCode, FragmentCollector, FragmentCollectorRead, Frame, OpCode, Payload,
-    WebSocketError,
+    WebSocket, WebSocketError,
 };
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
 use hyper::{
-    body::Incoming, server::conn::http1, service::service_fn, Request, Response, StatusCode,
+    body::Incoming, server::conn::http1, service::service_fn, upgrade::Upgraded, Request, Response,
+    StatusCode,
 };
 use hyper_util::rt::TokioIo;
 use tokio::net::{lookup_host, TcpListener, TcpStream, UdpSocket};
@@ -46,6 +47,17 @@ struct Cli {
     /// addresses are blocked
     #[arg(long, short = 'B')]
     block_local: bool,
+    /// Whether the server should block UDP
+    ///
+    /// This does nothing for wsproxy as that is always TCP
+    #[arg(long)]
+    block_udp: bool,
+    /// Whether the server should block ports other than 80 or 443
+    #[arg(long)]
+    block_non_http: bool,
+    /// Maximum WebSocket frame size allowed
+    #[arg(long, short, default_value_t = 64 << 20)]
+    frame_size: usize,
 }
 
 #[cfg(not(unix))]
@@ -134,7 +146,15 @@ async fn main() -> Result<(), Error> {
         tokio::spawn(async move {
             let io = TokioIo::new(stream);
             let service = service_fn(move |res| {
-                accept_http(res, addr.clone(), prefix.clone(), opt.block_local)
+                accept_http(
+                    res,
+                    addr.clone(),
+                    prefix.clone(),
+                    opt.block_local,
+                    opt.block_udp,
+                    opt.block_non_http,
+                    opt.frame_size,
+                )
             });
             let conn = http1::Builder::new()
                 .serve_connection(io, service)
@@ -153,6 +173,9 @@ async fn accept_http(
     addr: String,
     prefix: String,
     block_local: bool,
+    block_udp: bool,
+    block_non_http: bool,
+    max_size: usize,
 ) -> Result<Response<HttpBody>, WebSocketError> {
     let uri = req.uri().path().to_string();
     if upgrade::is_upgrade_request(&req)
@@ -160,10 +183,18 @@ async fn accept_http(
     {
         let (res, fut) = upgrade::upgrade(&mut req)?;
 
+        let mut ws = fut.await?;
+
+        ws.set_max_message_size(max_size);
+
         if uri.is_empty() {
-            tokio::spawn(async move { accept_ws(fut, addr.clone(), block_local).await });
+            tokio::spawn(async move {
+                accept_ws(ws, addr.clone(), block_local, block_udp, block_non_http).await
+            });
         } else if let Some(uri) = uri.strip_prefix('/').map(|x| x.to_string()) {
-            tokio::spawn(async move { accept_wsproxy(fut, uri, addr.clone(), block_local).await });
+            tokio::spawn(async move {
+                accept_wsproxy(ws, uri, addr.clone(), block_local, block_non_http).await
+            });
         }
 
         Ok(Response::from_parts(
@@ -230,11 +261,13 @@ async fn handle_mux(packet: ConnectPacket, mut stream: MuxStream) -> Result<bool
 }
 
 async fn accept_ws(
-    fut: upgrade::UpgradeFut,
+    ws: WebSocket<TokioIo<Upgraded>>,
     addr: String,
     block_local: bool,
+    block_non_http: bool,
+    block_udp: bool,
 ) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
-    let (rx, tx) = fut.await?.split(tokio::io::split);
+    let (rx, tx) = ws.split(tokio::io::split);
     let rx = FragmentCollectorRead::new(rx);
 
     println!("{:?}: connected", addr);
@@ -249,6 +282,13 @@ async fn accept_ws(
 
     while let Some((packet, mut stream)) = mux.server_new_stream().await {
         tokio::spawn(async move {
+            if (block_non_http
+                && !(packet.destination_port == 80 || packet.destination_port == 443))
+                || (block_udp && packet.stream_type == StreamType::Udp)
+            {
+                let _ = stream.close(CloseReason::ServerStreamBlockedAddress).await;
+                return;
+            }
             if block_local {
                 match lookup_host(format!(
                     "{}:{}",
@@ -295,39 +335,42 @@ async fn accept_ws(
 }
 
 async fn accept_wsproxy(
-    fut: upgrade::UpgradeFut,
+    ws: WebSocket<TokioIo<Upgraded>>,
     incoming_uri: String,
     addr: String,
     block_local: bool,
+    block_non_http: bool,
 ) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
-    let mut ws_stream = FragmentCollector::new(fut.await?);
+    let mut ws_stream = FragmentCollector::new(ws);
 
     println!("{:?}: connected (wsproxy): {:?}", addr, incoming_uri);
 
-    if block_local {
-        match lookup_host(&incoming_uri)
-            .await
-            .ok()
-            .and_then(|mut x| x.next())
-            .map(|x| !x.ip().is_global())
-        {
-            Some(true) => {
-                ws_stream
-                    .write_frame(Frame::close(CloseCode::Error.into(), b"blocked uri"))
-                    .await?;
-                return Ok(());
-            }
-            Some(false) => {}
-            None => {
-                ws_stream
-                    .write_frame(Frame::close(
-                        CloseCode::Error.into(),
-                        b"failed to resolve uri",
-                    ))
-                    .await?;
-                return Ok(());
-            }
-        }
+    let Some(host) = lookup_host(&incoming_uri)
+        .await
+        .ok()
+        .and_then(|mut x| x.next())
+    else {
+        ws_stream
+            .write_frame(Frame::close(
+                CloseCode::Error.into(),
+                b"failed to resolve uri",
+            ))
+            .await?;
+        return Ok(());
+    };
+
+    if block_local && !host.ip().is_global() {
+        ws_stream
+            .write_frame(Frame::close(CloseCode::Error.into(), b"blocked uri"))
+            .await?;
+        return Ok(());
+    }
+
+    if block_non_http && !(host.port() == 80 || host.port() == 443) {
+        ws_stream
+            .write_frame(Frame::close(CloseCode::Error.into(), b"blocked uri"))
+            .await?;
+        return Ok(());
     }
 
     let tcp_stream = match TcpStream::connect(incoming_uri).await {
