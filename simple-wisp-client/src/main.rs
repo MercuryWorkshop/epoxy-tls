@@ -11,13 +11,7 @@ use hyper::{
 };
 use simple_moving_average::{SingleSumSMA, SMA};
 use std::{
-    error::Error,
-    future::Future,
-    io::{stdout, IsTerminal, Write},
-    net::SocketAddr,
-    sync::Arc,
-    time::{Duration, Instant},
-    usize,
+    error::Error, future::Future, io::{stdout, IsTerminal, Write}, net::SocketAddr, process::exit, sync::Arc, time::{Duration, Instant}, usize
 };
 use tokio::{
     net::TcpStream,
@@ -126,8 +120,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .header("Sec-WebSocket-Protocol", "wisp-v1")
         .body(Empty::<Bytes>::new())?;
 
-    println!("{:?}", req);
-
     let (ws, _) = handshake::client(&SpawnExecutor, req, socket).await?;
 
     let (rx, tx) = ws.split(tokio::io::split);
@@ -218,6 +210,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     if let Err(err) = out.0? {
         println!("\n\nerr: {:?}", err);
+        exit(1);
     }
 
     out.2.into_iter().for_each(|x| x.abort());
