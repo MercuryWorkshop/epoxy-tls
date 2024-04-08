@@ -9,7 +9,3 @@ debug = true
 panic = "abort"
 codegen-units = 1
 opt-level = 3
-
-[profile.release.package.epoxy-client]
-opt-level = 'z'
-debug = false
