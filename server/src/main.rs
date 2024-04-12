@@ -4,13 +4,12 @@ use std::io::Error;
 use bytes::Bytes;
 use clap::Parser;
 use fastwebsockets::{
-    upgrade::{self, UpgradeFut}, CloseCode, FragmentCollector, FragmentCollectorRead, Frame, OpCode, Payload,
-    WebSocketError,
+    upgrade::{self, UpgradeFut},
+    CloseCode, FragmentCollector, FragmentCollectorRead, Frame, OpCode, Payload, WebSocketError,
 };
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
 use hyper::{
-    body::Incoming, server::conn::http1, service::service_fn, Request, Response,
-    StatusCode,
+    body::Incoming, server::conn::http1, service::service_fn, Request, Response, StatusCode,
 };
 use hyper_util::rt::TokioIo;
 use tokio::net::{lookup_host, TcpListener, TcpStream, UdpSocket};
@@ -20,7 +19,10 @@ use tokio_util::codec::{BytesCodec, Framed};
 #[cfg(unix)]
 use tokio_util::either::Either;
 
-use wisp_mux::{CloseReason, ConnectPacket, MuxStream, ServerMux, StreamType, WispError};
+use wisp_mux::{
+    extensions::udp::{UdpProtocolExtension, UdpProtocolExtensionBuilder},
+    CloseReason, ConnectPacket, MuxStream, ServerMux, StreamType, WispError,
+};
 
 type HttpBody = http_body_util::Full<hyper::body::Bytes>;
 
@@ -261,7 +263,14 @@ async fn accept_ws(
 
     println!("{:?}: connected", addr);
 
-    let (mut mux, fut) = ServerMux::new(rx, tx, u32::MAX);
+    let (mut mux, fut) = ServerMux::new(
+        rx,
+        tx,
+        u32::MAX,
+        Some(vec![UdpProtocolExtension().into()]),
+        Some(&[&UdpProtocolExtensionBuilder()]),
+    )
+    .await?;
 
     tokio::spawn(async move {
         if let Err(e) = fut.await {

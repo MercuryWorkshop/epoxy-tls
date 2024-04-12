@@ -6,7 +6,10 @@ use wasm_bindgen_futures::JsFuture;
 use hyper::rt::Executor;
 use js_sys::ArrayBuffer;
 use std::future::Future;
-use wisp_mux::WispError;
+use wisp_mux::{
+    extensions::udp::{UdpProtocolExtension, UdpProtocolExtensionBuilder},
+    WispError,
+};
 
 #[wasm_bindgen]
 extern "C" {
@@ -192,25 +195,25 @@ pub fn get_url_port(url: &Uri) -> Result<u16, JsError> {
 
 pub async fn make_mux(
     url: &str,
-) -> Result<
-    (
-        ClientMux<WebSocketWrapper>,
-        impl Future<Output = Result<(), WispError>>,
-    ),
-    WispError,
-> {
+) -> Result<(ClientMux, impl Future<Output = Result<(), WispError>> + Send), WispError> {
     let (wtx, wrx) = WebSocketWrapper::connect(url, vec![])
         .await
         .map_err(|_| WispError::WsImplSocketClosed)?;
     wtx.wait_for_open().await;
-    let mux = ClientMux::new(wrx, wtx).await?;
+    let mux = ClientMux::new(
+        wrx,
+        wtx,
+        Some(vec![UdpProtocolExtension().into()]),
+        Some(&[&UdpProtocolExtensionBuilder()]),
+    )
+    .await?;
 
     Ok(mux)
 }
 
 pub fn spawn_mux_fut(
-    mux: Arc<RwLock<ClientMux<WebSocketWrapper>>>,
-    fut: impl Future<Output = Result<(), WispError>> + 'static,
+    mux: Arc<RwLock<ClientMux>>,
+    fut: impl Future<Output = Result<(), WispError>> + Send + 'static,
     url: String,
 ) {
     wasm_bindgen_futures::spawn_local(async move {
@@ -225,10 +228,7 @@ pub fn spawn_mux_fut(
     });
 }
 
-pub async fn replace_mux(
-    mux: Arc<RwLock<ClientMux<WebSocketWrapper>>>,
-    url: &str,
-) -> Result<(), WispError> {
+pub async fn replace_mux(mux: Arc<RwLock<ClientMux>>, url: &str) -> Result<(), WispError> {
     let (mux_replace, fut) = make_mux(url).await?;
     let mut mux_write = mux.write().await;
     mux_write.close().await?;

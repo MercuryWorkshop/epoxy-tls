@@ -1,8 +1,10 @@
 //! futures sink unfold with a close function
 use core::{future::Future, pin::Pin};
-use futures::ready;
-use futures::task::{Context, Poll};
-use futures::Sink;
+use futures::{
+    ready,
+    task::{Context, Poll},
+    Sink,
+};
 use pin_project_lite::pin_project;
 
 pin_project! {

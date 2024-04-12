@@ -53,7 +53,7 @@ impl Stream for IncomingBody {
 }
 
 #[derive(Clone)]
-pub struct ServiceWrapper(pub Arc<RwLock<ClientMux<WebSocketWrapper>>>, pub String);
+pub struct ServiceWrapper(pub Arc<RwLock<ClientMux>>, pub String);
 
 impl tower_service::Service<hyper::Uri> for ServiceWrapper {
     type Response = TokioIo<EpxIoUnencryptedStream>;
@@ -69,7 +69,7 @@ impl tower_service::Service<hyper::Uri> for ServiceWrapper {
         let mux_url = self.1.clone();
         async move {
             let stream = mux
-                .read()
+                .write()
                 .await
                 .client_new_stream(
                     StreamType::Tcp,
@@ -193,11 +193,9 @@ pub struct WebSocketReader {
     close_event: Arc<Event>,
 }
 
+#[async_trait::async_trait]
 impl WebSocketRead for WebSocketReader {
-    async fn wisp_read_frame(
-        &mut self,
-        _: &LockedWebSocketWrite<impl WebSocketWrite>,
-    ) -> Result<Frame, WispError> {
+    async fn wisp_read_frame(&mut self, _: &LockedWebSocketWrite) -> Result<Frame, WispError> {
         use WebSocketMessage::*;
         if self.closed.load(Ordering::Acquire) {
             return Err(WispError::WsImplSocketClosed);
@@ -306,6 +304,7 @@ impl WebSocketWrapper {
     }
 }
 
+#[async_trait::async_trait]
 impl WebSocketWrite for WebSocketWrapper {
     async fn wisp_write_frame(&mut self, frame: Frame) -> Result<(), WispError> {
         use wisp_mux::ws::OpCode::*;

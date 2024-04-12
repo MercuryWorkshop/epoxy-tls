@@ -1,8 +1,11 @@
+use async_trait::async_trait;
 use bytes::Bytes;
 use fastwebsockets::{
     FragmentCollectorRead, Frame, OpCode, Payload, WebSocketError, WebSocketWrite,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
+
+use crate::{ws::LockedWebSocketWrite, WispError};
 
 impl From<OpCode> for crate::ws::OpCode {
     fn from(opcode: OpCode) -> Self {
@@ -58,11 +61,12 @@ impl From<WebSocketError> for crate::WispError {
     }
 }
 
-impl<S: AsyncRead + Unpin> crate::ws::WebSocketRead for FragmentCollectorRead<S> {
+#[async_trait]
+impl<S: AsyncRead + Unpin + Send> crate::ws::WebSocketRead for FragmentCollectorRead<S> {
     async fn wisp_read_frame(
         &mut self,
-        tx: &crate::ws::LockedWebSocketWrite<impl crate::ws::WebSocketWrite>,
-    ) -> Result<crate::ws::Frame, crate::WispError> {
+        tx: &LockedWebSocketWrite,
+    ) -> Result<crate::ws::Frame, WispError> {
         Ok(self
             .read_frame(&mut |frame| async { tx.write_frame(frame.into()).await })
             .await?
@@ -70,8 +74,9 @@ impl<S: AsyncRead + Unpin> crate::ws::WebSocketRead for FragmentCollectorRead<S>
     }
 }
 
-impl<S: AsyncWrite + Unpin> crate::ws::WebSocketWrite for WebSocketWrite<S> {
-    async fn wisp_write_frame(&mut self, frame: crate::ws::Frame) -> Result<(), crate::WispError> {
+#[async_trait]
+impl<S: AsyncWrite + Unpin + Send> crate::ws::WebSocketWrite for WebSocketWrite<S> {
+    async fn wisp_write_frame(&mut self, frame: crate::ws::Frame) -> Result<(), WispError> {
         self.write_frame(frame.into()).await.map_err(|e| e.into())
     }
 }

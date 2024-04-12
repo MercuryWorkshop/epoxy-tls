@@ -33,7 +33,7 @@ impl EpxUdpStream {
 
             let io = tcp
                 .mux
-                .read()
+                .write()
                 .await
                 .client_new_stream(StreamType::Udp, url_host.to_string(), url_port)
                 .await

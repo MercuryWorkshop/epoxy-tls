@@ -106,7 +106,7 @@ impl EpxWebSocket {
                             break;
                         }
                         // ping/pong/continue
-                        _ => {},
+                        _ => {}
                     }
                 }
             });
@@ -115,7 +115,13 @@ impl EpxWebSocket {
                 .call0(&Object::default())
                 .replace_err("Failed to call onopen")?;
 
-            Ok(Self { tx, onerror, origin, protocols, url: url.to_string() })
+            Ok(Self {
+                tx,
+                onerror,
+                origin,
+                protocols,
+                url: url.to_string(),
+            })
         }
         .await;
         if let Err(ret) = ret {

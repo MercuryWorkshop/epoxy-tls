@@ -21,6 +21,12 @@ use std::{
 pub(crate) enum WsEvent {
     SendPacket(Packet, oneshot::Sender<Result<(), WispError>>),
     Close(Packet, oneshot::Sender<Result<(), WispError>>),
+    CreateStream(
+        StreamType,
+        String,
+        u16,
+        oneshot::Sender<Result<MuxStream, WispError>>,
+    ),
     EndFut,
 }
 
@@ -317,7 +323,10 @@ impl MuxStreamIo {
 impl Stream for MuxStreamIo {
     type Item = Result<Vec<u8>, std::io::Error>;
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.project().rx.poll_next(cx).map(|x| x.map(|x| Ok(x.to_vec())))
+        self.project()
+            .rx
+            .poll_next(cx)
+            .map(|x| x.map(|x| Ok(x.to_vec())))
     }
 }
 

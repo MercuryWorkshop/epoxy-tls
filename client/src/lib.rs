@@ -105,7 +105,7 @@ pub fn certs() -> Result<JsValue, JsValue> {
 #[wasm_bindgen(inspectable)]
 pub struct EpoxyClient {
     rustls_config: Arc<rustls::ClientConfig>,
-    mux: Arc<RwLock<ClientMux<WebSocketWrapper>>>,
+    mux: Arc<RwLock<ClientMux>>,
     hyper_client: Client<TlsWispService, HttpBody>,
     #[wasm_bindgen(getter_with_clone)]
     pub useragent: String,
@@ -164,7 +164,7 @@ impl EpoxyClient {
     async fn get_tls_io(&self, url_host: &str, url_port: u16) -> Result<EpxIoTlsStream, JsError> {
         let channel = self
             .mux
-            .read()
+            .write()
             .await
             .client_new_stream(StreamType::Tcp, url_host.to_string(), url_port)
             .await

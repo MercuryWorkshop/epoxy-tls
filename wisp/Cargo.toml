@@ -1,6 +1,6 @@
 [package]
 name = "wisp-mux"
-version = "3.0.0"
+version = "4.0.0"
 license = "LGPL-3.0-only"
 description = "A library for easily creating Wisp servers and clients."
 homepage = "https://github.com/MercuryWorkshop/epoxy-tls/tree/multiplexed/wisp"
@@ -9,12 +9,14 @@ readme = "README.md"
 edition = "2021"
 
 [dependencies]
+async-trait = "0.1.79"
 async_io_stream = "0.3.3"
 bytes = "1.5.0"
 dashmap = { version = "5.5.3", features = ["inline"] }
 event-listener = "5.0.0"
 fastwebsockets = { version = "0.7.1", features = ["unstable-split"], optional = true }
 futures = "0.3.30"
+futures-timer = "3.0.3"
 futures-util = "0.3.30"
 pin-project-lite = "0.2.13"
 tokio = { version = "1.35.1", optional = true, default-features = false }
@@ -22,6 +24,7 @@ tokio = { version = "1.35.1", optional = true, default-features = false }
 [features]
 fastwebsockets = ["dep:fastwebsockets", "dep:tokio"]
 tokio_io = ["async_io_stream/tokio_io"]
+wasm = ["futures-timer/wasm-bindgen"]
 
 [package.metadata.docs.rs]
 all-features = true

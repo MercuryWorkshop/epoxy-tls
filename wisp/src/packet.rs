@@ -1,4 +1,8 @@
-use crate::{ws, WispError};
+use crate::{
+    extensions::{AnyProtocolExtension, ProtocolExtensionBuilder},
+    ws::{self, Frame, OpCode},
+    Role, WispError, WISP_VERSION,
+};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 /// Wisp stream type.
@@ -34,6 +38,8 @@ pub enum CloseReason {
     Voluntary = 0x02,
     /// Unexpected stream closure due to a network error.
     Unexpected = 0x03,
+    /// Incompatible extensions. Only used during the handshake.
+    IncompatibleExtensions = 0x04,
     /// Stream creation failed due to invalid information.
     ServerStreamInvalidInfo = 0x41,
     /// Stream creation failed due to an unreachable destination host.
@@ -55,19 +61,20 @@ pub enum CloseReason {
 impl TryFrom<u8> for CloseReason {
     type Error = WispError;
     fn try_from(stream_type: u8) -> Result<Self, Self::Error> {
-        use CloseReason::*;
+        use CloseReason as R;
         match stream_type {
-            0x01 => Ok(Unknown),
-            0x02 => Ok(Voluntary),
-            0x03 => Ok(Unexpected),
-            0x41 => Ok(ServerStreamInvalidInfo),
-            0x42 => Ok(ServerStreamUnreachable),
-            0x43 => Ok(ServerStreamConnectionTimedOut),
-            0x44 => Ok(ServerStreamConnectionRefused),
-            0x47 => Ok(ServerStreamTimedOut),
-            0x48 => Ok(ServerStreamBlockedAddress),
-            0x49 => Ok(ServerStreamThrottled),
-            0x81 => Ok(ClientUnexpected),
+            0x01 => Ok(R::Unknown),
+            0x02 => Ok(R::Voluntary),
+            0x03 => Ok(R::Unexpected),
+            0x04 => Ok(R::IncompatibleExtensions),
+            0x41 => Ok(R::ServerStreamInvalidInfo),
+            0x42 => Ok(R::ServerStreamUnreachable),
+            0x43 => Ok(R::ServerStreamConnectionTimedOut),
+            0x44 => Ok(R::ServerStreamConnectionRefused),
+            0x47 => Ok(R::ServerStreamTimedOut),
+            0x48 => Ok(R::ServerStreamBlockedAddress),
+            0x49 => Ok(R::ServerStreamThrottled),
+            0x81 => Ok(R::ClientUnexpected),
             _ => Err(Self::Error::InvalidStreamType),
         }
     }
@@ -198,6 +205,38 @@ impl From<ClosePacket> for Bytes {
     }
 }
 
+/// Wisp version sent in the handshake.
+#[derive(Debug, Clone)]
+pub struct WispVersion {
+    /// Major Wisp version according to semver.
+    pub major: u8,
+    /// Minor Wisp version according to semver.
+    pub minor: u8,
+}
+
+/// Packet used in the initial handshake.
+///
+/// See [the docs](https://github.com/MercuryWorkshop/wisp-protocol/blob/main/protocol.md#0x05---info)
+#[derive(Debug, Clone)]
+pub struct InfoPacket {
+    /// Wisp version sent in the packet.
+    pub version: WispVersion,
+    /// List of protocol extensions sent in the packet.
+    pub extensions: Vec<AnyProtocolExtension>,
+}
+
+impl From<InfoPacket> for Bytes {
+    fn from(value: InfoPacket) -> Self {
+        let mut bytes = BytesMut::with_capacity(2);
+        bytes.put_u8(value.version.major);
+        bytes.put_u8(value.version.minor);
+        for extension in value.extensions {
+            bytes.extend(Bytes::from(extension));
+        }
+        bytes.freeze()
+    }
+}
+
 #[derive(Debug, Clone)]
 /// Type of packet recieved.
 pub enum PacketType {
@@ -209,6 +248,8 @@ pub enum PacketType {
     Continue(ContinuePacket),
     /// Close packet.
     Close(ClosePacket),
+    /// Info packet.
+    Info(InfoPacket),
 }
 
 impl PacketType {
@@ -220,6 +261,7 @@ impl PacketType {
             Data(_) => 0x02,
             Continue(_) => 0x03,
             Close(_) => 0x04,
+            Info(_) => 0x05,
         }
     }
 }
@@ -232,6 +274,7 @@ impl From<PacketType> for Bytes {
             Data(x) => x,
             Continue(x) => x.into(),
             Close(x) => x.into(),
+            Info(x) => x.into(),
         }
     }
 }
@@ -296,6 +339,97 @@ impl Packet {
             packet_type: PacketType::Close(ClosePacket::new(reason)),
         }
     }
+
+    pub(crate) fn new_info(extensions: Vec<AnyProtocolExtension>) -> Self {
+        Self {
+            stream_id: 0,
+            packet_type: PacketType::Info(InfoPacket {
+                version: WISP_VERSION,
+                extensions,
+            }),
+        }
+    }
+
+    fn parse_packet(packet_type: u8, mut bytes: Bytes) -> Result<Self, WispError> {
+        use PacketType::*;
+        Ok(Self {
+            stream_id: bytes.get_u32_le(),
+            packet_type: match packet_type {
+                0x01 => Connect(ConnectPacket::try_from(bytes)?),
+                0x02 => Data(bytes),
+                0x03 => Continue(ContinuePacket::try_from(bytes)?),
+                0x04 => Close(ClosePacket::try_from(bytes)?),
+                // 0x05 is handled seperately
+                _ => return Err(WispError::InvalidPacketType),
+            },
+        })
+    }
+
+    pub(crate) fn maybe_parse_info(
+        frame: Frame,
+        role: Role,
+        extension_builders: &[&(dyn ProtocolExtensionBuilder + Sync)],
+    ) -> Result<Self, WispError> {
+        if !frame.finished {
+            return Err(WispError::WsFrameNotFinished);
+        }
+        if frame.opcode != OpCode::Binary {
+            return Err(WispError::WsFrameInvalidType);
+        }
+        let mut bytes = frame.payload;
+        if bytes.remaining() < 1 {
+            return Err(WispError::PacketTooSmall);
+        }
+        let packet_type = bytes.get_u8();
+        if packet_type == 0x05 {
+            Self::parse_info(bytes, role, extension_builders)
+        } else {
+            Self::parse_packet(packet_type, bytes)
+        }
+    }
+
+    fn parse_info(
+        mut bytes: Bytes,
+        role: Role,
+        extension_builders: &[&(dyn ProtocolExtensionBuilder + Sync)],
+    ) -> Result<Self, WispError> {
+        // packet type is already read by code that calls this
+        if bytes.remaining() < 4 + 2 {
+            return Err(WispError::PacketTooSmall);
+        }
+        if bytes.get_u32_le() != 0 {
+            return Err(WispError::InvalidStreamId);
+        }
+
+        let version = WispVersion {
+            major: bytes.get_u8(),
+            minor: bytes.get_u8(),
+        };
+
+        let mut extensions = Vec::new();
+
+        while bytes.remaining() > 4 {
+            // We have some extensions
+            let id = bytes.get_u8();
+            let length = usize::try_from(bytes.get_u32_le())?;
+            if bytes.remaining() < length {
+                return Err(WispError::PacketTooSmall);
+            }
+            if let Some(builder) = extension_builders.iter().find(|x| x.get_id() == id) {
+                extensions.push(builder.build(bytes.copy_to_bytes(length), role))
+            } else {
+                bytes.advance(length)
+            }
+        }
+
+        Ok(Self {
+            stream_id: 0,
+            packet_type: PacketType::Info(InfoPacket {
+                version,
+                extensions,
+            }),
+        })
+    }
 }
 
 impl TryFrom<Bytes> for Packet {
@@ -305,17 +439,7 @@ impl TryFrom<Bytes> for Packet {
             return Err(Self::Error::PacketTooSmall);
         }
         let packet_type = bytes.get_u8();
-        use PacketType::*;
-        Ok(Self {
-            stream_id: bytes.get_u32_le(),
-            packet_type: match packet_type {
-                0x01 => Connect(ConnectPacket::try_from(bytes)?),
-                0x02 => Data(bytes),
-                0x03 => Continue(ContinuePacket::try_from(bytes)?),
-                0x04 => Close(ClosePacket::try_from(bytes)?),
-                _ => return Err(Self::Error::InvalidPacketType),
-            },
-        })
+        Self::parse_packet(packet_type, bytes)
     }
 }
 

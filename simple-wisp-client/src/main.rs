@@ -11,7 +11,14 @@ use hyper::{
 };
 use simple_moving_average::{SingleSumSMA, SMA};
 use std::{
-    error::Error, future::Future, io::{stdout, IsTerminal, Write}, net::SocketAddr, process::exit, sync::Arc, time::{Duration, Instant}, usize
+    error::Error,
+    future::Future,
+    io::{stdout, IsTerminal, Write},
+    net::SocketAddr,
+    process::exit,
+    sync::Arc,
+    time::{Duration, Instant},
+    usize,
 };
 use tokio::{
     net::TcpStream,
@@ -21,7 +28,10 @@ use tokio::{
 };
 use tokio_native_tls::{native_tls, TlsConnector};
 use tokio_util::either::Either;
-use wisp_mux::{ClientMux, StreamType, WispError};
+use wisp_mux::{
+    extensions::udp::{UdpProtocolExtension, UdpProtocolExtensionBuilder},
+    ClientMux, StreamType, WispError,
+};
 
 #[derive(Debug)]
 enum WispClientError {
@@ -71,6 +81,9 @@ struct Cli {
     /// Duration to run the test for
     #[arg(short, long)]
     duration: Option<humantime::Duration>,
+    /// Ask for UDP
+    #[arg(short, long)]
+    udp: bool,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -117,7 +130,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             fastwebsockets::handshake::generate_key(),
         )
         .header("Sec-WebSocket-Version", "13")
-        .header("Sec-WebSocket-Protocol", "wisp-v1")
         .body(Empty::<Bytes>::new())?;
 
     let (ws, _) = handshake::client(&SpawnExecutor, req, socket).await?;
@@ -125,7 +137,18 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let (rx, tx) = ws.split(tokio::io::split);
     let rx = FragmentCollectorRead::new(rx);
 
-    let (mux, fut) = ClientMux::new(rx, tx).await?;
+    let (mut mux, fut) = if opts.udp {
+        ClientMux::new(
+            rx,
+            tx,
+            Some(vec![UdpProtocolExtension().into()]),
+            Some(&[&UdpProtocolExtensionBuilder()]),
+        )
+        .await?
+    } else {
+        ClientMux::new(rx, tx, Some(vec![]), Some(&[])).await?
+    };
+
     let mut threads = Vec::with_capacity(opts.streams * 2 + 3);
 
     threads.push(tokio::spawn(fut));
