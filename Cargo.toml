@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["server", "client", "wisp", "simple-wisp-client"]
+members = ["server", "client", "wisp", "simple-wisp-client", "certs-grabber"]
 default-members = ["server"]
 
 [profile.release]

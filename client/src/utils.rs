@@ -1,5 +1,6 @@
 use crate::*;
 
+use rustls_pki_types::Der;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
@@ -195,7 +196,13 @@ pub fn get_url_port(url: &Uri) -> Result<u16, JsError> {
 
 pub async fn make_mux(
     url: &str,
-) -> Result<(ClientMux, impl Future<Output = Result<(), WispError>> + Send), WispError> {
+) -> Result<
+    (
+        ClientMux,
+        impl Future<Output = Result<(), WispError>> + Send,
+    ),
+    WispError,
+> {
     let (wtx, wrx) = WebSocketWrapper::connect(url, vec![])
         .await
         .map_err(|_| WispError::WsImplSocketClosed)?;
@@ -263,4 +270,18 @@ pub async fn jval_to_u8_array_req(val: JsValue) -> Result<(Uint8Array, web_sys::
             .map(|x| Uint8Array::new(&x))?,
         req,
     ))
+}
+
+pub fn object_to_trustanchor(obj: JsValue) -> Result<TrustAnchor<'static>, JsValue> {
+    let subject: Uint8Array = Reflect::get(&obj, &jval!("subject"))?.dyn_into()?;
+    let pub_key_info: Uint8Array =
+        Reflect::get(&obj, &jval!("subject_public_key_info"))?.dyn_into()?;
+    let name_constraints: Option<Uint8Array> = Reflect::get(&obj, &jval!("name_constraints"))
+        .and_then(|x| x.dyn_into())
+        .ok();
+    Ok(TrustAnchor {
+        subject: Der::from(subject.to_vec()),
+        subject_public_key_info: Der::from(pub_key_info.to_vec()),
+        name_constraints: name_constraints.map(|x| Der::from(x.to_vec())),
+    })
 }

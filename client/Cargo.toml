@@ -17,7 +17,6 @@ wasm-bindgen = { version = "0.2.91", features = ["enable-interning"] }
 wasm-bindgen-futures = "0.4.39"
 futures-util = "0.3.30"
 js-sys = "0.3.66"
-webpki-roots = "0.26.0"
 tokio-rustls = "0.25.0"
 web-sys = { version = "0.3.66", features = ["Request", "RequestInit", "Headers", "Response", "ResponseInit", "WebSocket", "BinaryType", "MessageEvent"] }
 wasm-streams = "0.4.0"
@@ -47,3 +46,4 @@ features = ["web"]
 default-env = "0.1.1"
 wasm-bindgen-test = "0.3.42"
 web-sys = { version = "0.3.69", features = ["FormData", "UrlSearchParams"] }
+webpki-roots = "0.26.0"

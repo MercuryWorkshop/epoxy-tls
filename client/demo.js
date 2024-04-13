@@ -1,4 +1,5 @@
 import epoxy from "./pkg/epoxy-module-bundled.js";
+import CERTS from "./pkg/certs-module.js";
 
 onmessage = async (msg) => {
     console.debug("recieved demo:", msg);
@@ -29,13 +30,13 @@ onmessage = async (msg) => {
         postMessage(JSON.stringify(str, null, 4));
     }
 
-    const { EpoxyClient, certs } = await epoxy();
+    const { EpoxyClient } = await epoxy();
 
-    console.log("certs:", certs());
+    console.log("certs:", CERTS);
 
     const tconn0 = performance.now();
-    // args: websocket url, user agent, redirect limit 
-    let epoxy_client = await new EpoxyClient("ws://localhost:4000", navigator.userAgent, 10);
+    // args: websocket url, user agent, redirect limit, certs
+    let epoxy_client = await new EpoxyClient("ws://localhost:4000", navigator.userAgent, 10, CERTS);
     const tconn1 = performance.now();
     log(`conn establish took ${tconn1 - tconn0} ms or ${(tconn1 - tconn0) / 1000} s`);
 

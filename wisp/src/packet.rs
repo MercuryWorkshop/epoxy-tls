@@ -1,6 +1,6 @@
 use crate::{
     extensions::{AnyProtocolExtension, ProtocolExtensionBuilder},
-    ws::{self, Frame, OpCode},
+    ws::{self, Frame, LockedWebSocketWrite, OpCode, WebSocketRead},
     Role, WispError, WISP_VERSION,
 };
 use bytes::{Buf, BufMut, Bytes, BytesMut};
@@ -385,6 +385,34 @@ impl Packet {
             Self::parse_info(bytes, role, extension_builders)
         } else {
             Self::parse_packet(packet_type, bytes)
+        }
+    }
+
+    pub(crate) async fn maybe_handle_extension(
+        frame: Frame,
+        extensions: &mut [AnyProtocolExtension],
+        read: &mut (dyn WebSocketRead + Send),
+        write: &LockedWebSocketWrite,
+    ) -> Result<Option<Self>, WispError> {
+        if !frame.finished {
+            return Err(WispError::WsFrameNotFinished);
+        }
+        if frame.opcode != OpCode::Binary {
+            return Err(WispError::WsFrameInvalidType);
+        }
+        let mut bytes = frame.payload;
+        if bytes.remaining() < 1 {
+            return Err(WispError::PacketTooSmall);
+        }
+        let packet_type = bytes.get_u8();
+        if let Some(extension) = extensions
+            .iter_mut()
+            .find(|x| x.get_supported_packets().iter().any(|x| *x == packet_type))
+        {
+            extension.handle_packet(bytes, read, write).await?;
+            Ok(None)
+        } else {
+            Ok(Some(Self::parse_packet(packet_type, bytes)?))
         }
     }
 

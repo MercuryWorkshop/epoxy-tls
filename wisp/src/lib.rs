@@ -169,17 +169,18 @@ impl MuxInner {
     pub async fn server_into_future<R>(
         self,
         rx: R,
+        extensions: Vec<AnyProtocolExtension>,
         close_rx: mpsc::Receiver<WsEvent>,
         muxstream_sender: mpsc::UnboundedSender<(ConnectPacket, MuxStream)>,
         close_tx: mpsc::Sender<WsEvent>,
     ) -> Result<(), WispError>
     where
-        R: ws::WebSocketRead,
+        R: ws::WebSocketRead + Send,
     {
         self.as_future(
             close_rx,
             close_tx.clone(),
-            self.server_loop(rx, muxstream_sender, close_tx),
+            self.server_loop(rx, extensions, muxstream_sender, close_tx),
         )
         .await
     }
@@ -187,13 +188,14 @@ impl MuxInner {
     pub async fn client_into_future<R>(
         self,
         rx: R,
+        extensions: Vec<AnyProtocolExtension>,
         close_rx: mpsc::Receiver<WsEvent>,
         close_tx: mpsc::Sender<WsEvent>,
     ) -> Result<(), WispError>
     where
-        R: ws::WebSocketRead,
+        R: ws::WebSocketRead + Send,
     {
-        self.as_future(close_rx, close_tx, self.client_loop(rx))
+        self.as_future(close_rx, close_tx, self.client_loop(rx, extensions))
             .await
     }
 
@@ -295,11 +297,12 @@ impl MuxInner {
     async fn server_loop<R>(
         &self,
         mut rx: R,
+        mut extensions: Vec<AnyProtocolExtension>,
         muxstream_sender: mpsc::UnboundedSender<(ConnectPacket, MuxStream)>,
         close_tx: mpsc::Sender<WsEvent>,
     ) -> Result<(), WispError>
     where
-        R: ws::WebSocketRead,
+        R: ws::WebSocketRead + Send,
     {
         // will send continues once flow_control is at 10% of max
         let target_buffer_size = ((self.buffer_size as u64 * 90) / 100) as u32;
@@ -309,104 +312,112 @@ impl MuxInner {
             if frame.opcode == ws::OpCode::Close {
                 break Ok(());
             }
-            let packet = Packet::try_from(frame)?;
+            if let Some(packet) =
+                Packet::maybe_handle_extension(frame, &mut extensions, &mut rx, &self.tx).await?
+            {
+                use PacketType::*;
+                match packet.packet_type {
+                    Connect(inner_packet) => {
+                        let (ch_tx, ch_rx) = mpsc::unbounded();
+                        let stream_type = inner_packet.stream_type;
+                        let flow_control: Arc<AtomicU32> = AtomicU32::new(self.buffer_size).into();
+                        let flow_control_event: Arc<Event> = Event::new().into();
+                        let is_closed: Arc<AtomicBool> = AtomicBool::new(false).into();
 
-            use PacketType::*;
-            match packet.packet_type {
-                Connect(inner_packet) => {
-                    let (ch_tx, ch_rx) = mpsc::unbounded();
-                    let stream_type = inner_packet.stream_type;
-                    let flow_control: Arc<AtomicU32> = AtomicU32::new(self.buffer_size).into();
-                    let flow_control_event: Arc<Event> = Event::new().into();
-                    let is_closed: Arc<AtomicBool> = AtomicBool::new(false).into();
-
-                    self.stream_map.insert(
-                        packet.stream_id,
-                        MuxMapValue {
-                            stream: ch_tx,
-                            stream_type,
-                            flow_control: flow_control.clone(),
-                            flow_control_event: flow_control_event.clone(),
-                            is_closed: is_closed.clone(),
-                        },
-                    );
-                    muxstream_sender
-                        .unbounded_send((
-                            inner_packet,
-                            MuxStream::new(
-                                packet.stream_id,
-                                Role::Server,
+                        self.stream_map.insert(
+                            packet.stream_id,
+                            MuxMapValue {
+                                stream: ch_tx,
                                 stream_type,
-                                ch_rx,
-                                close_tx.clone(),
-                                is_closed,
-                                flow_control,
-                                flow_control_event,
-                                target_buffer_size,
-                            ),
-                        ))
-                        .map_err(|x| WispError::Other(Box::new(x)))?;
-                }
-                Data(data) => {
-                    if let Some(stream) = self.stream_map.get(&packet.stream_id) {
-                        let _ = stream.stream.unbounded_send(data);
-                        if stream.stream_type == StreamType::Tcp {
-                            stream.flow_control.store(
-                                stream
-                                    .flow_control
-                                    .load(Ordering::Acquire)
-                                    .saturating_sub(1),
-                                Ordering::Release,
-                            );
+                                flow_control: flow_control.clone(),
+                                flow_control_event: flow_control_event.clone(),
+                                is_closed: is_closed.clone(),
+                            },
+                        );
+                        muxstream_sender
+                            .unbounded_send((
+                                inner_packet,
+                                MuxStream::new(
+                                    packet.stream_id,
+                                    Role::Server,
+                                    stream_type,
+                                    ch_rx,
+                                    close_tx.clone(),
+                                    is_closed,
+                                    flow_control,
+                                    flow_control_event,
+                                    target_buffer_size,
+                                ),
+                            ))
+                            .map_err(|x| WispError::Other(Box::new(x)))?;
+                    }
+                    Data(data) => {
+                        if let Some(stream) = self.stream_map.get(&packet.stream_id) {
+                            let _ = stream.stream.unbounded_send(data);
+                            if stream.stream_type == StreamType::Tcp {
+                                stream.flow_control.store(
+                                    stream
+                                        .flow_control
+                                        .load(Ordering::Acquire)
+                                        .saturating_sub(1),
+                                    Ordering::Release,
+                                );
+                            }
                         }
                     }
-                }
-                Continue(_) | Info(_) => break Err(WispError::InvalidPacketType),
-                Close(_) => {
-                    if let Some((_, mut stream)) = self.stream_map.remove(&packet.stream_id) {
-                        stream.is_closed.store(true, Ordering::Release);
-                        stream.stream.disconnect();
-                        stream.stream.close_channel();
+                    Continue(_) | Info(_) => break Err(WispError::InvalidPacketType),
+                    Close(_) => {
+                        if let Some((_, mut stream)) = self.stream_map.remove(&packet.stream_id) {
+                            stream.is_closed.store(true, Ordering::Release);
+                            stream.stream.disconnect();
+                            stream.stream.close_channel();
+                        }
                     }
                 }
             }
         }
     }
 
-    async fn client_loop<R>(&self, mut rx: R) -> Result<(), WispError>
+    async fn client_loop<R>(
+        &self,
+        mut rx: R,
+        mut extensions: Vec<AnyProtocolExtension>,
+    ) -> Result<(), WispError>
     where
-        R: ws::WebSocketRead,
+        R: ws::WebSocketRead + Send,
     {
         loop {
             let frame = rx.wisp_read_frame(&self.tx).await?;
             if frame.opcode == ws::OpCode::Close {
                 break Ok(());
             }
-            let packet = Packet::try_from(frame)?;
-
-            use PacketType::*;
-            match packet.packet_type {
-                Connect(_) | Info(_) => break Err(WispError::InvalidPacketType),
-                Data(data) => {
-                    if let Some(stream) = self.stream_map.get(&packet.stream_id) {
-                        let _ = stream.stream.unbounded_send(data);
-                    }
-                }
-                Continue(inner_packet) => {
-                    if let Some(stream) = self.stream_map.get(&packet.stream_id) {
-                        if stream.stream_type == StreamType::Tcp {
-                            stream
-                                .flow_control
-                                .store(inner_packet.buffer_remaining, Ordering::Release);
-                            let _ = stream.flow_control_event.notify(u32::MAX);
+            if let Some(packet) =
+                Packet::maybe_handle_extension(frame, &mut extensions, &mut rx, &self.tx).await?
+            {
+                use PacketType::*;
+                match packet.packet_type {
+                    Connect(_) | Info(_) => break Err(WispError::InvalidPacketType),
+                    Data(data) => {
+                        if let Some(stream) = self.stream_map.get(&packet.stream_id) {
+                            let _ = stream.stream.unbounded_send(data);
                         }
                     }
-                }
-                Close(_) => {
-                    if let Some((_, mut stream)) = self.stream_map.remove(&packet.stream_id) {
-                        stream.is_closed.store(true, Ordering::Release);
-                        stream.stream.disconnect();
-                        stream.stream.close_channel();
+                    Continue(inner_packet) => {
+                        if let Some(stream) = self.stream_map.get(&packet.stream_id) {
+                            if stream.stream_type == StreamType::Tcp {
+                                stream
+                                    .flow_control
+                                    .store(inner_packet.buffer_remaining, Ordering::Release);
+                                let _ = stream.flow_control_event.notify(u32::MAX);
+                            }
+                        }
+                    }
+                    Close(_) => {
+                        if let Some((_, mut stream)) = self.stream_map.remove(&packet.stream_id) {
+                            stream.is_closed.store(true, Ordering::Release);
+                            stream.stream.disconnect();
+                            stream.stream.close_channel();
+                        }
                     }
                 }
             }
@@ -439,7 +450,7 @@ pub struct ServerMux {
     /// If this variable is true you must assume no extensions are supported.
     pub downgraded: bool,
     /// Extensions that are supported by both sides.
-    pub supported_extensions: Arc<[AnyProtocolExtension]>,
+    pub supported_extension_ids: Vec<u8>,
     close_tx: mpsc::Sender<WsEvent>,
     muxstream_recv: mpsc::UnboundedReceiver<(ConnectPacket, MuxStream)>,
 }
@@ -503,7 +514,7 @@ impl ServerMux {
                 muxstream_recv: rx,
                 close_tx: close_tx.clone(),
                 downgraded,
-                supported_extensions: supported_extensions.into(),
+                supported_extension_ids: supported_extensions.iter().map(|x| x.get_id()).collect(),
             },
             MuxInner {
                 tx: write,
@@ -512,6 +523,7 @@ impl ServerMux {
             }
             .server_into_future(
                 AppendingWebSocketRead(extra_packet, read),
+                supported_extensions,
                 close_rx,
                 tx,
                 close_tx,
@@ -555,7 +567,7 @@ pub struct ClientMux {
     /// If this variable is true you must assume no extensions are supported.
     pub downgraded: bool,
     /// Extensions that are supported by both sides.
-    pub supported_extensions: Arc<[AnyProtocolExtension]>,
+    pub supported_extension_ids: Vec<u8>,
     close_tx: mpsc::Sender<WsEvent>,
 }
 
@@ -619,7 +631,10 @@ impl ClientMux {
                 Self {
                     close_tx: tx.clone(),
                     downgraded,
-                    supported_extensions: supported_extensions.into(),
+                    supported_extension_ids: supported_extensions
+                        .iter()
+                        .map(|x| x.get_id())
+                        .collect(),
                 },
                 MuxInner {
                     tx: write,
@@ -628,6 +643,7 @@ impl ClientMux {
                 }
                 .client_into_future(
                     AppendingWebSocketRead(extra_packet, read),
+                    supported_extensions,
                     rx,
                     tx,
                 ),
@@ -646,9 +662,9 @@ impl ClientMux {
     ) -> Result<MuxStream, WispError> {
         if stream_type == StreamType::Udp
             && !self
-                .supported_extensions
+                .supported_extension_ids
                 .iter()
-                .any(|x| x.get_id() == UdpProtocolExtension::ID)
+                .any(|x| *x == UdpProtocolExtension::ID)
         {
             return Err(WispError::UdpExtensionNotSupported);
         }
