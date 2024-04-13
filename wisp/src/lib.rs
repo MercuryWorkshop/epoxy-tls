@@ -52,8 +52,6 @@ pub enum WispError {
     PacketTooSmall,
     /// The packet received had an invalid type.
     InvalidPacketType,
-    /// The stream had an invalid type.
-    InvalidStreamType,
     /// The stream had an invalid ID.
     InvalidStreamId,
     /// The close packet had an invalid reason.
@@ -113,7 +111,6 @@ impl std::fmt::Display for WispError {
         match self {
             Self::PacketTooSmall => write!(f, "Packet too small"),
             Self::InvalidPacketType => write!(f, "Invalid packet type"),
-            Self::InvalidStreamType => write!(f, "Invalid stream type"),
             Self::InvalidStreamId => write!(f, "Invalid stream id"),
             Self::InvalidCloseReason => write!(f, "Invalid close reason"),
             Self::InvalidUri => write!(f, "Invalid URI"),

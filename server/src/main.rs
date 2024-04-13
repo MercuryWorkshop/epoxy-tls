@@ -247,6 +247,10 @@ async fn handle_mux(packet: ConnectPacket, mut stream: MuxStream) -> Result<bool
                 }
             }
         }
+        StreamType::Unknown(_) => {
+            stream.close(CloseReason::ServerStreamInvalidInfo).await?;
+            return Ok(false);
+        }
     }
     Ok(true)
 }
