@@ -444,7 +444,9 @@ impl Packet {
                 return Err(WispError::PacketTooSmall);
             }
             if let Some(builder) = extension_builders.iter().find(|x| x.get_id() == id) {
-                extensions.push(builder.build(bytes.copy_to_bytes(length), role))
+                if let Ok(extension) = builder.build_from_bytes(bytes.copy_to_bytes(length), role) {
+                    extensions.push(extension)
+                }
             } else {
                 bytes.advance(length)
             }
