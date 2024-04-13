@@ -20,8 +20,8 @@ use tokio_util::codec::{BytesCodec, Framed};
 use tokio_util::either::Either;
 
 use wisp_mux::{
-    extensions::udp::{UdpProtocolExtension, UdpProtocolExtensionBuilder},
-    CloseReason, ConnectPacket, MuxStream, ServerMux, StreamType, WispError,
+    extensions::udp::UdpProtocolExtensionBuilder, CloseReason, ConnectPacket, MuxStream, ServerMux,
+    StreamType, WispError,
 };
 
 type HttpBody = http_body_util::Full<hyper::body::Bytes>;
@@ -263,14 +263,8 @@ async fn accept_ws(
 
     println!("{:?}: connected", addr);
 
-    let (mut mux, fut) = ServerMux::new(
-        rx,
-        tx,
-        u32::MAX,
-        Some(vec![UdpProtocolExtension().into()]),
-        Some(&[&UdpProtocolExtensionBuilder()]),
-    )
-    .await?;
+    let (mut mux, fut) =
+        ServerMux::new(rx, tx, u32::MAX, Some(&[&UdpProtocolExtensionBuilder()])).await?;
 
     tokio::spawn(async move {
         if let Err(e) = fut.await {

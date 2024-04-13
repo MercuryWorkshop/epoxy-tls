@@ -7,10 +7,7 @@ use wasm_bindgen_futures::JsFuture;
 use hyper::rt::Executor;
 use js_sys::ArrayBuffer;
 use std::future::Future;
-use wisp_mux::{
-    extensions::udp::{UdpProtocolExtension, UdpProtocolExtensionBuilder},
-    WispError,
-};
+use wisp_mux::{extensions::udp::UdpProtocolExtensionBuilder, WispError};
 
 #[wasm_bindgen]
 extern "C" {
@@ -207,13 +204,7 @@ pub async fn make_mux(
         .await
         .map_err(|_| WispError::WsImplSocketClosed)?;
     wtx.wait_for_open().await;
-    let mux = ClientMux::new(
-        wrx,
-        wtx,
-        Some(vec![UdpProtocolExtension().into()]),
-        Some(&[&UdpProtocolExtensionBuilder()]),
-    )
-    .await?;
+    let mux = ClientMux::new(wrx, wtx, Some(&[&UdpProtocolExtensionBuilder()])).await?;
 
     Ok(mux)
 }

@@ -18,7 +18,6 @@ use std::{
     process::exit,
     sync::Arc,
     time::{Duration, Instant},
-    usize,
 };
 use tokio::{
     net::TcpStream,
@@ -28,10 +27,7 @@ use tokio::{
 };
 use tokio_native_tls::{native_tls, TlsConnector};
 use tokio_util::either::Either;
-use wisp_mux::{
-    extensions::udp::{UdpProtocolExtension, UdpProtocolExtensionBuilder},
-    ClientMux, StreamType, WispError,
-};
+use wisp_mux::{extensions::udp::UdpProtocolExtensionBuilder, ClientMux, StreamType, WispError};
 
 #[derive(Debug)]
 enum WispClientError {
@@ -138,15 +134,9 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let rx = FragmentCollectorRead::new(rx);
 
     let (mut mux, fut) = if opts.udp {
-        ClientMux::new(
-            rx,
-            tx,
-            Some(vec![UdpProtocolExtension().into()]),
-            Some(&[&UdpProtocolExtensionBuilder()]),
-        )
-        .await?
+        ClientMux::new(rx, tx, Some(&[&UdpProtocolExtensionBuilder()])).await?
     } else {
-        ClientMux::new(rx, tx, Some(vec![]), Some(&[])).await?
+        ClientMux::new(rx, tx, Some(&[])).await?
     };
 
     let mut threads = Vec::with_capacity(opts.streams * 2 + 3);
