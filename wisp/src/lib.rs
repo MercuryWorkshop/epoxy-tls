@@ -473,6 +473,8 @@ impl ServerMux {
     /// Create a new server-side multiplexor.
     ///
     /// If extension_builders is None a Wisp v1 connection is created otherwise a Wisp v2 connection is created.
+    /// **It is not guaranteed that all extensions you specify are available.** You must manually check
+    /// if the extensions you need are available after the multiplexor has been created.
     pub async fn new<R, W>(
         mut read: R,
         write: W,
@@ -601,6 +603,8 @@ impl ClientMux {
     /// Create a new client side multiplexor.
     ///
     /// If extension_builders is None a Wisp v1 connection is created otherwise a Wisp v2 connection is created.
+    /// **It is not guaranteed that all extensions you specify are available.** You must manually check
+    /// if the extensions you need are available after the multiplexor has been created.
     pub async fn new<R, W>(
         mut read: R,
         write: W,
