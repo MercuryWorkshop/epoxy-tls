@@ -309,11 +309,13 @@ async fn accept_ws(
     let rx = FragmentCollectorRead::new(rx);
 
     println!("{:?}: connected", addr);
+    // to prevent memory ""leaks"" because users are sending in packets way too fast the buffer
+    // size is set to 32
     let (mut mux, fut) = if mux_options.enforce_auth {
         let (mut mux, fut) = ServerMux::new(
             rx,
             tx,
-            u32::MAX,
+            32,
             Some(mux_options.auth.as_slice()),
         )
         .await?;
@@ -331,7 +333,7 @@ async fn accept_ws(
         }
         (mux, fut)
     } else {
-        ServerMux::new(rx, tx, u32::MAX, Some(&[Box::new(UdpProtocolExtensionBuilder())])).await?
+        ServerMux::new(rx, tx, 32, Some(&[Box::new(UdpProtocolExtensionBuilder())])).await?
     };
 
     println!(

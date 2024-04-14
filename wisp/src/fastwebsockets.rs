@@ -1,5 +1,7 @@
+use std::ops::Deref;
+
 use async_trait::async_trait;
-use bytes::Bytes;
+use bytes::BytesMut;
 use fastwebsockets::{
     FragmentCollectorRead, Frame, OpCode, Payload, WebSocketError, WebSocketWrite,
 };
@@ -24,29 +26,25 @@ impl From<OpCode> for crate::ws::OpCode {
 }
 
 impl From<Frame<'_>> for crate::ws::Frame {
-    fn from(mut frame: Frame) -> Self {
+    fn from(frame: Frame) -> Self {
         Self {
             finished: frame.fin,
             opcode: frame.opcode.into(),
-            payload: Bytes::copy_from_slice(frame.payload.to_mut()),
+            payload: BytesMut::from(frame.payload.deref()).freeze(),
         }
     }
 }
 
-impl From<crate::ws::Frame> for Frame<'_> {
+impl<'a> From<crate::ws::Frame> for Frame<'a> {
     fn from(frame: crate::ws::Frame) -> Self {
         use crate::ws::OpCode::*;
+        let payload = Payload::Owned(frame.payload.into());
         match frame.opcode {
-            Text => Self::text(Payload::Owned(frame.payload.to_vec())),
-            Binary => Self::binary(Payload::Owned(frame.payload.to_vec())),
-            Close => Self::close_raw(Payload::Owned(frame.payload.to_vec())),
-            Ping => Self::new(
-                true,
-                OpCode::Ping,
-                None,
-                Payload::Owned(frame.payload.to_vec()),
-            ),
-            Pong => Self::pong(Payload::Owned(frame.payload.to_vec())),
+            Text => Self::text(payload),
+            Binary => Self::binary(payload),
+            Close => Self::close_raw(payload),
+            Ping => Self::new(true, OpCode::Ping, None, payload),
+            Pong => Self::pong(payload),
         }
     }
 }
