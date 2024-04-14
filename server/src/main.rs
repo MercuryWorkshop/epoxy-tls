@@ -270,6 +270,8 @@ async fn accept_ws(
     let (mut mux, fut) =
         ServerMux::new(rx, tx, u32::MAX, Some(&[&UdpProtocolExtensionBuilder()])).await?;
 
+    println!("{:?}: downgraded: {} extensions supported: {:?}", addr, mux.downgraded, mux.supported_extension_ids);
+
     tokio::spawn(async move {
         if let Err(e) = fut.await {
             println!("err in mux: {:?}", e);

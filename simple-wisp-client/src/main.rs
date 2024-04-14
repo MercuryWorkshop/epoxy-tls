@@ -27,7 +27,7 @@ use tokio::{
 };
 use tokio_native_tls::{native_tls, TlsConnector};
 use tokio_util::either::Either;
-use wisp_mux::{extensions::udp::UdpProtocolExtensionBuilder, ClientMux, StreamType, WispError};
+use wisp_mux::{extensions::udp::{UdpProtocolExtension, UdpProtocolExtensionBuilder}, ClientMux, StreamType, WispError};
 
 #[derive(Debug)]
 enum WispClientError {
@@ -134,10 +134,17 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let rx = FragmentCollectorRead::new(rx);
 
     let (mut mux, fut) = if opts.udp {
-        ClientMux::new(rx, tx, Some(&[&UdpProtocolExtensionBuilder()])).await?
+        let (mux, fut) = ClientMux::new(rx, tx, Some(&[&UdpProtocolExtensionBuilder()])).await?;
+        if !mux.supported_extension_ids.iter().any(|x| *x == UdpProtocolExtension::ID) {
+            println!("server did not support udp, was downgraded {}, extensions supported {:?}", mux.downgraded, mux.supported_extension_ids);
+            exit(1);
+        }
+        (mux, fut)
     } else {
         ClientMux::new(rx, tx, Some(&[])).await?
     };
+
+    println!("connected and created ClientMux, was downgraded {}, extensions supported {:?}", mux.downgraded, mux.supported_extension_ids);
 
     let mut threads = Vec::with_capacity(opts.streams * 2 + 3);
 
