@@ -112,7 +112,7 @@ pub mod udp {
     //!     rx,
     //!     tx,
     //!     128,
-    //!     Some(&[&UdpProtocolExtensionBuilder()])
+    //!     Some(&[Box::new(UdpProtocolExtensionBuilder())])
     //! );
     //! ```
     //! See [the docs](https://github.com/MercuryWorkshop/wisp-protocol/blob/main/protocol.md#0x01---udp)
@@ -213,7 +213,7 @@ pub mod password {
     //!     rx,
     //!     tx,
     //!     128,
-    //!     Some(&[&PasswordProtocolExtensionBuilder::new_server(passwords)])
+    //!     Some(&[Box::new(PasswordProtocolExtensionBuilder::new_server(passwords))])
     //! );
     //! ```
     //!
@@ -224,10 +224,10 @@ pub mod password {
     //!     tx,
     //!     128,
     //!     Some(&[
-    //!         &PasswordProtocolExtensionBuilder::new_client(
+    //!          Box::new(PasswordProtocolExtensionBuilder::new_client(
     //!             "user1".to_string(),
     //!             "pw".to_string()
-    //!         )
+    //!         ))
     //!     ])
     //! );
     //! ```

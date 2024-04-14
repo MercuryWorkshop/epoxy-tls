@@ -445,7 +445,7 @@ impl MuxInner {
 /// ```
 /// use wisp_mux::ServerMux;
 ///
-/// let (mux, fut) = ServerMux::new(rx, tx, 128, Some(vec![]), Some([]));
+/// let (mux, fut) = ServerMux::new(rx, tx, 128, Some([]));
 /// tokio::spawn(async move {
 ///     if let Err(e) = fut.await {
 ///         println!("error in multiplexor: {:?}", e);
@@ -472,14 +472,14 @@ pub struct ServerMux {
 impl ServerMux {
     /// Create a new server-side multiplexor.
     ///
-    /// If extension_builders is None a Wisp v1 connection is created otherwise a Wisp v2 connection is created.
+    /// If `extension_builders` is None a Wisp v1 connection is created otherwise a Wisp v2 connection is created.
     /// **It is not guaranteed that all extensions you specify are available.** You must manually check
     /// if the extensions you need are available after the multiplexor has been created.
     pub async fn new<R, W>(
         mut read: R,
         write: W,
         buffer_size: u32,
-        extension_builders: Option<&[&(dyn ProtocolExtensionBuilder + Sync)]>,
+        extension_builders: Option<&[Box<dyn ProtocolExtensionBuilder + Send + Sync>]>,
     ) -> Result<(Self, impl Future<Output = Result<(), WispError>> + Send), WispError>
     where
         R: ws::WebSocketRead + Send,
@@ -581,7 +581,7 @@ impl ServerMux {
 /// ```
 /// use wisp_mux::{ClientMux, StreamType};
 ///
-/// let (mux, fut) = ClientMux::new(rx, tx, Some(vec![]), []).await?;
+/// let (mux, fut) = ClientMux::new(rx, tx, Some([])).await?;
 /// tokio::spawn(async move {
 ///     if let Err(e) = fut.await {
 ///         println!("error in multiplexor: {:?}", e);
@@ -602,13 +602,13 @@ pub struct ClientMux {
 impl ClientMux {
     /// Create a new client side multiplexor.
     ///
-    /// If extension_builders is None a Wisp v1 connection is created otherwise a Wisp v2 connection is created.
+    /// If `extension_builders` is None a Wisp v1 connection is created otherwise a Wisp v2 connection is created.
     /// **It is not guaranteed that all extensions you specify are available.** You must manually check
     /// if the extensions you need are available after the multiplexor has been created.
     pub async fn new<R, W>(
         mut read: R,
         write: W,
-        extension_builders: Option<&[&(dyn ProtocolExtensionBuilder + Sync)]>,
+        extension_builders: Option<&[Box<dyn ProtocolExtensionBuilder + Send + Sync>]>,
     ) -> Result<(Self, impl Future<Output = Result<(), WispError>> + Send), WispError>
     where
         R: ws::WebSocketRead + Send,

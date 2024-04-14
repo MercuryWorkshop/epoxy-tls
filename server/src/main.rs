@@ -22,7 +22,7 @@ use tokio_util::either::Either;
 use wisp_mux::{
     extensions::{
         password::{PasswordProtocolExtension, PasswordProtocolExtensionBuilder},
-        udp::UdpProtocolExtensionBuilder,
+        udp::UdpProtocolExtensionBuilder, ProtocolExtensionBuilder,
     },
     CloseReason, ConnectPacket, MuxStream, ServerMux, StreamType, WispError,
 };
@@ -72,7 +72,7 @@ struct MuxOptions {
     pub block_udp: bool,
     pub block_non_http: bool,
     pub enforce_auth: bool,
-    pub auth: Arc<PasswordProtocolExtensionBuilder>,
+    pub auth: Arc<Vec<Box<(dyn ProtocolExtensionBuilder + Send + Sync)>>>,
 }
 
 #[cfg(not(unix))]
@@ -176,13 +176,13 @@ async fn main() -> Result<(), Error> {
             auth.insert(username.to_string(), password.to_string());
         }
     }
-    let pw_ext = Arc::new(PasswordProtocolExtensionBuilder::new_server(auth));
+    let pw_ext = PasswordProtocolExtensionBuilder::new_server(auth);
 
     let mux_options = MuxOptions {
         block_local: opt.block_local,
         block_non_http: opt.block_non_http,
         block_udp: opt.block_udp,
-        auth: pw_ext,
+        auth: Arc::new(vec![Box::new(UdpProtocolExtensionBuilder()), Box::new(pw_ext)]),
         enforce_auth,
     };
 
@@ -314,7 +314,7 @@ async fn accept_ws(
             rx,
             tx,
             u32::MAX,
-            Some(&[&UdpProtocolExtensionBuilder(), mux_options.auth.as_ref()]),
+            Some(mux_options.auth.as_slice()),
         )
         .await?;
         if !mux
@@ -331,7 +331,7 @@ async fn accept_ws(
         }
         (mux, fut)
     } else {
-        ServerMux::new(rx, tx, u32::MAX, Some(&[&UdpProtocolExtensionBuilder()])).await?
+        ServerMux::new(rx, tx, u32::MAX, Some(&[Box::new(UdpProtocolExtensionBuilder())])).await?
     };
 
     println!(

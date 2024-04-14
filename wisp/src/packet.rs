@@ -380,7 +380,7 @@ impl Packet {
     pub(crate) fn maybe_parse_info(
         frame: Frame,
         role: Role,
-        extension_builders: &[&(dyn ProtocolExtensionBuilder + Sync)],
+        extension_builders: &[Box<(dyn ProtocolExtensionBuilder + Send + Sync)>],
     ) -> Result<Self, WispError> {
         if !frame.finished {
             return Err(WispError::WsFrameNotFinished);
@@ -431,7 +431,7 @@ impl Packet {
     fn parse_info(
         mut bytes: Bytes,
         role: Role,
-        extension_builders: &[&(dyn ProtocolExtensionBuilder + Sync)],
+        extension_builders: &[Box<(dyn ProtocolExtensionBuilder + Send + Sync)>],
     ) -> Result<Self, WispError> {
         // packet type is already read by code that calls this
         if bytes.remaining() < 4 + 2 {

@@ -204,7 +204,7 @@ pub async fn make_mux(
         .await
         .map_err(|_| WispError::WsImplSocketClosed)?;
     wtx.wait_for_open().await;
-    let mux = ClientMux::new(wrx, wtx, Some(&[&UdpProtocolExtensionBuilder()])).await?;
+    let mux = ClientMux::new(wrx, wtx, Some(&[Box::new(UdpProtocolExtensionBuilder())])).await?;
 
     Ok(mux)
 }

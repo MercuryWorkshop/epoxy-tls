@@ -152,7 +152,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let (rx, tx) = ws.split(tokio::io::split);
     let rx = FragmentCollectorRead::new(rx);
 
-    let mut extensions: Vec<Box<(dyn ProtocolExtensionBuilder + Sync)>> = Vec::new();
+    let mut extensions: Vec<Box<(dyn ProtocolExtensionBuilder + Send + Sync)>> = Vec::new();
     if opts.udp {
         extensions.push(Box::new(UdpProtocolExtensionBuilder()));
     }
@@ -160,10 +160,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     if let Some(auth) = auth {
         extensions.push(Box::new(auth));
     }
-    let extensions_mapped: Vec<&(dyn ProtocolExtensionBuilder + Sync)> =
-        extensions.iter().map(|x| x.as_ref()).collect();
 
-    let (mut mux, fut) = ClientMux::new(rx, tx, Some(&extensions_mapped)).await?;
+    let (mut mux, fut) = ClientMux::new(rx, tx, Some(extensions.as_slice())).await?;
     if opts.udp
         && !mux
             .supported_extension_ids
