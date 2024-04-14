@@ -202,6 +202,8 @@ pub mod udp {
 pub mod password {
     //! Password protocol extension.
     //!
+    //! Passwords are sent in plain text!!
+    //!
     //! # Example
     //! Server:
     //! ```
@@ -246,6 +248,7 @@ pub mod password {
     #[derive(Debug, Clone)]
     /// Password protocol extension.
     ///
+    /// **Passwords are sent in plain text!!**
     /// **This extension will panic when encoding if the username's length does not fit within a u8
     /// or the password's length does not fit within a u16.**
     pub struct PasswordProtocolExtension {
@@ -306,7 +309,7 @@ pub mod password {
                     let password = Bytes::from(self.password.clone().into_bytes());
                     let username_len = u8::try_from(username.len()).expect("username was too long");
                     let password_len =
-                        u16::try_from(username.len()).expect("password was too long");
+                        u16::try_from(password.len()).expect("password was too long");
 
                     let mut bytes =
                         BytesMut::with_capacity(3 + username_len as usize + password_len as usize);
@@ -380,6 +383,8 @@ pub mod password {
     }
 
     /// Password protocol extension builder. 
+    ///
+    /// **Passwords are sent in plain text!!**
     pub struct PasswordProtocolExtensionBuilder {
         /// Map of users and their passwords to allow. Only used on server.
         pub users: HashMap<String, String>,
@@ -448,6 +453,7 @@ pub mod password {
                     if *user.1 != password {
                         return Err(EError::InvalidPassword.into());
                     }
+
                     Ok(PasswordProtocolExtension {
                         username,
                         password,

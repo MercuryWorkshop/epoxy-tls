@@ -27,7 +27,7 @@ pub(crate) enum WsEvent {
         u16,
         oneshot::Sender<Result<MuxStream, WispError>>,
     ),
-    EndFut,
+    EndFut(Option<CloseReason>),
 }
 
 /// Read side of a multiplexor stream.

@@ -446,6 +446,10 @@ impl Packet {
             minor: bytes.get_u8(),
         };
 
+        if version.major != WISP_VERSION.major {
+            return Err(WispError::IncompatibleProtocolVersion);
+        }
+
         let mut extensions = Vec::new();
 
         while bytes.remaining() > 4 {
