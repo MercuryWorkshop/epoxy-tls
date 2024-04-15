@@ -310,12 +310,12 @@ async fn accept_ws(
 
     println!("{:?}: connected", addr);
     // to prevent memory ""leaks"" because users are sending in packets way too fast the buffer
-    // size is set to 32
+    // size is set to 128
     let (mut mux, fut) = if mux_options.enforce_auth {
         let (mut mux, fut) = ServerMux::new(
             rx,
             tx,
-            32,
+            128,
             Some(mux_options.auth.as_slice()),
         )
         .await?;
@@ -333,7 +333,7 @@ async fn accept_ws(
         }
         (mux, fut)
     } else {
-        ServerMux::new(rx, tx, 32, Some(&[Box::new(UdpProtocolExtensionBuilder())])).await?
+        ServerMux::new(rx, tx, 128, Some(&[Box::new(UdpProtocolExtensionBuilder())])).await?
     };
 
     println!(

@@ -92,6 +92,9 @@ struct Cli {
     /// Usernames and passwords are sent in plaintext!!
     #[arg(long)]
     auth: Option<String>,
+    /// Make a Wisp V1 connection
+    #[arg(long)]
+    wisp_v1: bool,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -161,7 +164,12 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         extensions.push(Box::new(auth));
     }
 
-    let (mut mux, fut) = ClientMux::new(rx, tx, Some(extensions.as_slice())).await?;
+    let (mut mux, fut) = if opts.wisp_v1 {
+        ClientMux::new(rx, tx, None).await?
+    } else {
+        ClientMux::new(rx, tx, Some(extensions.as_slice())).await?
+    };
+
     if opts.udp
         && !mux
             .supported_extension_ids
