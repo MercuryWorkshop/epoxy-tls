@@ -15,9 +15,8 @@ use hyper_util::rt::TokioIo;
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 use tokio::{
-    io::{copy_bidirectional, split, BufReader, BufWriter},
+    io::copy_bidirectional,
     net::{lookup_host, TcpListener, TcpStream, UdpSocket},
-    select,
 };
 use tokio_util::codec::{BytesCodec, Framed};
 #[cfg(unix)]
@@ -29,7 +28,7 @@ use wisp_mux::{
         udp::UdpProtocolExtensionBuilder,
         ProtocolExtensionBuilder,
     },
-    CloseReason, ConnectPacket, IoStream, MuxStream, MuxStreamIo, ServerMux, StreamType, WispError,
+    CloseReason, ConnectPacket, MuxStream, ServerMux, StreamType, WispError,
 };
 
 type HttpBody = http_body_util::Full<hyper::body::Bytes>;
