@@ -123,6 +123,7 @@ impl tower_service::Service<hyper::Uri> for TlsWispService {
             let stream = service.call(uri_parsed).await?.into_inner();
             if utils::get_is_secure(&req).map_err(|_| WispError::InvalidUri)? {
                 let connector = TlsConnector::from(rustls_config);
+                log!("got stream");
                 Ok(TokioIo::new(Either::Left(
                     connector
                         .connect(
@@ -143,6 +144,7 @@ impl tower_service::Service<hyper::Uri> for TlsWispService {
 pub enum WebSocketError {
     Unknown,
     SendFailed,
+    CloseFailed,
 }
 
 impl std::fmt::Display for WebSocketError {
@@ -151,6 +153,7 @@ impl std::fmt::Display for WebSocketError {
         match self {
             Unknown => write!(f, "Unknown error"),
             SendFailed => write!(f, "Send failed"),
+            CloseFailed => write!(f, "Close failed"),
         }
     }
 }
@@ -213,7 +216,7 @@ impl WebSocketRead for WebSocketReader {
 }
 
 impl WebSocketWrapper {
-    pub async fn connect(
+    pub fn connect(
         url: &str,
         protocols: Vec<String>,
     ) -> Result<(Self, WebSocketReader), JsValue> {
@@ -326,6 +329,12 @@ impl WebSocketWrite for WebSocketWrapper {
             }
             _ => Err(WispError::WsImplNotSupported),
         }
+    }
+
+    async fn wisp_close(&mut self) -> Result<(), WispError> {
+        self.inner
+            .close()
+            .map_err(|_| WebSocketError::CloseFailed.into())
     }
 }
 

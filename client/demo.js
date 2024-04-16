@@ -238,9 +238,9 @@ onmessage = async (msg) => {
         log(`total avg mux (${num_outer_tests} tests of ${num_inner_tests} reqs): ${total_mux_multi} ms or ${total_mux_multi / 1000} s`);
 
     } else {
-        let resp = await epoxy_client.fetch("https://httpbin.org/get");
+        let resp = await epoxy_client.fetch("https://www.example.com/");
         console.log(resp, Object.fromEntries(resp.headers));
-        plog(await resp.json());
+        log(await resp.text());
     }
     log("done");
 };

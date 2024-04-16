@@ -200,13 +200,10 @@ pub async fn make_mux(
     ),
     WispError,
 > {
-    let (wtx, wrx) = WebSocketWrapper::connect(url, vec![])
-        .await
-        .map_err(|_| WispError::WsImplSocketClosed)?;
+    let (wtx, wrx) =
+        WebSocketWrapper::connect(url, vec![]).map_err(|_| WispError::WsImplSocketClosed)?;
     wtx.wait_for_open().await;
-    let mux = ClientMux::new(wrx, wtx, Some(&[Box::new(UdpProtocolExtensionBuilder())])).await?;
-
-    Ok(mux)
+    ClientMux::new(wrx, wtx, Some(&[Box::new(UdpProtocolExtensionBuilder())])).await
 }
 
 pub fn spawn_mux_fut(
@@ -215,6 +212,7 @@ pub fn spawn_mux_fut(
     url: String,
 ) {
     wasm_bindgen_futures::spawn_local(async move {
+        debug!("epoxy: mux future started");
         if let Err(e) = fut.await {
             log!("epoxy: error in mux future, restarting: {:?}", e);
             while let Err(e) = replace_mux(mux.clone(), &url).await {
@@ -229,7 +227,7 @@ pub fn spawn_mux_fut(
 pub async fn replace_mux(mux: Arc<RwLock<ClientMux>>, url: &str) -> Result<(), WispError> {
     let (mux_replace, fut) = make_mux(url).await?;
     let mut mux_write = mux.write().await;
-    mux_write.close().await?;
+    let _ = mux_write.close().await;
     *mux_write = mux_replace;
     drop(mux_write);
     spawn_mux_fut(mux, fut, url.into());

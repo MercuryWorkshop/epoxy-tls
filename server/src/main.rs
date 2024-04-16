@@ -12,9 +12,13 @@ use hyper::{
     body::Incoming, server::conn::http1, service::service_fn, Request, Response, StatusCode,
 };
 use hyper_util::rt::TokioIo;
-use tokio::net::{lookup_host, TcpListener, TcpStream, UdpSocket};
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
+use tokio::{
+    io::{copy_bidirectional, split, BufReader, BufWriter},
+    net::{lookup_host, TcpListener, TcpStream, UdpSocket},
+    select,
+};
 use tokio_util::codec::{BytesCodec, Framed};
 #[cfg(unix)]
 use tokio_util::either::Either;
@@ -22,9 +26,10 @@ use tokio_util::either::Either;
 use wisp_mux::{
     extensions::{
         password::{PasswordProtocolExtension, PasswordProtocolExtensionBuilder},
-        udp::UdpProtocolExtensionBuilder, ProtocolExtensionBuilder,
+        udp::UdpProtocolExtensionBuilder,
+        ProtocolExtensionBuilder,
     },
-    CloseReason, ConnectPacket, MuxStream, ServerMux, StreamType, WispError,
+    CloseReason, ConnectPacket, IoStream, MuxStream, MuxStreamIo, ServerMux, StreamType, WispError,
 };
 
 type HttpBody = http_body_util::Full<hyper::body::Bytes>;
@@ -182,7 +187,10 @@ async fn main() -> Result<(), Error> {
         block_local: opt.block_local,
         block_non_http: opt.block_non_http,
         block_udp: opt.block_udp,
-        auth: Arc::new(vec![Box::new(UdpProtocolExtensionBuilder()), Box::new(pw_ext)]),
+        auth: Arc::new(vec![
+            Box::new(UdpProtocolExtensionBuilder()),
+            Box::new(pw_ext),
+        ]),
         enforce_auth,
     };
 
@@ -257,7 +265,7 @@ async fn handle_mux(packet: ConnectPacket, mut stream: MuxStream) -> Result<bool
                 .await
                 .map_err(|x| WispError::Other(Box::new(x)))?;
             let mut mux_stream = stream.into_io().into_asyncrw();
-            tokio::io::copy_bidirectional(&mut tcp_stream, &mut mux_stream)
+            copy_bidirectional(&mut mux_stream, &mut tcp_stream)
                 .await
                 .map_err(|x| WispError::Other(Box::new(x)))?;
         }
@@ -312,13 +320,7 @@ async fn accept_ws(
     // to prevent memory ""leaks"" because users are sending in packets way too fast the buffer
     // size is set to 128
     let (mut mux, fut) = if mux_options.enforce_auth {
-        let (mut mux, fut) = ServerMux::new(
-            rx,
-            tx,
-            128,
-            Some(mux_options.auth.as_slice()),
-        )
-        .await?;
+        let (mut mux, fut) = ServerMux::new(rx, tx, 128, Some(mux_options.auth.as_slice())).await?;
         if !mux
             .supported_extension_ids
             .iter()
@@ -333,7 +335,13 @@ async fn accept_ws(
         }
         (mux, fut)
     } else {
-        ServerMux::new(rx, tx, 128, Some(&[Box::new(UdpProtocolExtensionBuilder())])).await?
+        ServerMux::new(
+            rx,
+            tx,
+            128,
+            Some(&[Box::new(UdpProtocolExtensionBuilder())]),
+        )
+        .await?
     };
 
     println!(
@@ -388,10 +396,9 @@ async fn accept_ws(
                 })
                 .and_then(|should_send| async move {
                     if should_send {
-                        close_ok.close(CloseReason::Voluntary).await
-                    } else {
-                        Ok(())
+                        let _ = close_ok.close(CloseReason::Voluntary).await;
                     }
+                    Ok(())
                 })
                 .await;
         });

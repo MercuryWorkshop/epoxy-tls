@@ -253,7 +253,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 avg.get_average() * opts.packet_size,
             );
             if is_term {
-                print!("\x1b[2K{}\r", stat);
+                println!("\x1b[1A\x1b[2K{}\r", stat);
             } else {
                 println!("{}", stat);
             }
@@ -284,6 +284,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let out = select_all(threads.into_iter()).await;
 
+    let duration_since = Instant::now().duration_since(start_time);
+
     if let Err(err) = out.0? {
         println!("\n\nerr: {:?}", err);
         exit(1);
@@ -291,10 +293,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     out.2.into_iter().for_each(|x| x.abort());
 
-    let duration_since = Instant::now().duration_since(start_time);
+    mux.close().await?;
 
     println!(
-        "\n\nresults: {} packets of &[0; 1024 * {}] ({} KiB) sent in {} ({} KiB/s)",
+        "\nresults: {} packets of &[0; 1024 * {}] ({} KiB) sent in {} ({} KiB/s)",
         cnt.get(),
         opts.packet_size,
         cnt.get() * opts.packet_size,

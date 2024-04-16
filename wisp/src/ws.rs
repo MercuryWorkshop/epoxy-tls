@@ -76,6 +76,9 @@ pub trait WebSocketRead {
 pub trait WebSocketWrite {
     /// Write a frame to the socket.
     async fn wisp_write_frame(&mut self, frame: Frame) -> Result<(), WispError>;
+
+    /// Close the socket.
+    async fn wisp_close(&mut self) -> Result<(), WispError>;
 }
 
 /// Locked WebSocket.
@@ -88,8 +91,13 @@ impl LockedWebSocketWrite {
     }
 
     /// Write a frame to the websocket.
-    pub async fn write_frame(&self, frame: Frame) -> Result<(), crate::WispError> {
+    pub async fn write_frame(&self, frame: Frame) -> Result<(), WispError> {
         self.0.lock().await.wisp_write_frame(frame).await
+    }
+
+    /// Close the websocket.
+    pub async fn close(&self) -> Result<(), WispError> {
+        self.0.lock().await.wisp_close().await
     }
 }
 
