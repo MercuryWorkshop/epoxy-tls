@@ -10,6 +10,7 @@ mod wrappers;
 use tls_stream::EpxTlsStream;
 use tokioio::TokioIo;
 use udp_stream::EpxUdpStream;
+use utils::object_to_trustanchor;
 pub use utils::{Boolinator, ReplaceErr, UriExt};
 use websocket::EpxWebSocket;
 use wrappers::{IncomingBody, ServiceWrapper, TlsWispService, WebSocketWrapper};
@@ -70,42 +71,10 @@ fn init() {
     intern("Content-Type");
 }
 
-fn cert_to_jval(cert: &TrustAnchor) -> Result<JsValue, JsValue> {
-    let val = Object::new();
-    Reflect::set(
-        &val,
-        &jval!("subject"),
-        &Uint8Array::from(cert.subject.as_ref()),
-    )?;
-    Reflect::set(
-        &val,
-        &jval!("subject_public_key_info"),
-        &Uint8Array::from(cert.subject_public_key_info.as_ref()),
-    )?;
-    Reflect::set(
-        &val,
-        &jval!("name_constraints"),
-        &jval!(cert
-            .name_constraints
-            .as_ref()
-            .map(|x| Uint8Array::from(x.as_ref()))),
-    )?;
-    Ok(val.into())
-}
-
-#[wasm_bindgen]
-pub fn certs() -> Result<JsValue, JsValue> {
-    Ok(webpki_roots::TLS_SERVER_ROOTS
-        .iter()
-        .map(cert_to_jval)
-        .collect::<Result<Array, JsValue>>()?
-        .into())
-}
-
 #[wasm_bindgen(inspectable)]
 pub struct EpoxyClient {
     rustls_config: Arc<rustls::ClientConfig>,
-    mux: Arc<RwLock<ClientMux<WebSocketWrapper>>>,
+    mux: Arc<RwLock<ClientMux>>,
     hyper_client: Client<TlsWispService, HttpBody>,
     #[wasm_bindgen(getter_with_clone)]
     pub useragent: String,
@@ -120,6 +89,7 @@ impl EpoxyClient {
         ws_url: String,
         useragent: String,
         redirect_limit: usize,
+        certs: Array,
     ) -> Result<EpoxyClient, JsError> {
         let ws_uri = ws_url
             .parse::<uri::Uri>()
@@ -137,7 +107,13 @@ impl EpoxyClient {
         utils::spawn_mux_fut(mux.clone(), fut, ws_url.clone());
 
         let mut certstore = RootCertStore::empty();
-        certstore.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let certs: Result<Vec<TrustAnchor>, JsValue> =
+            certs.iter().map(object_to_trustanchor).collect();
+        certstore.extend(
+            certs
+                .replace_err("Failed to get certificates from cert store")?
+                .into_iter(),
+        );
 
         let rustls_config = Arc::new(
             rustls::ClientConfig::builder()
@@ -164,7 +140,7 @@ impl EpoxyClient {
     async fn get_tls_io(&self, url_host: &str, url_port: u16) -> Result<EpxIoTlsStream, JsError> {
         let channel = self
             .mux
-            .read()
+            .write()
             .await
             .client_new_stream(StreamType::Tcp, url_host.to_string(), url_port)
             .await

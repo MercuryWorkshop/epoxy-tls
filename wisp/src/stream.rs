@@ -1,13 +1,14 @@
 use crate::{sink_unfold, CloseReason, Packet, Role, StreamType, WispError};
 
-use async_io_stream::IoStream;
+pub use async_io_stream::IoStream;
 use bytes::Bytes;
 use event_listener::Event;
+use flume as mpsc;
 use futures::{
-    channel::{mpsc, oneshot},
-    stream,
+    channel::oneshot,
+    select, stream,
     task::{Context, Poll},
-    Sink, SinkExt, Stream, StreamExt,
+    FutureExt, Sink, Stream,
 };
 use pin_project_lite::pin_project;
 use std::{
@@ -21,7 +22,13 @@ use std::{
 pub(crate) enum WsEvent {
     SendPacket(Packet, oneshot::Sender<Result<(), WispError>>),
     Close(Packet, oneshot::Sender<Result<(), WispError>>),
-    EndFut,
+    CreateStream(
+        StreamType,
+        String,
+        u16,
+        oneshot::Sender<Result<MuxStream, WispError>>,
+    ),
+    EndFut(Option<CloseReason>),
 }
 
 /// Read side of a multiplexor stream.
@@ -32,8 +39,9 @@ pub struct MuxStreamRead {
     pub stream_type: StreamType,
     role: Role,
     tx: mpsc::Sender<WsEvent>,
-    rx: mpsc::UnboundedReceiver<Bytes>,
+    rx: mpsc::Receiver<Bytes>,
     is_closed: Arc<AtomicBool>,
+    is_closed_event: Arc<Event>,
     flow_control: Arc<AtomicU32>,
     flow_control_read: AtomicU32,
     target_flow_control: u32,
@@ -45,13 +53,16 @@ impl MuxStreamRead {
         if self.is_closed.load(Ordering::Acquire) {
             return None;
         }
-        let bytes = self.rx.next().await?;
+        let bytes = select! {
+            x = self.rx.recv_async() => x.ok()?,
+            _ = self.is_closed_event.listen().fuse() => return None
+        };
         if self.role == Role::Server && self.stream_type == StreamType::Tcp {
             let val = self.flow_control_read.fetch_add(1, Ordering::AcqRel) + 1;
             if val > self.target_flow_control {
                 let (tx, rx) = oneshot::channel::<Result<(), WispError>>();
                 self.tx
-                    .send(WsEvent::SendPacket(
+                    .send_async(WsEvent::SendPacket(
                         Packet::new_continue(
                             self.stream_id,
                             self.flow_control.fetch_add(val, Ordering::AcqRel) + val,
@@ -101,13 +112,13 @@ impl MuxStreamWrite {
         }
         let (tx, rx) = oneshot::channel::<Result<(), WispError>>();
         self.tx
-            .send(WsEvent::SendPacket(
+            .send_async(WsEvent::SendPacket(
                 Packet::new_data(self.stream_id, data),
                 tx,
             ))
             .await
-            .map_err(|x| WispError::Other(Box::new(x)))?;
-        rx.await.map_err(|x| WispError::Other(Box::new(x)))??;
+            .map_err(|_| WispError::MuxMessageFailedToSend)?;
+        rx.await.map_err(|_| WispError::MuxMessageFailedToRecv)??;
         if self.role == Role::Client && self.stream_type == StreamType::Tcp {
             self.flow_control.store(
                 self.flow_control.load(Ordering::Acquire).saturating_sub(1),
@@ -145,13 +156,13 @@ impl MuxStreamWrite {
 
         let (tx, rx) = oneshot::channel::<Result<(), WispError>>();
         self.tx
-            .send(WsEvent::Close(
+            .send_async(WsEvent::Close(
                 Packet::new_close(self.stream_id, reason),
                 tx,
             ))
             .await
-            .map_err(|x| WispError::Other(Box::new(x)))?;
-        rx.await.map_err(|x| WispError::Other(Box::new(x)))??;
+            .map_err(|_| WispError::MuxMessageFailedToSend)?;
+        rx.await.map_err(|_| WispError::MuxMessageFailedToRecv)??;
 
         Ok(())
     }
@@ -173,6 +184,19 @@ impl MuxStreamWrite {
     }
 }
 
+impl Drop for MuxStreamWrite {
+    fn drop(&mut self) {
+        if !self.is_closed.load(Ordering::Acquire) {
+            self.is_closed.store(true, Ordering::Release);
+            let (tx, _) = oneshot::channel();
+            let _ = self.tx.send(WsEvent::Close(
+                Packet::new_close(self.stream_id, CloseReason::Unknown),
+                tx,
+            ));
+        }
+    }
+}
+
 /// Multiplexor stream.
 pub struct MuxStream {
     /// ID of the stream.
@@ -187,9 +211,10 @@ impl MuxStream {
         stream_id: u32,
         role: Role,
         stream_type: StreamType,
-        rx: mpsc::UnboundedReceiver<Bytes>,
+        rx: mpsc::Receiver<Bytes>,
         tx: mpsc::Sender<WsEvent>,
         is_closed: Arc<AtomicBool>,
+        is_closed_event: Arc<Event>,
         flow_control: Arc<AtomicU32>,
         continue_recieved: Arc<Event>,
         target_flow_control: u32,
@@ -203,6 +228,7 @@ impl MuxStream {
                 tx: tx.clone(),
                 rx,
                 is_closed: is_closed.clone(),
+                is_closed_event: is_closed_event.clone(),
                 flow_control: flow_control.clone(),
                 flow_control_read: AtomicU32::new(0),
                 target_flow_control,
@@ -282,13 +308,13 @@ impl MuxStreamCloser {
 
         let (tx, rx) = oneshot::channel::<Result<(), WispError>>();
         self.close_channel
-            .send(WsEvent::Close(
+            .send_async(WsEvent::Close(
                 Packet::new_close(self.stream_id, reason),
                 tx,
             ))
             .await
-            .map_err(|x| WispError::Other(Box::new(x)))?;
-        rx.await.map_err(|x| WispError::Other(Box::new(x)))??;
+            .map_err(|_| WispError::MuxMessageFailedToSend)?;
+        rx.await.map_err(|_| WispError::MuxMessageFailedToRecv)??;
 
         Ok(())
     }
@@ -317,7 +343,10 @@ impl MuxStreamIo {
 impl Stream for MuxStreamIo {
     type Item = Result<Vec<u8>, std::io::Error>;
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.project().rx.poll_next(cx).map(|x| x.map(|x| Ok(x.to_vec())))
+        self.project()
+            .rx
+            .poll_next(cx)
+            .map(|x| x.map(|x| Ok(x.to_vec())))
     }
 }
 

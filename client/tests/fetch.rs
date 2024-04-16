@@ -1,6 +1,7 @@
 use default_env::default_env;
 use epoxy_client::EpoxyClient;
-use js_sys::{JsString, Object, Reflect, Uint8Array, JSON};
+use js_sys::{Array, JsString, Object, Reflect, Uint8Array, JSON};
+use rustls_pki_types::TrustAnchor;
 use tokio::sync::OnceCell;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
@@ -12,11 +13,40 @@ wasm_bindgen_test_configure!(run_in_dedicated_worker);
 static USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 static EPOXY_CLIENT: OnceCell<EpoxyClient> = OnceCell::const_new();
 
+pub fn trustanchor_to_object(cert: &TrustAnchor) -> Result<JsValue, JsValue> {
+    let val = Object::new();
+    Reflect::set(
+        &val,
+        &JsValue::from("subject"),
+        &Uint8Array::from(cert.subject.as_ref()),
+    )?;
+    Reflect::set(
+        &val,
+        &JsValue::from("subject_public_key_info"),
+        &Uint8Array::from(cert.subject_public_key_info.as_ref()),
+    )?;
+    Reflect::set(
+        &val,
+        &JsValue::from("name_constraints"),
+        &JsValue::from(
+            cert.name_constraints
+                .as_ref()
+                .map(|x| Uint8Array::from(x.as_ref())),
+        ),
+    )?;
+    Ok(val.into())
+}
+
 async fn get_client_w_ua(useragent: &str, redirect_limit: usize) -> EpoxyClient {
     EpoxyClient::new(
         "ws://localhost:4000".into(),
         useragent.into(),
         redirect_limit,
+        webpki_roots::TLS_SERVER_ROOTS
+            .iter()
+            .map(trustanchor_to_object)
+            .collect::<Result<Array, JsValue>>()
+            .expect("Failed to create certs"),
     )
     .await
     .ok()

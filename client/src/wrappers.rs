@@ -53,7 +53,7 @@ impl Stream for IncomingBody {
 }
 
 #[derive(Clone)]
-pub struct ServiceWrapper(pub Arc<RwLock<ClientMux<WebSocketWrapper>>>, pub String);
+pub struct ServiceWrapper(pub Arc<RwLock<ClientMux>>, pub String);
 
 impl tower_service::Service<hyper::Uri> for ServiceWrapper {
     type Response = TokioIo<EpxIoUnencryptedStream>;
@@ -69,7 +69,7 @@ impl tower_service::Service<hyper::Uri> for ServiceWrapper {
         let mux_url = self.1.clone();
         async move {
             let stream = mux
-                .read()
+                .write()
                 .await
                 .client_new_stream(
                     StreamType::Tcp,
@@ -143,6 +143,7 @@ impl tower_service::Service<hyper::Uri> for TlsWispService {
 pub enum WebSocketError {
     Unknown,
     SendFailed,
+    CloseFailed,
 }
 
 impl std::fmt::Display for WebSocketError {
@@ -151,6 +152,7 @@ impl std::fmt::Display for WebSocketError {
         match self {
             Unknown => write!(f, "Unknown error"),
             SendFailed => write!(f, "Send failed"),
+            CloseFailed => write!(f, "Close failed"),
         }
     }
 }
@@ -193,11 +195,9 @@ pub struct WebSocketReader {
     close_event: Arc<Event>,
 }
 
+#[async_trait::async_trait]
 impl WebSocketRead for WebSocketReader {
-    async fn wisp_read_frame(
-        &mut self,
-        _: &LockedWebSocketWrite<impl WebSocketWrite>,
-    ) -> Result<Frame, WispError> {
+    async fn wisp_read_frame(&mut self, _: &LockedWebSocketWrite) -> Result<Frame, WispError> {
         use WebSocketMessage::*;
         if self.closed.load(Ordering::Acquire) {
             return Err(WispError::WsImplSocketClosed);
@@ -215,10 +215,7 @@ impl WebSocketRead for WebSocketReader {
 }
 
 impl WebSocketWrapper {
-    pub async fn connect(
-        url: &str,
-        protocols: Vec<String>,
-    ) -> Result<(Self, WebSocketReader), JsValue> {
+    pub fn connect(url: &str, protocols: Vec<String>) -> Result<(Self, WebSocketReader), JsValue> {
         let (read_tx, read_rx) = mpsc::unbounded_channel();
         let closed = Arc::new(AtomicBool::new(false));
 
@@ -306,6 +303,7 @@ impl WebSocketWrapper {
     }
 }
 
+#[async_trait::async_trait]
 impl WebSocketWrite for WebSocketWrapper {
     async fn wisp_write_frame(&mut self, frame: Frame) -> Result<(), WispError> {
         use wisp_mux::ws::OpCode::*;
@@ -327,6 +325,12 @@ impl WebSocketWrite for WebSocketWrapper {
             }
             _ => Err(WispError::WsImplNotSupported),
         }
+    }
+
+    async fn wisp_close(&mut self) -> Result<(), WispError> {
+        self.inner
+            .close()
+            .map_err(|_| WebSocketError::CloseFailed.into())
     }
 }
 

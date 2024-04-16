@@ -1,12 +1,13 @@
 use crate::*;
 
+use rustls_pki_types::Der;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
 use hyper::rt::Executor;
 use js_sys::ArrayBuffer;
 use std::future::Future;
-use wisp_mux::WispError;
+use wisp_mux::{extensions::udp::UdpProtocolExtensionBuilder, WispError};
 
 #[wasm_bindgen]
 extern "C" {
@@ -194,26 +195,24 @@ pub async fn make_mux(
     url: &str,
 ) -> Result<
     (
-        ClientMux<WebSocketWrapper>,
-        impl Future<Output = Result<(), WispError>>,
+        ClientMux,
+        impl Future<Output = Result<(), WispError>> + Send,
     ),
     WispError,
 > {
-    let (wtx, wrx) = WebSocketWrapper::connect(url, vec![])
-        .await
-        .map_err(|_| WispError::WsImplSocketClosed)?;
+    let (wtx, wrx) =
+        WebSocketWrapper::connect(url, vec![]).map_err(|_| WispError::WsImplSocketClosed)?;
     wtx.wait_for_open().await;
-    let mux = ClientMux::new(wrx, wtx).await?;
-
-    Ok(mux)
+    ClientMux::new(wrx, wtx, Some(&[Box::new(UdpProtocolExtensionBuilder())])).await
 }
 
 pub fn spawn_mux_fut(
-    mux: Arc<RwLock<ClientMux<WebSocketWrapper>>>,
-    fut: impl Future<Output = Result<(), WispError>> + 'static,
+    mux: Arc<RwLock<ClientMux>>,
+    fut: impl Future<Output = Result<(), WispError>> + Send + 'static,
     url: String,
 ) {
     wasm_bindgen_futures::spawn_local(async move {
+        debug!("epoxy: mux future started");
         if let Err(e) = fut.await {
             log!("epoxy: error in mux future, restarting: {:?}", e);
             while let Err(e) = replace_mux(mux.clone(), &url).await {
@@ -225,13 +224,10 @@ pub fn spawn_mux_fut(
     });
 }
 
-pub async fn replace_mux(
-    mux: Arc<RwLock<ClientMux<WebSocketWrapper>>>,
-    url: &str,
-) -> Result<(), WispError> {
+pub async fn replace_mux(mux: Arc<RwLock<ClientMux>>, url: &str) -> Result<(), WispError> {
     let (mux_replace, fut) = make_mux(url).await?;
     let mut mux_write = mux.write().await;
-    mux_write.close().await?;
+    let _ = mux_write.close().await;
     *mux_write = mux_replace;
     drop(mux_write);
     spawn_mux_fut(mux, fut, url.into());
@@ -263,4 +259,18 @@ pub async fn jval_to_u8_array_req(val: JsValue) -> Result<(Uint8Array, web_sys::
             .map(|x| Uint8Array::new(&x))?,
         req,
     ))
+}
+
+pub fn object_to_trustanchor(obj: JsValue) -> Result<TrustAnchor<'static>, JsValue> {
+    let subject: Uint8Array = Reflect::get(&obj, &jval!("subject"))?.dyn_into()?;
+    let pub_key_info: Uint8Array =
+        Reflect::get(&obj, &jval!("subject_public_key_info"))?.dyn_into()?;
+    let name_constraints: Option<Uint8Array> = Reflect::get(&obj, &jval!("name_constraints"))
+        .and_then(|x| x.dyn_into())
+        .ok();
+    Ok(TrustAnchor {
+        subject: Der::from(subject.to_vec()),
+        subject_public_key_info: Der::from(pub_key_info.to_vec()),
+        name_constraints: name_constraints.map(|x| Der::from(x.to_vec())),
+    })
 }

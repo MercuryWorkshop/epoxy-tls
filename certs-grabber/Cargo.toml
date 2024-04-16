@@ -1,0 +1,13 @@
+[package]
+name = "certs-grabber"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+hex = "0.4.3"
+ring = "0.17.8"
+rustls-pki-types = "1.4.1"
+rustls-webpki = "0.102.2"
+tokio = { version = "1.37.0", features = ["full"] }
+webpki-ccadb = "0.1.0"
+x509-parser = "0.16.0"

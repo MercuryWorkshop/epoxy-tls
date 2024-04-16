@@ -41,5 +41,14 @@ echo "}\ndeclare function epoxy(maybe_memory?: WebAssembly.Memory): Promise<type
 cp out/epoxy_client.d.ts pkg/epoxy.d.ts
 cp out/epoxy_client_bg.wasm pkg/epoxy.wasm
 
+echo "[epx] fetching certs" 
+(
+cd ../certs-grabber
+cargo run
+) > pkg/certs.js
+cat pkg/certs.js > pkg/certs-module.js
+echo "export default ROOTS;" >> pkg/certs-module.js
+echo "[epx] fetching certs finished" 
+
 rm -r out/
 echo "[epx] done!"
