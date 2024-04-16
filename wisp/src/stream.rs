@@ -189,7 +189,10 @@ impl Drop for MuxStreamWrite {
         if !self.is_closed.load(Ordering::Acquire) {
             self.is_closed.store(true, Ordering::Release);
             let (tx, _) = oneshot::channel();
-            let _ = self.tx.send(WsEvent::Close(Packet::new_close(self.stream_id, CloseReason::Unknown), tx));
+            let _ = self.tx.send(WsEvent::Close(
+                Packet::new_close(self.stream_id, CloseReason::Unknown),
+                tx,
+            ));
         }
     }
 }

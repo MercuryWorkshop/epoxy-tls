@@ -123,7 +123,6 @@ impl tower_service::Service<hyper::Uri> for TlsWispService {
             let stream = service.call(uri_parsed).await?.into_inner();
             if utils::get_is_secure(&req).map_err(|_| WispError::InvalidUri)? {
                 let connector = TlsConnector::from(rustls_config);
-                log!("got stream");
                 Ok(TokioIo::new(Either::Left(
                     connector
                         .connect(
@@ -216,10 +215,7 @@ impl WebSocketRead for WebSocketReader {
 }
 
 impl WebSocketWrapper {
-    pub fn connect(
-        url: &str,
-        protocols: Vec<String>,
-    ) -> Result<(Self, WebSocketReader), JsValue> {
+    pub fn connect(url: &str, protocols: Vec<String>) -> Result<(Self, WebSocketReader), JsValue> {
         let (read_tx, read_rx) = mpsc::unbounded_channel();
         let closed = Arc::new(AtomicBool::new(false));
 

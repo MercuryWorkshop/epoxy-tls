@@ -60,5 +60,5 @@ async fn main() {
     }
     code.pop();
     code.push_str("];");
-    println!("{}",code);
+    println!("{}", code);
 }

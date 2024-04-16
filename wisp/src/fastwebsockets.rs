@@ -3,7 +3,7 @@ use std::ops::Deref;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use fastwebsockets::{
-    CloseCode, FragmentCollectorRead, Frame, OpCode, Payload, WebSocketError, WebSocketWrite
+    CloseCode, FragmentCollectorRead, Frame, OpCode, Payload, WebSocketError, WebSocketWrite,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -79,6 +79,8 @@ impl<S: AsyncWrite + Unpin + Send> crate::ws::WebSocketWrite for WebSocketWrite<
     }
 
     async fn wisp_close(&mut self) -> Result<(), WispError> {
-        self.write_frame(Frame::close(CloseCode::Normal.into(), b"")).await.map_err(|e| e.into())
+        self.write_frame(Frame::close(CloseCode::Normal.into(), b""))
+            .await
+            .map_err(|e| e.into())
     }
 }
