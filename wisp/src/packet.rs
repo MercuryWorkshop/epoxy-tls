@@ -423,6 +423,9 @@ impl Packet {
         {
             extension.handle_packet(bytes, read, write).await?;
             Ok(None)
+        } else if packet_type == 0x05 {
+            // Server may send a 0x05 in handshake since it's Wisp v2 but we may be Wisp v1 so we need to ignore 0x05
+            Ok(None)
         } else {
             Ok(Some(Self::parse_packet(packet_type, bytes)?))
         }
