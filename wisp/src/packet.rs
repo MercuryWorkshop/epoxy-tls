@@ -362,6 +362,14 @@ impl Packet {
         }
     }
 
+    pub(crate) fn raw_encode(packet_type: u8, stream_id: u32, bytes: Bytes) -> Bytes {
+        let mut encoded = BytesMut::with_capacity(1 + 4 + bytes.len());
+        encoded.put_u8(packet_type);
+        encoded.put_u32_le(stream_id);
+        encoded.extend(bytes);
+        encoded.freeze()
+    }
+
     fn parse_packet(packet_type: u8, mut bytes: Bytes) -> Result<Self, WispError> {
         use PacketType as P;
         Ok(Self {
@@ -494,13 +502,11 @@ impl TryFrom<Bytes> for Packet {
 
 impl From<Packet> for Bytes {
     fn from(packet: Packet) -> Self {
-        let inner_u8 = packet.packet_type.as_u8();
-        let inner = Bytes::from(packet.packet_type);
-        let mut encoded = BytesMut::with_capacity(1 + 4 + inner.len());
-        encoded.put_u8(inner_u8);
-        encoded.put_u32_le(packet.stream_id);
-        encoded.extend(inner);
-        encoded.freeze()
+        Packet::raw_encode(
+            packet.packet_type.as_u8(),
+            packet.stream_id,
+            packet.packet_type.into(),
+        )
     }
 }
 

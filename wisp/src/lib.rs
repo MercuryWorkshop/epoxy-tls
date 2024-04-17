@@ -272,6 +272,9 @@ impl MuxInner {
                         let _ = channel.send(Err(WispError::InvalidStreamId));
                     }
                 }
+                WsEvent::SendBytes(packet, channel) => {
+                    let _ = channel.send(self.tx.write_frame(ws::Frame::binary(packet)).await);
+                }
                 WsEvent::CreateStream(stream_type, host, port, channel) => {
                     let ret: Result<MuxStream, WispError> = async {
                         let stream_id = next_free_stream_id;
@@ -552,11 +555,11 @@ impl ServerMux {
     }
 
     /// Wait for a stream to be created.
-    pub async fn server_new_stream(&mut self) -> Option<(ConnectPacket, MuxStream)> {
+    pub async fn server_new_stream(&self) -> Option<(ConnectPacket, MuxStream)> {
         self.muxstream_recv.recv_async().await.ok()
     }
 
-    async fn close_internal(&mut self, reason: Option<CloseReason>) -> Result<(), WispError> {
+    async fn close_internal(&self, reason: Option<CloseReason>) -> Result<(), WispError> {
         self.close_tx
             .send_async(WsEvent::EndFut(reason))
             .await
@@ -567,7 +570,7 @@ impl ServerMux {
     ///
     /// Also terminates the multiplexor future. Waiting for a new stream will never succeed after
     /// this function is called.
-    pub async fn close(&mut self) -> Result<(), WispError> {
+    pub async fn close(&self) -> Result<(), WispError> {
         self.close_internal(None).await
     }
 
@@ -575,7 +578,7 @@ impl ServerMux {
     ///
     /// Also terminates the multiplexor future. Waiting for a new stream will never succed after
     /// this function is called.
-    pub async fn close_extension_incompat(&mut self) -> Result<(), WispError> {
+    pub async fn close_extension_incompat(&self) -> Result<(), WispError> {
         self.close_internal(Some(CloseReason::IncompatibleExtensions))
             .await
     }
@@ -696,7 +699,7 @@ impl ClientMux {
 
     /// Create a new stream, multiplexed through Wisp.
     pub async fn client_new_stream(
-        &mut self,
+        &self,
         stream_type: StreamType,
         host: String,
         port: u16,
@@ -717,7 +720,7 @@ impl ClientMux {
         rx.await.map_err(|_| WispError::MuxMessageFailedToRecv)?
     }
 
-    async fn close_internal(&mut self, reason: Option<CloseReason>) -> Result<(), WispError> {
+    async fn close_internal(&self, reason: Option<CloseReason>) -> Result<(), WispError> {
         self.stream_tx
             .send_async(WsEvent::EndFut(reason))
             .await
@@ -728,7 +731,7 @@ impl ClientMux {
     ///
     /// Also terminates the multiplexor future. Creating a stream is UB after calling this
     /// function.
-    pub async fn close(&mut self) -> Result<(), WispError> {
+    pub async fn close(&self) -> Result<(), WispError> {
         self.close_internal(None).await
     }
 
@@ -736,7 +739,7 @@ impl ClientMux {
     ///
     /// Also terminates the multiplexor future. Creating a stream is UB after calling this
     /// function.
-    pub async fn close_extension_incompat(&mut self) -> Result<(), WispError> {
+    pub async fn close_extension_incompat(&self) -> Result<(), WispError> {
         self.close_internal(Some(CloseReason::IncompatibleExtensions))
             .await
     }

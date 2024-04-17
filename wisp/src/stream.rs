@@ -21,6 +21,7 @@ use std::{
 
 pub(crate) enum WsEvent {
     SendPacket(Packet, oneshot::Sender<Result<(), WispError>>),
+    SendBytes(Bytes, oneshot::Sender<Result<(), WispError>>),
     Close(Packet, oneshot::Sender<Result<(), WispError>>),
     CreateStream(
         StreamType,
@@ -49,7 +50,7 @@ pub struct MuxStreamRead {
 
 impl MuxStreamRead {
     /// Read an event from the stream.
-    pub async fn read(&mut self) -> Option<Bytes> {
+    pub async fn read(&self) -> Option<Bytes> {
         if self.is_closed.load(Ordering::Acquire) {
             return None;
         }
@@ -79,7 +80,7 @@ impl MuxStreamRead {
     }
 
     pub(crate) fn into_stream(self) -> Pin<Box<dyn Stream<Item = Bytes> + Send>> {
-        Box::pin(stream::unfold(self, |mut rx| async move {
+        Box::pin(stream::unfold(self, |rx| async move {
             Some((rx.read().await?, rx))
         }))
     }
@@ -100,7 +101,7 @@ pub struct MuxStreamWrite {
 
 impl MuxStreamWrite {
     /// Write data to the stream.
-    pub async fn write(&mut self, data: Bytes) -> Result<(), WispError> {
+    pub async fn write(&self, data: Bytes) -> Result<(), WispError> {
         if self.is_closed.load(Ordering::Acquire) {
             return Err(WispError::StreamAlreadyClosed);
         }
@@ -147,8 +148,17 @@ impl MuxStreamWrite {
         }
     }
 
+    /// Get a protocol extension stream to send protocol extension packets.
+    pub fn get_protocol_extension_stream(&self) -> MuxProtocolExtensionStream {
+        MuxProtocolExtensionStream {
+            stream_id: self.stream_id,
+            tx: self.tx.clone(),
+            is_closed: self.is_closed.clone(),
+        }
+    }
+
     /// Close the stream. You will no longer be able to write or read after this has been called.
-    pub async fn close(&mut self, reason: CloseReason) -> Result<(), WispError> {
+    pub async fn close(&self, reason: CloseReason) -> Result<(), WispError> {
         if self.is_closed.load(Ordering::Acquire) {
             return Err(WispError::StreamAlreadyClosed);
         }
@@ -171,12 +181,12 @@ impl MuxStreamWrite {
         let handle = self.get_close_handle();
         Box::pin(sink_unfold::unfold(
             self,
-            |mut tx, data| async move {
+            |tx, data| async move {
                 tx.write(data).await?;
                 Ok(tx)
             },
             handle,
-            move |mut handle| async {
+            move |handle| async {
                 handle.close(CloseReason::Unknown).await?;
                 Ok(handle)
             },
@@ -246,12 +256,12 @@ impl MuxStream {
     }
 
     /// Read an event from the stream.
-    pub async fn read(&mut self) -> Option<Bytes> {
+    pub async fn read(&self) -> Option<Bytes> {
         self.rx.read().await
     }
 
     /// Write data to the stream.
-    pub async fn write(&mut self, data: Bytes) -> Result<(), WispError> {
+    pub async fn write(&self, data: Bytes) -> Result<(), WispError> {
         self.tx.write(data).await
     }
 
@@ -270,8 +280,13 @@ impl MuxStream {
         self.tx.get_close_handle()
     }
 
+    /// Get a protocol extension stream to send protocol extension packets.
+    pub fn get_protocol_extension_stream(&self) -> MuxProtocolExtensionStream {
+        self.tx.get_protocol_extension_stream()
+    }
+
     /// Close the stream. You will no longer be able to write or read after this has been called.
-    pub async fn close(&mut self, reason: CloseReason) -> Result<(), WispError> {
+    pub async fn close(&self, reason: CloseReason) -> Result<(), WispError> {
         self.tx.close(reason).await
     }
 
@@ -300,7 +315,7 @@ pub struct MuxStreamCloser {
 
 impl MuxStreamCloser {
     /// Close the stream. You will no longer be able to write or read after this has been called.
-    pub async fn close(&mut self, reason: CloseReason) -> Result<(), WispError> {
+    pub async fn close(&self, reason: CloseReason) -> Result<(), WispError> {
         if self.is_closed.load(Ordering::Acquire) {
             return Err(WispError::StreamAlreadyClosed);
         }
@@ -316,6 +331,33 @@ impl MuxStreamCloser {
             .map_err(|_| WispError::MuxMessageFailedToSend)?;
         rx.await.map_err(|_| WispError::MuxMessageFailedToRecv)??;
 
+        Ok(())
+    }
+}
+
+/// Stream for sending arbitrary protocol extension packets.
+pub struct MuxProtocolExtensionStream {
+    /// ID of the stream.
+    pub stream_id: u32,
+    tx: mpsc::Sender<WsEvent>,
+    is_closed: Arc<AtomicBool>,
+}
+
+impl MuxProtocolExtensionStream {
+    /// Send a protocol extension packet.
+    pub async fn send(&self, packet_type: u8, data: Bytes) -> Result<(), WispError> {
+        if self.is_closed.load(Ordering::Acquire) {
+            return Err(WispError::StreamAlreadyClosed);
+        }
+        let (tx, rx) = oneshot::channel::<Result<(), WispError>>();
+        self.tx
+            .send_async(WsEvent::SendBytes(
+                Packet::raw_encode(packet_type, self.stream_id, data),
+                tx,
+            ))
+            .await
+            .map_err(|_| WispError::MuxMessageFailedToSend)?;
+        rx.await.map_err(|_| WispError::MuxMessageFailedToRecv)??;
         Ok(())
     }
 }

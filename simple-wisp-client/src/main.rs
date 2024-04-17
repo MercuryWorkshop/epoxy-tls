@@ -164,7 +164,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         extensions.push(Box::new(auth));
     }
 
-    let (mut mux, fut) = if opts.wisp_v1 {
+    let (mux, fut) = if opts.wisp_v1 {
         ClientMux::new(rx, tx, None).await?
     } else {
         ClientMux::new(rx, tx, Some(extensions.as_slice())).await?
@@ -212,7 +212,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let start_time = Instant::now();
     for _ in 0..opts.streams {
-        let (mut cr, mut cw) = mux
+        let (cr, cw) = mux
             .client_new_stream(StreamType::Tcp, addr_dest.clone(), addr_dest_port)
             .await?
             .into_split();

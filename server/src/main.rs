@@ -253,7 +253,7 @@ async fn accept_http(
     }
 }
 
-async fn handle_mux(packet: ConnectPacket, mut stream: MuxStream) -> Result<bool, WispError> {
+async fn handle_mux(packet: ConnectPacket, stream: MuxStream) -> Result<bool, WispError> {
     let uri = format!(
         "{}:{}",
         packet.destination_hostname, packet.destination_port
@@ -318,8 +318,8 @@ async fn accept_ws(
     println!("{:?}: connected", addr);
     // to prevent memory ""leaks"" because users are sending in packets way too fast the buffer
     // size is set to 128
-    let (mut mux, fut) = if mux_options.enforce_auth {
-        let (mut mux, fut) = ServerMux::new(rx, tx, 128, Some(mux_options.auth.as_slice())).await?;
+    let (mux, fut) = if mux_options.enforce_auth {
+        let (mux, fut) = ServerMux::new(rx, tx, 128, Some(mux_options.auth.as_slice())).await?;
         if !mux
             .supported_extension_ids
             .iter()
@@ -354,7 +354,7 @@ async fn accept_ws(
         }
     });
 
-    while let Some((packet, mut stream)) = mux.server_new_stream().await {
+    while let Some((packet, stream)) = mux.server_new_stream().await {
         tokio::spawn(async move {
             if (mux_options.block_non_http
                 && !(packet.destination_port == 80 || packet.destination_port == 443))
@@ -386,8 +386,8 @@ async fn accept_ws(
                     }
                 }
             }
-            let mut close_err = stream.get_close_handle();
-            let mut close_ok = stream.get_close_handle();
+            let close_err = stream.get_close_handle();
+            let close_ok = stream.get_close_handle();
             let _ = handle_mux(packet, stream)
                 .or_else(|err| async move {
                     let _ = close_err.close(CloseReason::Unexpected).await;
