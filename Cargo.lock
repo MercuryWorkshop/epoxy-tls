@@ -3230,7 +3230,6 @@ dependencies = [
  "flume",
  "futures",
  "futures-timer",
- "futures-util",
  "pin-project-lite",
  "tokio",
 ]

@@ -203,7 +203,11 @@ pub async fn make_mux(
     let (wtx, wrx) =
         WebSocketWrapper::connect(url, vec![]).map_err(|_| WispError::WsImplSocketClosed)?;
     wtx.wait_for_open().await;
-    ClientMux::new(wrx, wtx, Some(&[Box::new(UdpProtocolExtensionBuilder())])).await
+    Ok(
+        ClientMux::create(wrx, wtx, Some(&[Box::new(UdpProtocolExtensionBuilder())]))
+            .await?
+            .with_no_required_extensions(),
+    )
 }
 
 pub fn spawn_mux_fut(
