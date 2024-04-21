@@ -17,7 +17,7 @@ wasm-bindgen = { version = "0.2.91", features = ["enable-interning"] }
 wasm-bindgen-futures = "0.4.39"
 futures-util = "0.3.30"
 js-sys = "0.3.66"
-tokio-rustls = "0.25.0"
+tokio-rustls = { version = "0.26.0", default-features = false, features = ["tls12", "ring"] }
 web-sys = { version = "0.3.66", features = ["Request", "RequestInit", "Headers", "Response", "ResponseInit", "WebSocket", "BinaryType", "MessageEvent"] }
 wasm-streams = "0.4.0"
 tokio-util = { version = "0.7.10", features = ["io"] }
@@ -37,9 +37,13 @@ wasmtimer = "0.2.0"
 async-trait = "0.1.80"
 
 [dependencies.ring]
+# update whenever rustls updates
+version = "0.17.8"
 features = ["wasm32_unknown_unknown_js"]
 
 [dependencies.rustls-pki-types]
+# update whenever rustls updates
+version = "1.4.1"
 features = ["web"]
 
 [dev-dependencies]
