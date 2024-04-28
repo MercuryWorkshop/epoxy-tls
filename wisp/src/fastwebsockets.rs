@@ -30,7 +30,7 @@ impl From<Frame<'_>> for crate::ws::Frame {
         Self {
             finished: frame.fin,
             opcode: frame.opcode.into(),
-            payload: BytesMut::from(frame.payload.deref()).freeze(),
+            payload: BytesMut::from(frame.payload.deref()),
         }
     }
 }
@@ -38,7 +38,7 @@ impl From<Frame<'_>> for crate::ws::Frame {
 impl<'a> From<crate::ws::Frame> for Frame<'a> {
     fn from(frame: crate::ws::Frame) -> Self {
         use crate::ws::OpCode::*;
-        let payload = Payload::Owned(frame.payload.into());
+        let payload = Payload::Bytes(frame.payload);
         match frame.opcode {
             Text => Self::text(payload),
             Binary => Self::binary(payload),

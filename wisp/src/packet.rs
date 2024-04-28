@@ -362,12 +362,12 @@ impl Packet {
         }
     }
 
-    pub(crate) fn raw_encode(packet_type: u8, stream_id: u32, bytes: Bytes) -> Bytes {
+    pub(crate) fn raw_encode(packet_type: u8, stream_id: u32, bytes: Bytes) -> BytesMut {
         let mut encoded = BytesMut::with_capacity(1 + 4 + bytes.len());
         encoded.put_u8(packet_type);
         encoded.put_u32_le(stream_id);
         encoded.extend(bytes);
-        encoded.freeze()
+        encoded
     }
 
     fn parse_packet(packet_type: u8, mut bytes: Bytes) -> Result<Self, WispError> {
@@ -396,7 +396,7 @@ impl Packet {
         if frame.opcode != OpCode::Binary {
             return Err(WispError::WsFrameInvalidType);
         }
-        let mut bytes = frame.payload;
+        let mut bytes = frame.payload.freeze();
         if bytes.remaining() < 1 {
             return Err(WispError::PacketTooSmall);
         }
@@ -420,22 +420,40 @@ impl Packet {
         if frame.opcode != OpCode::Binary {
             return Err(WispError::WsFrameInvalidType);
         }
-        let mut bytes = frame.payload;
+        let mut bytes = frame.payload.freeze();
         if bytes.remaining() < 1 {
             return Err(WispError::PacketTooSmall);
         }
         let packet_type = bytes.get_u8();
-        if let Some(extension) = extensions
-            .iter_mut()
-            .find(|x| x.get_supported_packets().iter().any(|x| *x == packet_type))
-        {
-            extension.handle_packet(bytes, read, write).await?;
-            Ok(None)
-        } else if packet_type == 0x05 {
-            // Server may send a 0x05 in handshake since it's Wisp v2 but we may be Wisp v1 so we need to ignore 0x05
-            Ok(None)
-        } else {
-            Ok(Some(Self::parse_packet(packet_type, bytes)?))
+        match packet_type {
+            0x01 => Ok(Some(Self {
+                stream_id: bytes.get_u32_le(),
+                packet_type: PacketType::Connect(bytes.try_into()?),
+            })),
+            0x02 => Ok(Some(Self {
+                stream_id: bytes.get_u32_le(),
+                packet_type: PacketType::Data(bytes),
+            })),
+            0x03 => Ok(Some(Self {
+                stream_id: bytes.get_u32_le(),
+                packet_type: PacketType::Continue(bytes.try_into()?),
+            })),
+            0x04 => Ok(Some(Self {
+                stream_id: bytes.get_u32_le(),
+                packet_type: PacketType::Close(bytes.try_into()?),
+            })),
+            0x05 => Ok(None),
+            packet_type => {
+                if let Some(extension) = extensions
+                    .iter_mut()
+                    .find(|x| x.get_supported_packets().iter().any(|x| *x == packet_type))
+                {
+                    extension.handle_packet(bytes, read, write).await?;
+                    Ok(None)
+                } else {
+                    Err(WispError::InvalidPacketType)
+                }
+            }
         }
     }
 
@@ -500,7 +518,7 @@ impl TryFrom<Bytes> for Packet {
     }
 }
 
-impl From<Packet> for Bytes {
+impl From<Packet> for BytesMut {
     fn from(packet: Packet) -> Self {
         Packet::raw_encode(
             packet.packet_type.as_u8(),
@@ -519,7 +537,7 @@ impl TryFrom<ws::Frame> for Packet {
         if frame.opcode != ws::OpCode::Binary {
             return Err(Self::Error::WsFrameInvalidType);
         }
-        frame.payload.try_into()
+        frame.payload.freeze().try_into()
     }
 }
 

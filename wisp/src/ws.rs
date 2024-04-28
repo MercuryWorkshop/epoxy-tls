@@ -4,9 +4,11 @@
 //! for other WebSocket implementations.
 //!
 //! [`fastwebsockets`]: https://github.com/MercuryWorkshop/epoxy-tls/blob/multiplexed/wisp/src/fastwebsockets.rs
+use std::sync::Arc;
+
 use crate::WispError;
 use async_trait::async_trait;
-use bytes::Bytes;
+use bytes::BytesMut;
 use futures::lock::Mutex;
 
 /// Opcode of the WebSocket frame.
@@ -32,12 +34,12 @@ pub struct Frame {
     /// Opcode of the WebSocket frame.
     pub opcode: OpCode,
     /// Payload of the WebSocket frame.
-    pub payload: Bytes,
+    pub payload: BytesMut,
 }
 
 impl Frame {
     /// Create a new text frame.
-    pub fn text(payload: Bytes) -> Self {
+    pub fn text(payload: BytesMut) -> Self {
         Self {
             finished: true,
             opcode: OpCode::Text,
@@ -46,7 +48,7 @@ impl Frame {
     }
 
     /// Create a new binary frame.
-    pub fn binary(payload: Bytes) -> Self {
+    pub fn binary(payload: BytesMut) -> Self {
         Self {
             finished: true,
             opcode: OpCode::Binary,
@@ -55,7 +57,7 @@ impl Frame {
     }
 
     /// Create a new close frame.
-    pub fn close(payload: Bytes) -> Self {
+    pub fn close(payload: BytesMut) -> Self {
         Self {
             finished: true,
             opcode: OpCode::Close,
@@ -82,12 +84,13 @@ pub trait WebSocketWrite {
 }
 
 /// Locked WebSocket.
-pub struct LockedWebSocketWrite(Mutex<Box<dyn WebSocketWrite + Send>>);
+#[derive(Clone)]
+pub struct LockedWebSocketWrite(Arc<Mutex<Box<dyn WebSocketWrite + Send>>>);
 
 impl LockedWebSocketWrite {
     /// Create a new locked websocket.
     pub fn new(ws: Box<dyn WebSocketWrite + Send>) -> Self {
-        Self(Mutex::new(ws))
+        Self(Mutex::new(ws).into())
     }
 
     /// Write a frame to the websocket.
@@ -101,7 +104,7 @@ impl LockedWebSocketWrite {
     }
 }
 
-pub(crate) struct AppendingWebSocketRead<R>(pub Vec<Frame>, pub R)
+pub(crate) struct AppendingWebSocketRead<R>(pub Option<Frame>, pub R)
 where
     R: WebSocketRead + Send;
 
@@ -111,7 +114,7 @@ where
     R: WebSocketRead + Send,
 {
     async fn wisp_read_frame(&mut self, tx: &LockedWebSocketWrite) -> Result<Frame, WispError> {
-        if let Some(x) = self.0.pop() {
+        if let Some(x) = self.0.take() {
             return Ok(x);
         }
         return self.1.wisp_read_frame(tx).await;

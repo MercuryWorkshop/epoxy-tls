@@ -225,14 +225,14 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             interval.tick().await;
             let now = cnt_avg.get();
             let stat = format!(
-                "sent &[0; 1024 * {}] cnt: {:?} ({} KiB), +{:?} ({} KiB / 100ms), moving average (10 s): {:?} ({} KiB / 10 s)",
+                "sent &[0; 1024 * {}] cnt: {:?} ({} KiB), +{:?} / 100ms ({} KiB / 1s), moving average (10 s): {:?} / 100ms ({} KiB / 1s)",
                 opts.packet_size,
                 now,
                 now * opts.packet_size,
                 now - last_time,
-                (now - last_time) * opts.packet_size,
+                (now - last_time) * opts.packet_size * 10,
                 avg.get_average(),
-                avg.get_average() * opts.packet_size,
+                avg.get_average() * opts.packet_size * 10,
             );
             if is_term {
                 println!("\x1b[1A\x1b[2K{}\r", stat);

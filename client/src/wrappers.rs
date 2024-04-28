@@ -1,10 +1,9 @@
 use crate::*;
 use std::{
-    pin::Pin,
-    sync::atomic::{AtomicBool, Ordering},
-    task::{Context, Poll},
+    ops::Deref, pin::Pin, sync::atomic::{AtomicBool, Ordering}, task::{Context, Poll}
 };
 
+use bytes::BytesMut;
 use event_listener::Event;
 use futures_util::{FutureExt, Stream};
 use hyper::body::Body;
@@ -207,7 +206,7 @@ impl WebSocketRead for WebSocketReader {
             _ = self.close_event.listen().fuse() => Some(Closed),
         };
         match res.ok_or(WispError::WsImplSocketClosed)? {
-            Message(bin) => Ok(Frame::binary(bin.into())),
+            Message(bin) => Ok(Frame::binary(BytesMut::from(bin.deref()))),
             Error => Err(WebSocketError::Unknown.into()),
             Closed => Err(WispError::WsImplSocketClosed),
         }
