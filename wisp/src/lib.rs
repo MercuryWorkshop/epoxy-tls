@@ -381,7 +381,7 @@ impl MuxInner {
                     }
                     Data(data) => {
                         if let Some(stream) = self.stream_map.get(&packet.stream_id) {
-                            let _ = stream.stream.send_async(data).await;
+                            let _ = stream.stream.try_send(data);
                             if stream.stream_type == StreamType::Tcp {
                                 stream.flow_control.store(
                                     stream

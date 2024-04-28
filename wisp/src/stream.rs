@@ -5,7 +5,7 @@ use crate::{
 };
 
 pub use async_io_stream::IoStream;
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 use event_listener::Event;
 use flume as mpsc;
 use futures::{
@@ -114,7 +114,7 @@ impl MuxStreamWrite {
         }
 
         self.tx
-            .write_frame(Packet::new_data(self.stream_id, data).into())
+            .write_frame(Frame::from(Packet::new_data(self.stream_id, data)))
             .await?;
 
         if self.role == Role::Client && self.stream_type == StreamType::Tcp {
@@ -348,13 +348,11 @@ impl MuxProtocolExtensionStream {
         if self.is_closed.load(Ordering::Acquire) {
             return Err(WispError::StreamAlreadyClosed);
         }
-        self.tx
-            .write_frame(Frame::binary(Packet::raw_encode(
-                packet_type,
-                self.stream_id,
-                data,
-            )))
-            .await
+        let mut encoded = BytesMut::with_capacity(1 + 4 + data.len());
+        encoded.put_u8(packet_type);
+        encoded.put_u32_le(self.stream_id);
+        encoded.extend(data);
+        self.tx.write_frame(Frame::binary(encoded)).await
     }
 }
 
