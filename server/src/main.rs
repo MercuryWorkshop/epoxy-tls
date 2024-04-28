@@ -306,26 +306,33 @@ async fn accept_ws(
     addr: String,
     mux_options: MuxOptions,
 ) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
-    let (rx, tx) = ws.await?.split(tokio::io::split);
+    let mut ws = ws.await?;
+    // to prevent memory ""leaks"" because users are sending in packets way too fast the message
+    // size is set to 1M
+    ws.set_max_message_size(1024 * 1024);
+    let (rx, tx) = ws.split(tokio::io::split);
     let rx = FragmentCollectorRead::new(rx);
 
     println!("{:?}: connected", addr);
     // to prevent memory ""leaks"" because users are sending in packets way too fast the buffer
-    // size is set to 128
+    // size is set to 512 
     let (mux, fut) = if mux_options.enforce_auth {
-        ServerMux::create(rx, tx, 128, Some(mux_options.auth.as_slice()))
+        ServerMux::create(rx, tx, 512, Some(mux_options.auth.as_slice()))
             .await?
-            .with_required_extensions(&[PasswordProtocolExtension::ID]).await?
+            .with_required_extensions(&[PasswordProtocolExtension::ID])
+            .await?
     } else {
         ServerMux::create(
             rx,
             tx,
-            128,
+            512,
             Some(&[Box::new(UdpProtocolExtensionBuilder())]),
         )
         .await?
         .with_no_required_extensions()
     };
+
+    // this results in one stream ""leaking"" a maximum of ~512M
 
     println!(
         "{:?}: downgraded: {} extensions supported: {:?}",
