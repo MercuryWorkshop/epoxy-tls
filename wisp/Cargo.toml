@@ -1,6 +1,6 @@
 [package]
 name = "wisp-mux"
-version = "4.0.0"
+version = "4.0.1"
 license = "LGPL-3.0-only"
 description = "A library for easily creating Wisp servers and clients."
 homepage = "https://github.com/MercuryWorkshop/epoxy-tls/tree/multiplexed/wisp"
@@ -29,3 +29,4 @@ wasm = ["futures-timer/wasm-bindgen"]
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+cargo-args = ["-Zunstable-options", "-Zrustdoc-scrape-examples"]
