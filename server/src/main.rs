@@ -68,6 +68,9 @@ struct Cli {
     /// `user` cannot contain `:`. Whitespace will be trimmed.
     #[arg(long)]
     auth: Option<PathBuf>,
+    /// Use Wisp V1.
+    #[arg(long)]
+    wisp_v1: bool,
 }
 
 #[derive(Clone)]
@@ -77,6 +80,7 @@ struct MuxOptions {
     pub block_non_http: bool,
     pub enforce_auth: bool,
     pub auth: Arc<Vec<Box<(dyn ProtocolExtensionBuilder + Send + Sync)>>>,
+    pub wisp_v1: bool,
 }
 
 #[cfg(not(unix))]
@@ -191,6 +195,7 @@ async fn main() -> Result<(), Error> {
             Box::new(pw_ext),
         ]),
         enforce_auth,
+        wisp_v1: opt.wisp_v1,
     };
 
     println!("listening on `{}` with prefix `{}`", addr, prefix);
@@ -315,8 +320,12 @@ async fn accept_ws(
 
     println!("{:?}: connected", addr);
     // to prevent memory ""leaks"" because users are sending in packets way too fast the buffer
-    // size is set to 512 
-    let (mux, fut) = if mux_options.enforce_auth {
+    // size is set to 512
+    let (mux, fut) = if mux_options.wisp_v1 {
+        ServerMux::create(rx, tx, 512, None)
+            .await?
+            .with_no_required_extensions()
+    } else if mux_options.enforce_auth {
         ServerMux::create(rx, tx, 512, Some(mux_options.auth.as_slice()))
             .await?
             .with_required_extensions(&[PasswordProtocolExtension::ID])
