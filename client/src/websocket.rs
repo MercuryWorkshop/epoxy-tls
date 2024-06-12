@@ -1,206 +1,217 @@
-use crate::*;
+use std::{str::from_utf8, sync::Arc};
 
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{prelude::BASE64_STANDARD, Engine};
+use bytes::Bytes;
 use fastwebsockets::{
     CloseCode, FragmentCollectorRead, Frame, OpCode, Payload, Role, WebSocket, WebSocketWrite,
 };
 use futures_util::lock::Mutex;
-use http_body_util::Full;
-use hyper::{
-    header::{CONNECTION, UPGRADE},
-    upgrade::Upgraded,
-    StatusCode,
+use getrandom::getrandom;
+use http::{
+    header::{
+        CONNECTION, HOST, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE,
+    },
+    Method, Request, Response, StatusCode, Uri,
 };
-use std::str::from_utf8;
+use hyper::{
+    body::Incoming,
+    upgrade::{self, Upgraded},
+};
+use js_sys::{ArrayBuffer, Function, Uint8Array};
 use tokio::io::WriteHalf;
+use wasm_bindgen::{prelude::*, JsError, JsValue};
+use wasm_bindgen_futures::spawn_local;
 
-#[wasm_bindgen(inspectable)]
-pub struct EpxWebSocket {
-    tx: Arc<Mutex<WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>>>,
-    onerror: Function,
-    #[wasm_bindgen(readonly, getter_with_clone)]
-    pub url: String,
-    #[wasm_bindgen(readonly, getter_with_clone)]
-    pub protocols: Vec<String>,
-    #[wasm_bindgen(readonly, getter_with_clone)]
-    pub origin: String,
-}
+use crate::{tokioio::TokioIo, EpoxyClient, EpoxyError, EpoxyHandlers, HttpBody};
 
 #[wasm_bindgen]
-impl EpxWebSocket {
-    #[wasm_bindgen(constructor)]
-    pub fn new() -> Result<EpxWebSocket, JsError> {
-        Err(jerr!("Use EpoxyClient.connect_ws() instead."))
-    }
+pub struct EpoxyWebSocket {
+    tx: Arc<Mutex<WebSocketWrite<WriteHalf<TokioIo<Upgraded>>>>>,
+    onerror: Function,
+}
 
-    // shut up
-    #[allow(clippy::too_many_arguments)]
-    pub async fn connect(
-        tcp: &EpoxyClient,
-        onopen: Function,
-        onclose: Function,
-        onerror: Function,
-        onmessage: Function,
+impl EpoxyWebSocket {
+    pub(crate) async fn connect(
+        client: &EpoxyClient,
+        handlers: EpoxyHandlers,
         url: String,
         protocols: Vec<String>,
-        origin: String,
-    ) -> Result<EpxWebSocket, JsError> {
-        let onerr = onerror.clone();
-        let ret: Result<EpxWebSocket, JsError> = async move {
-            let url = Uri::try_from(url).replace_err("Failed to parse URL")?;
-            let host = url.host().replace_err("URL must have a host")?;
+    ) -> Result<Self, EpoxyError> {
+        let EpoxyHandlers {
+            onopen,
+            onclose,
+            onerror,
+            onmessage,
+        } = handlers;
+        let onerror_cloned = onerror.clone();
+        let ret: Result<EpoxyWebSocket, EpoxyError> = async move {
+            let url: Uri = url.try_into()?;
+            let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
 
-            let mut rand: [u8; 16] = [0; 16];
-            getrandom::getrandom(&mut rand)?;
-            let key = STANDARD.encode(rand);
+            let mut rand = [0u8; 16];
+            getrandom(&mut rand)?;
+            let key = BASE64_STANDARD.encode(rand);
 
-            let mut builder = Request::builder()
-                .method("GET")
+            let mut request = Request::builder()
+                .method(Method::GET)
                 .uri(url.clone())
-                .header("Host", host)
-                .header("Origin", origin.clone())
-                .header(UPGRADE, "websocket")
+                .header(HOST, host)
                 .header(CONNECTION, "upgrade")
-                .header("Sec-WebSocket-Key", key)
-                .header("Sec-WebSocket-Version", "13");
+                .header(UPGRADE, "websocket")
+                .header(SEC_WEBSOCKET_KEY, key)
+                .header(SEC_WEBSOCKET_VERSION, "13");
 
             if !protocols.is_empty() {
-                builder = builder.header("Sec-WebSocket-Protocol", protocols.join(", "));
+                request = request.header(SEC_WEBSOCKET_PROTOCOL, protocols.join(","));
             }
 
-            let req = builder.body(Full::<Bytes>::new(Bytes::new()))?;
+            let request = request.body(HttpBody::new(Bytes::new()))?;
 
-            let mut response = tcp.hyper_client.request(req).await?;
+            let mut response = client.client.request(request).await?;
             verify(&response)?;
 
-            let ws = WebSocket::after_handshake(
-                TokioIo::new(hyper::upgrade::on(&mut response).await?),
+            let websocket = WebSocket::after_handshake(
+                TokioIo::new(upgrade::on(&mut response).await?),
                 Role::Client,
             );
 
-            let (rx, tx) = ws.split(tokio::io::split);
+            let (rx, tx) = websocket.split(tokio::io::split);
 
             let mut rx = FragmentCollectorRead::new(rx);
             let tx = Arc::new(Mutex::new(tx));
-            let tx_cloned = tx.clone();
 
-            wasm_bindgen_futures::spawn_local(async move {
-                while let Ok(frame) = rx
-                    .read_frame(&mut |arg| async { tx_cloned.lock().await.write_frame(arg).await })
-                    .await
-                {
-                    match frame.opcode {
-                        OpCode::Text => {
-                            if let Ok(str) = from_utf8(&frame.payload) {
-                                let _ = onmessage.call1(&JsValue::null(), &jval!(str));
+            let read_tx = tx.clone();
+            let onerror_cloned = onerror.clone();
+
+            spawn_local(async move {
+                loop {
+                    match rx
+                        .read_frame(&mut |arg| async {
+                            read_tx.lock().await.write_frame(arg).await
+                        })
+                        .await
+                    {
+                        Ok(frame) => match frame.opcode {
+                            OpCode::Text => {
+                                if let Ok(str) = from_utf8(&frame.payload) {
+                                    let _ = onmessage.call1(&JsValue::null(), &str.into());
+                                }
                             }
-                        }
-                        OpCode::Binary => {
-                            let _ = onmessage.call1(
-                                &JsValue::null(),
-                                &jval!(Uint8Array::from(frame.payload.to_vec().as_slice())),
-                            );
-                        }
-                        OpCode::Close => {
-                            let _ = onclose.call0(&JsValue::null());
+                            OpCode::Binary => {
+                                let _ = onmessage.call1(
+                                    &JsValue::null(),
+                                    &Uint8Array::from(frame.payload.to_vec().as_slice()).into(),
+                                );
+                            }
+                            OpCode::Close => {
+                                let _ = onclose.call0(&JsValue::null());
+                                break;
+                            }
+                            // ping/pong/continue
+                            _ => {}
+                        },
+                        Err(err) => {
+                            let _ = onerror.call1(&JsValue::null(), &JsError::from(err).into());
                             break;
                         }
-                        // ping/pong/continue
-                        _ => {}
                     }
                 }
+                let _ = onclose.call0(&JsValue::null());
             });
 
-            onopen
-                .call0(&Object::default())
-                .replace_err("Failed to call onopen")?;
+            let _ = onopen.call0(&JsValue::null());
 
             Ok(Self {
                 tx,
-                onerror,
-                origin,
-                protocols,
-                url: url.to_string(),
+                onerror: onerror_cloned,
             })
         }
         .await;
-        if let Err(ret) = ret {
-            let _ = onerr.call1(&JsValue::null(), &jval!(ret.clone()));
-            Err(ret)
-        } else {
-            ret
+
+        match ret {
+            Ok(ok) => Ok(ok),
+            Err(err) => {
+                let _ = onerror_cloned.call1(&JsValue::null(), &err.to_string().into());
+                Err(err)
+            }
         }
     }
 
-    #[wasm_bindgen]
-    pub async fn send_text(&self, payload: String) -> Result<(), JsError> {
-        let onerr = self.onerror.clone();
+    pub async fn send(&self, payload: JsValue) -> Result<(), EpoxyError> {
+        let ret = if let Some(str) = payload.as_string() {
+            self.tx
+                .lock()
+                .await
+                .write_frame(Frame::text(Payload::Owned(str.as_bytes().to_vec())))
+                .await
+                .map_err(EpoxyError::from)
+        } else if let Ok(binary) = payload.dyn_into::<ArrayBuffer>() {
+            self.tx
+                .lock()
+                .await
+                .write_frame(Frame::binary(Payload::Owned(
+                    Uint8Array::new(&binary).to_vec(),
+                )))
+                .await
+                .map_err(EpoxyError::from)
+        } else {
+            Err(EpoxyError::WsInvalidPayload)
+        };
+
+        match ret {
+            Ok(ok) => Ok(ok),
+            Err(err) => {
+                let _ = self
+                    .onerror
+                    .call1(&JsValue::null(), &err.to_string().into());
+                Err(err)
+            }
+        }
+    }
+
+    pub async fn close(&self) -> Result<(), EpoxyError> {
         let ret = self
             .tx
-            .lock()
-            .await
-            .write_frame(Frame::text(Payload::Owned(payload.as_bytes().to_vec())))
-            .await;
-        if let Err(ret) = ret {
-            let _ = onerr.call1(&JsValue::null(), &jval!(ret.to_string()));
-            Err(ret.into())
-        } else {
-            Ok(ret?)
-        }
-    }
-
-    #[wasm_bindgen]
-    pub async fn send_binary(&self, payload: Uint8Array) -> Result<(), JsError> {
-        let onerr = self.onerror.clone();
-        let ret = self
-            .tx
-            .lock()
-            .await
-            .write_frame(Frame::binary(Payload::Owned(payload.to_vec())))
-            .await;
-        if let Err(ret) = ret {
-            let _ = onerr.call1(&JsValue::null(), &jval!(ret.to_string()));
-            Err(ret.into())
-        } else {
-            Ok(ret?)
-        }
-    }
-
-    #[wasm_bindgen]
-    pub async fn close(&self) -> Result<(), JsError> {
-        self.tx
             .lock()
             .await
             .write_frame(Frame::close(CloseCode::Normal.into(), b""))
-            .await?;
-        Ok(())
+            .await;
+        match ret {
+            Ok(ok) => Ok(ok),
+            Err(err) => {
+                let _ = self
+                    .onerror
+                    .call1(&JsValue::null(), &err.to_string().into());
+                Err(err.into())
+            }
+        }
     }
 }
 
 // https://github.com/snapview/tungstenite-rs/blob/314feea3055a93e585882fb769854a912a7e6dae/src/handshake/client.rs#L189
-fn verify(response: &Response<Incoming>) -> Result<(), JsError> {
+fn verify(response: &Response<Incoming>) -> Result<(), EpoxyError> {
     if response.status() != StatusCode::SWITCHING_PROTOCOLS {
-        return Err(jerr!("epoxy ws connect: Invalid status code"));
+        return Err(EpoxyError::WsInvalidStatusCode);
     }
 
     let headers = response.headers();
 
     if !headers
-        .get("Upgrade")
+        .get(UPGRADE)
         .and_then(|h| h.to_str().ok())
         .map(|h| h.eq_ignore_ascii_case("websocket"))
         .unwrap_or(false)
     {
-        return Err(jerr!("epoxy ws connect: Invalid upgrade header"));
+        return Err(EpoxyError::WsInvalidUpgradeHeader);
     }
 
     if !headers
-        .get("Connection")
+        .get(CONNECTION)
         .and_then(|h| h.to_str().ok())
         .map(|h| h.eq_ignore_ascii_case("Upgrade"))
         .unwrap_or(false)
     {
-        return Err(jerr!("epoxy ws connect: Invalid upgrade header"));
+        return Err(EpoxyError::WsInvalidConnectionHeader);
     }
 
     Ok(())

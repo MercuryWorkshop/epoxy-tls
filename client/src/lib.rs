@@ -1,185 +1,333 @@
 #![feature(let_chains, impl_trait_in_assoc_type)]
-#[macro_use]
-mod utils;
-mod tls_stream;
-mod tokioio;
-mod udp_stream;
-mod websocket;
-mod wrappers;
+use std::{str::FromStr, sync::Arc};
 
-use tls_stream::EpxTlsStream;
-use tokioio::TokioIo;
-use udp_stream::EpxUdpStream;
-use utils::object_to_trustanchor;
-pub use utils::{Boolinator, ReplaceErr, UriExt};
-use websocket::EpxWebSocket;
-use wrappers::{IncomingBody, ServiceWrapper, TlsWispService, WebSocketWrapper};
-
-use std::sync::Arc;
-
-use async_compression::tokio::bufread as async_comp;
-use async_io_stream::IoStream;
+use async_compression::futures::bufread as async_comp;
 use bytes::Bytes;
-use futures_util::StreamExt;
-use http::{uri, HeaderName, HeaderValue, Request, Response};
+use futures_util::{future::Either, TryStreamExt};
+use http::{
+    header::{InvalidHeaderName, InvalidHeaderValue},
+    method::InvalidMethod,
+    uri::{InvalidUri, InvalidUriParts},
+    HeaderName, HeaderValue, Method, Request, Response,
+};
 use hyper::{body::Incoming, Uri};
 use hyper_util_wasm::client::legacy::Client;
-use js_sys::{Array, Function, Object, Reflect, Uint8Array};
-use rustls::pki_types::TrustAnchor;
-use tokio::sync::RwLock;
-use tokio_rustls::{client::TlsStream, rustls, rustls::RootCertStore, TlsConnector};
-use tokio_util::{
-    either::Either,
-    io::{ReaderStream, StreamReader},
+use io_stream::{EpoxyIoStream, EpoxyUdpStream};
+use js_sys::{Array, Function, Object, Reflect};
+use stream_provider::{StreamProvider, StreamProviderService};
+use thiserror::Error;
+use utils::{
+    convert_body, entries_of_object, is_null_body, is_redirect, object_get, object_set,
+    IncomingBody, UriExt, WasmExecutor,
 };
-use wasm_bindgen::{intern, prelude::*};
-use wisp_mux::{ClientMux, MuxStreamIo, StreamType};
+use wasm_bindgen::prelude::*;
+use wasm_streams::ReadableStream;
+use web_sys::ResponseInit;
+use websocket::EpoxyWebSocket;
+use wisp_mux::StreamType;
+
+mod io_stream;
+mod stream_provider;
+mod tokioio;
+mod utils;
+mod websocket;
+mod ws_wrapper;
 
 type HttpBody = http_body_util::Full<Bytes>;
 
+#[derive(Debug, Error)]
+pub enum EpoxyError {
+    #[error(transparent)]
+    InvalidDnsName(#[from] futures_rustls::rustls::pki_types::InvalidDnsNameError),
+    #[error(transparent)]
+    Wisp(#[from] wisp_mux::WispError),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Http(#[from] http::Error),
+    #[error(transparent)]
+    HyperClient(#[from] hyper_util_wasm::client::legacy::Error),
+    #[error(transparent)]
+    Hyper(#[from] hyper::Error),
+    #[error(transparent)]
+    ToStr(#[from] http::header::ToStrError),
+    #[error(transparent)]
+    GetRandom(#[from] getrandom::Error),
+    #[error(transparent)]
+    FastWebSockets(#[from] fastwebsockets::WebSocketError),
+
+    #[error("Invalid URL scheme")]
+    InvalidUrlScheme,
+    #[error("No URL host found")]
+    NoUrlHost,
+    #[error("No URL port found")]
+    NoUrlPort,
+    #[error("Invalid request body")]
+    InvalidRequestBody,
+    #[error("Invalid request")]
+    InvalidRequest,
+    #[error("Invalid websocket response status code")]
+    WsInvalidStatusCode,
+    #[error("Invalid websocket upgrade header")]
+    WsInvalidUpgradeHeader,
+    #[error("Invalid websocket connection header")]
+    WsInvalidConnectionHeader,
+    #[error("Invalid websocket payload")]
+    WsInvalidPayload,
+    #[error("Invalid payload")]
+    InvalidPayload,
+
+    #[error("Invalid certificate store")]
+    InvalidCertStore,
+    #[error("WebSocket failed to connect")]
+    WebSocketConnectFailed,
+
+    #[error("Failed to construct response headers object")]
+    ResponseHeadersFromEntriesFailed,
+    #[error("Failed to construct response object")]
+    ResponseNewFailed,
+    #[error("Failed to construct define_property object")]
+    DefinePropertyObjFailed,
+    #[error("Failed to set raw header item")]
+    RawHeaderSetFailed,
+}
+
+impl From<EpoxyError> for JsValue {
+    fn from(value: EpoxyError) -> Self {
+        JsError::from(value).into()
+    }
+}
+
+impl From<InvalidUri> for EpoxyError {
+    fn from(value: InvalidUri) -> Self {
+        http::Error::from(value).into()
+    }
+}
+
+impl From<InvalidUriParts> for EpoxyError {
+    fn from(value: InvalidUriParts) -> Self {
+        http::Error::from(value).into()
+    }
+}
+
+impl From<InvalidHeaderName> for EpoxyError {
+    fn from(value: InvalidHeaderName) -> Self {
+        http::Error::from(value).into()
+    }
+}
+
+impl From<InvalidHeaderValue> for EpoxyError {
+    fn from(value: InvalidHeaderValue) -> Self {
+        http::Error::from(value).into()
+    }
+}
+
+impl From<InvalidMethod> for EpoxyError {
+    fn from(value: InvalidMethod) -> Self {
+        http::Error::from(value).into()
+    }
+}
+
 #[derive(Debug)]
-enum EpxResponse {
+enum EpoxyResponse {
     Success(Response<Incoming>),
     Redirect((Response<Incoming>, http::Request<HttpBody>)),
 }
 
-enum EpxCompression {
+enum EpoxyCompression {
     Brotli,
     Gzip,
 }
 
-type EpxIoUnencryptedStream = IoStream<MuxStreamIo, Vec<u8>>;
-type EpxIoTlsStream = TlsStream<EpxIoUnencryptedStream>;
-type EpxIoStream = Either<EpxIoTlsStream, EpxIoUnencryptedStream>;
-
-#[wasm_bindgen(start)]
-fn init() {
-    console_error_panic_hook::set_once();
-    // utils.rs
-    intern("value");
-    intern("writable");
-    intern("POST");
-
-    // main.rs
-    intern("method");
-    intern("redirect");
-    intern("body");
-    intern("headers");
-    intern("url");
-    intern("redirected");
-    intern("rawHeaders");
-    intern("Content-Type");
+#[wasm_bindgen]
+pub struct EpoxyClientOptions {
+    pub wisp_v2: bool,
+    pub udp_extension_required: bool,
+    #[wasm_bindgen(getter_with_clone)]
+    pub websocket_protocols: Vec<String>,
+    pub redirect_limit: usize,
+    #[wasm_bindgen(getter_with_clone)]
+    pub user_agent: String,
 }
 
-#[wasm_bindgen(inspectable)]
+#[wasm_bindgen]
+impl EpoxyClientOptions {
+    #[wasm_bindgen(constructor)]
+    pub fn new_default() -> Self {
+        Self::default()
+    }
+}
+
+impl Default for EpoxyClientOptions {
+    fn default() -> Self {
+        Self {
+            wisp_v2: true,
+            udp_extension_required: true,
+            websocket_protocols: Vec::new(),
+            redirect_limit: 10,
+            user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36".to_string(),
+        }
+    }
+}
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct EpoxyHandlers {
+    pub onopen: Function,
+    pub onclose: Function,
+    pub onerror: Function,
+    pub onmessage: Function,
+}
+
+#[wasm_bindgen]
+impl EpoxyHandlers {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        onopen: Function,
+        onclose: Function,
+        onerror: Function,
+        onmessage: Function,
+    ) -> Self {
+        Self {
+            onopen,
+            onclose,
+            onerror,
+            onmessage,
+        }
+    }
+}
+
+#[wasm_bindgen]
 pub struct EpoxyClient {
-    rustls_config: Arc<rustls::ClientConfig>,
-    mux: Arc<RwLock<ClientMux>>,
-    hyper_client: Client<TlsWispService, HttpBody>,
-    #[wasm_bindgen(getter_with_clone)]
-    pub useragent: String,
-    #[wasm_bindgen(js_name = "redirectLimit")]
-    pub redirect_limit: usize,
+    stream_provider: Arc<StreamProvider>,
+    client: Client<StreamProviderService, HttpBody>,
+
+    redirect_limit: usize,
+    user_agent: String,
 }
 
 #[wasm_bindgen]
 impl EpoxyClient {
     #[wasm_bindgen(constructor)]
-    pub async fn new(
-        ws_url: String,
-        useragent: String,
-        redirect_limit: usize,
+    pub fn new(
+        wisp_url: String,
         certs: Array,
-    ) -> Result<EpoxyClient, JsError> {
-        let ws_uri = ws_url
-            .parse::<uri::Uri>()
-            .replace_err("Failed to parse websocket url")?;
-
-        let ws_uri_scheme = ws_uri
-            .scheme_str()
-            .replace_err("Websocket URL must have a scheme")?;
-        if ws_uri_scheme != "ws" && ws_uri_scheme != "wss" {
-            return Err(JsError::new("Scheme must be either `ws` or `wss`"));
+        options: EpoxyClientOptions,
+    ) -> Result<EpoxyClient, EpoxyError> {
+        let wisp_url: Uri = wisp_url.try_into()?;
+        if wisp_url.scheme_str() != Some("wss") && wisp_url.scheme_str() != Some("ws") {
+            return Err(EpoxyError::InvalidUrlScheme);
         }
 
-        let (mux, fut) = utils::make_mux(&ws_url).await?;
-        let mux = Arc::new(RwLock::new(mux));
-        utils::spawn_mux_fut(mux.clone(), fut, ws_url.clone());
+        let stream_provider = Arc::new(StreamProvider::new(wisp_url.to_string(), certs, &options)?);
 
-        let mut certstore = RootCertStore::empty();
-        let certs: Result<Vec<TrustAnchor>, JsValue> =
-            certs.iter().map(object_to_trustanchor).collect();
-        certstore.extend(
-            certs
-                .replace_err("Failed to get certificates from cert store")?
-                .into_iter(),
-        );
+        let service = StreamProviderService(stream_provider.clone());
+        let client = Client::builder(WasmExecutor)
+            .http09_responses(true)
+            .http1_title_case_headers(true)
+            .http1_preserve_header_case(true)
+            .build(service);
 
-        let rustls_config = Arc::new(
-            rustls::ClientConfig::builder()
-                .with_root_certificates(certstore)
-                .with_no_client_auth(),
-        );
-
-        Ok(EpoxyClient {
-            mux: mux.clone(),
-            hyper_client: Client::builder(utils::WasmExecutor {})
-                .http09_responses(true)
-                .http1_title_case_headers(true)
-                .http1_preserve_header_case(true)
-                .build(TlsWispService {
-                    rustls_config: rustls_config.clone(),
-                    service: ServiceWrapper(mux, ws_url),
-                }),
-            rustls_config,
-            useragent,
-            redirect_limit,
+        Ok(Self {
+            stream_provider,
+            client,
+            redirect_limit: options.redirect_limit,
+            user_agent: options.user_agent,
         })
     }
 
-    async fn get_tls_io(&self, url_host: &str, url_port: u16) -> Result<EpxIoTlsStream, JsError> {
-        let channel = self
-            .mux
-            .write()
+    pub async fn connect_websocket(
+        &self,
+        handlers: EpoxyHandlers,
+        url: String,
+        protocols: Vec<String>,
+    ) -> Result<EpoxyWebSocket, EpoxyError> {
+        EpoxyWebSocket::connect(self, handlers, url, protocols).await
+    }
+
+    pub async fn connect_tcp(
+        &self,
+        handlers: EpoxyHandlers,
+        url: String,
+    ) -> Result<EpoxyIoStream, EpoxyError> {
+        let url: Uri = url.try_into()?;
+        let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
+        let port = url.port_u16().ok_or(EpoxyError::NoUrlPort)?;
+        match self
+            .stream_provider
+            .get_asyncread(StreamType::Tcp, host.to_string(), port)
             .await
-            .client_new_stream(StreamType::Tcp, url_host.to_string(), url_port)
+        {
+            Ok(stream) => Ok(EpoxyIoStream::connect(Either::Right(stream), handlers)),
+            Err(err) => {
+                let _ = handlers
+                    .onerror
+                    .call1(&JsValue::null(), &err.to_string().into());
+                Err(err)
+            }
+        }
+    }
+
+    pub async fn connect_tls(
+        &self,
+        handlers: EpoxyHandlers,
+        url: String,
+    ) -> Result<EpoxyIoStream, EpoxyError> {
+        let url: Uri = url.try_into()?;
+        let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
+        let port = url.port_u16().ok_or(EpoxyError::NoUrlPort)?;
+        match self
+            .stream_provider
+            .get_tls_stream(host.to_string(), port)
             .await
-            .replace_err("Failed to create multiplexor channel")?
-            .into_io()
-            .into_asyncrw();
-        let connector = TlsConnector::from(self.rustls_config.clone());
-        let io = connector
-            .connect(
-                url_host
-                    .to_string()
-                    .try_into()
-                    .replace_err("Failed to parse URL (rustls)")?,
-                channel,
-            )
+        {
+            Ok(stream) => Ok(EpoxyIoStream::connect(Either::Left(stream), handlers)),
+            Err(err) => {
+                let _ = handlers
+                    .onerror
+                    .call1(&JsValue::null(), &err.to_string().into());
+                Err(err)
+            }
+        }
+    }
+
+    pub async fn connect_udp(
+        &self,
+        handlers: EpoxyHandlers,
+        url: String,
+    ) -> Result<EpoxyUdpStream, EpoxyError> {
+        let url: Uri = url.try_into()?;
+        let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
+        let port = url.port_u16().ok_or(EpoxyError::NoUrlPort)?;
+        match self
+            .stream_provider
+            .get_stream(StreamType::Udp, host.to_string(), port)
             .await
-            .replace_err("Failed to perform TLS handshake")?;
-        Ok(io)
+        {
+            Ok(stream) => Ok(EpoxyUdpStream::connect(stream, handlers)),
+            Err(err) => {
+                let _ = handlers
+                    .onerror
+                    .call1(&JsValue::null(), &err.to_string().into());
+                Err(err)
+            }
+        }
     }
 
     async fn send_req_inner(
         &self,
         req: http::Request<HttpBody>,
         should_redirect: bool,
-    ) -> Result<EpxResponse, JsError> {
+    ) -> Result<EpoxyResponse, EpoxyError> {
         let new_req = if should_redirect {
             Some(req.clone())
         } else {
             None
         };
 
-        let res = self
-            .hyper_client
-            .request(req)
-            .await
-            .replace_err("Failed to send request");
+        let res = self.client.request(req).await;
         match res {
             Ok(res) => {
-                if utils::is_redirect(res.status().as_u16())
+                if is_redirect(res.status().as_u16())
                     && let Some(mut new_req) = new_req
                     && let Some(location) = res.headers().get("Location")
                     && let Ok(redirect_url) = new_req.uri().get_redirect(location)
@@ -190,12 +338,12 @@ impl EpoxyClient {
                         "Host",
                         HeaderValue::from_str(redirect_url_authority.as_str())?,
                     );
-                    Ok(EpxResponse::Redirect((res, new_req)))
+                    Ok(EpoxyResponse::Redirect((res, new_req)))
                 } else {
-                    Ok(EpxResponse::Success(res))
+                    Ok(EpoxyResponse::Success(res))
                 }
             }
-            Err(err) => Err(err),
+            Err(err) => Err(err.into()),
         }
     }
 
@@ -203,14 +351,14 @@ impl EpoxyClient {
         &self,
         req: http::Request<HttpBody>,
         should_redirect: bool,
-    ) -> Result<(hyper::Response<Incoming>, Uri, bool), JsError> {
+    ) -> Result<(hyper::Response<Incoming>, Uri, bool), EpoxyError> {
         let mut redirected = false;
         let mut current_url = req.uri().clone();
-        let mut current_resp: EpxResponse = self.send_req_inner(req, should_redirect).await?;
+        let mut current_resp: EpoxyResponse = self.send_req_inner(req, should_redirect).await?;
         for _ in 0..self.redirect_limit {
             match current_resp {
-                EpxResponse::Success(_) => break,
-                EpxResponse::Redirect((_, req)) => {
+                EpoxyResponse::Success(_) => break,
+                EpoxyResponse::Redirect((_, req)) => {
                     redirected = true;
                     current_url = req.uri().clone();
                     current_resp = self.send_req_inner(req, should_redirect).await?
@@ -219,109 +367,75 @@ impl EpoxyClient {
         }
 
         match current_resp {
-            EpxResponse::Success(resp) => Ok((resp, current_url, redirected)),
-            EpxResponse::Redirect((resp, _)) => Ok((resp, current_url, redirected)),
+            EpoxyResponse::Success(resp) => Ok((resp, current_url, redirected)),
+            EpoxyResponse::Redirect((resp, _)) => Ok((resp, current_url, redirected)),
         }
     }
 
-    // shut up
-    #[allow(clippy::too_many_arguments)]
-    pub async fn connect_ws(
+    pub async fn fetch(
         &self,
-        onopen: Function,
-        onclose: Function,
-        onerror: Function,
-        onmessage: Function,
         url: String,
-        protocols: Vec<String>,
-        origin: String,
-    ) -> Result<EpxWebSocket, JsError> {
-        EpxWebSocket::connect(
-            self, onopen, onclose, onerror, onmessage, url, protocols, origin,
-        )
-        .await
-    }
+        options: Object,
+    ) -> Result<web_sys::Response, EpoxyError> {
+        let url: Uri = url.try_into()?;
+        // only valid `Scheme`s are HTTP and HTTPS, which are the ones we support
+        url.scheme().ok_or(EpoxyError::InvalidUrlScheme)?;
 
-    pub async fn connect_tls(
-        &self,
-        onopen: Function,
-        onclose: Function,
-        onerror: Function,
-        onmessage: Function,
-        url: String,
-    ) -> Result<EpxTlsStream, JsError> {
-        EpxTlsStream::connect(self, onopen, onclose, onerror, onmessage, url).await
-    }
+        let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
 
-    pub async fn connect_udp(
-        &self,
-        onopen: Function,
-        onclose: Function,
-        onerror: Function,
-        onmessage: Function,
-        url: String,
-    ) -> Result<EpxUdpStream, JsError> {
-        EpxUdpStream::connect(self, onopen, onclose, onerror, onmessage, url).await
-    }
+        let request_method = object_get(&options, "method")
+            .and_then(|x| x.as_string())
+            .unwrap_or_else(|| "GET".to_string());
+        let request_method: Method = Method::from_str(&request_method)?;
 
-    pub async fn fetch(&self, url: String, options: Object) -> Result<web_sys::Response, JsError> {
-        let uri = url.parse::<uri::Uri>().replace_err("Failed to parse URL")?;
-        let uri_scheme = uri.scheme().replace_err("URL must have a scheme")?;
-        if *uri_scheme != uri::Scheme::HTTP && *uri_scheme != uri::Scheme::HTTPS {
-            return Err(jerr!("Scheme must be either `http` or `https`"));
-        }
-        let uri_host = uri.host().replace_err("URL must have a host")?;
-
-        let req_method_string: String = match Reflect::get(&options, &jval!("method")) {
-            Ok(val) => val.as_string().unwrap_or("GET".to_string()),
-            Err(_) => "GET".to_string(),
-        };
-        let req_method: http::Method = http::Method::try_from(req_method_string.as_str())
-            .replace_err("Invalid http method")?;
-
-        let req_should_redirect = match Reflect::get(&options, &jval!("redirect")) {
-            Ok(val) => !matches!(
-                val.as_string().unwrap_or_default().as_str(),
-                "error" | "manual"
-            ),
-            Err(_) => true,
-        };
+        let request_redirect = object_get(&options, "redirect")
+            .map(|x| {
+                !matches!(
+                    x.as_string().unwrap_or_default().as_str(),
+                    "error" | "manual"
+                )
+            })
+            .unwrap_or(true);
 
         let mut body_content_type: Option<String> = None;
-        let body_jsvalue: Option<JsValue> = Reflect::get(&options, &jval!("body")).ok();
-        let body_bytes: Bytes = match body_jsvalue {
+        let body = match object_get(&options, "body") {
             Some(buf) => {
-                let (body, req) = utils::jval_to_u8_array_req(buf)
+                let (body, req) = convert_body(buf)
                     .await
-                    .replace_err("Invalid body")?;
+                    .map_err(|_| EpoxyError::InvalidRequestBody)?;
                 body_content_type = req.headers().get("Content-Type").ok().flatten();
                 Bytes::from(body.to_vec())
             }
             None => Bytes::new(),
         };
 
-        let headers = Reflect::get(&options, &jval!("headers"))
-            .map(|val| {
-                if web_sys::Headers::instanceof(&val) {
-                    Some(utils::entries_of_object(&Object::from_entries(&val).ok()?))
-                } else if val.is_truthy() {
-                    Some(utils::entries_of_object(&Object::from(val)))
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(None);
+        let headers = object_get(&options, "headers").and_then(|val| {
+            if web_sys::Headers::instanceof(&val) {
+                Some(entries_of_object(&Object::from_entries(&val).ok()?))
+            } else if val.is_truthy() {
+                Some(entries_of_object(&Object::from(val)))
+            } else {
+                None
+            }
+        });
 
-        let mut builder = Request::builder().uri(uri.clone()).method(req_method);
+        let mut request_builder = Request::builder().uri(url.clone()).method(request_method);
 
-        let headers_map = builder.headers_mut().replace_err("Failed to get headers")?;
-        headers_map.insert("Accept-Encoding", HeaderValue::from_static("gzip, br"));
+        // Generic InvalidRequest because this only returns None if the builder has some error
+        // which we don't know
+        let headers_map = request_builder
+            .headers_mut()
+            .ok_or(EpoxyError::InvalidRequest)?;
+
+        headers_map.insert("Accept-Encoding", HeaderValue::from_static("identity"));
         headers_map.insert("Connection", HeaderValue::from_static("keep-alive"));
-        headers_map.insert("User-Agent", HeaderValue::from_str(&self.useragent)?);
-        headers_map.insert("Host", HeaderValue::from_str(uri_host)?);
-        if body_bytes.is_empty() {
+        headers_map.insert("User-Agent", HeaderValue::from_str(&self.user_agent)?);
+        headers_map.insert("Host", HeaderValue::from_str(host)?);
+
+        if body.is_empty() {
             headers_map.insert("Content-Length", HeaderValue::from_static("0"));
         }
+
         if let Some(content_type) = body_content_type {
             headers_map.insert("Content-Type", HeaderValue::from_str(&content_type)?);
         }
@@ -329,122 +443,107 @@ impl EpoxyClient {
         if let Some(headers) = headers {
             for hdr in headers {
                 headers_map.insert(
-                    HeaderName::from_bytes(hdr[0].as_bytes())
-                        .replace_err("Failed to get hdr name")?,
-                    HeaderValue::from_bytes(hdr[1].as_bytes())
-                        .replace_err("Failed to get hdr value")?,
+                    HeaderName::from_str(&hdr[0])?,
+                    HeaderValue::from_str(&hdr[1])?,
                 );
             }
         }
 
-        let request = builder
-            .body(HttpBody::new(body_bytes))
-            .replace_err("Failed to make request")?;
+        let (response, response_uri, redirected) = self
+            .send_req(request_builder.body(HttpBody::new(body))?, request_redirect)
+            .await?;
 
-        let (resp, resp_uri, req_redirected) = self.send_req(request, req_should_redirect).await?;
-
-        let resp_headers_raw = resp.headers().clone();
-
-        let resp_headers_jsarray = resp
+        let response_headers: Array = response
             .headers()
             .iter()
             .filter_map(|val| {
                 Some(Array::of2(
-                    &jval!(val.0.as_str()),
-                    &jval!(val.1.to_str().ok()?),
+                    &val.0.as_str().into(),
+                    &val.1.to_str().ok()?.into(),
                 ))
             })
-            .collect::<Array>();
+            .collect();
+        let response_headers = Object::from_entries(&response_headers)
+            .map_err(|_| EpoxyError::ResponseHeadersFromEntriesFailed)?;
 
-        let resp_headers = Object::from_entries(&resp_headers_jsarray)
-            .replace_err("Failed to create response headers object")?;
+        let response_headers_raw = response.headers().clone();
 
-        let mut respinit = web_sys::ResponseInit::new();
-        respinit
-            .headers(&resp_headers)
-            .status(resp.status().as_u16())
-            .status_text(resp.status().canonical_reason().unwrap_or_default());
+        let mut response_builder = ResponseInit::new();
+        response_builder
+            .headers(&response_headers)
+            .status(response.status().as_u16())
+            .status_text(response.status().canonical_reason().unwrap_or_default());
 
-        let stream = if !utils::is_null_body(resp.status().as_u16()) {
-            let compression = match resp
+        let response_stream = if !is_null_body(response.status().as_u16()) {
+            let compression = match response
                 .headers()
                 .get("Content-Encoding")
                 .and_then(|val| val.to_str().ok())
                 .unwrap_or_default()
             {
-                "gzip" => Some(EpxCompression::Gzip),
-                "br" => Some(EpxCompression::Brotli),
+                "gzip" => Some(EpoxyCompression::Gzip),
+                "br" => Some(EpoxyCompression::Brotli),
                 _ => None,
             };
 
-            let incoming_body = IncomingBody::new(resp.into_body());
-
+            let response_body = IncomingBody::new(response.into_body()).into_async_read();
             let decompressed_body = match compression {
                 Some(alg) => match alg {
-                    EpxCompression::Gzip => Either::Left(Either::Left(ReaderStream::new(
-                        async_comp::GzipDecoder::new(StreamReader::new(incoming_body)),
-                    ))),
-                    EpxCompression::Brotli => Either::Left(Either::Right(ReaderStream::new(
-                        async_comp::BrotliDecoder::new(StreamReader::new(incoming_body)),
-                    ))),
+                    EpoxyCompression::Gzip => {
+                        Either::Left(Either::Left(async_comp::GzipDecoder::new(response_body)))
+                    }
+                    EpoxyCompression::Brotli => {
+                        Either::Left(Either::Right(async_comp::BrotliDecoder::new(response_body)))
+                    }
                 },
-                None => Either::Right(incoming_body),
+                None => Either::Right(response_body),
             };
-            Some(
-                wasm_streams::ReadableStream::from_stream(decompressed_body.map(|x| {
-                    Ok(Uint8Array::from(
-                        x.replace_err_jv("Failed to get frame from response")?
-                            .as_ref(),
-                    )
-                    .into())
-                }))
-                .into_raw(),
-            )
+            Some(ReadableStream::from_async_read(decompressed_body, 1024).into_raw())
         } else {
             None
         };
 
-        let resp =
-            web_sys::Response::new_with_opt_readable_stream_and_init(stream.as_ref(), &respinit)
-                .replace_err("Failed to make response")?;
+        let resp = web_sys::Response::new_with_opt_readable_stream_and_init(
+            response_stream.as_ref(),
+            &response_builder,
+        )
+        .map_err(|_| EpoxyError::ResponseNewFailed)?;
 
         Object::define_property(
             &resp,
-            &jval!("url"),
-            &utils::define_property_obj(jval!(resp_uri.to_string()), false)
-                .replace_err("Failed to make define_property object for url")?,
+            &"url".into(),
+            &utils::define_property_obj(response_uri.to_string().into(), false)
+                .map_err(|_| EpoxyError::DefinePropertyObjFailed)?,
         );
 
         Object::define_property(
             &resp,
-            &jval!("redirected"),
-            &utils::define_property_obj(jval!(req_redirected), false)
-                .replace_err("Failed to make define_property object for redirected")?,
+            &"redirected".into(),
+            &utils::define_property_obj(redirected.into(), false)
+                .map_err(|_| EpoxyError::DefinePropertyObjFailed)?,
         );
 
         let raw_headers = Object::new();
-        for (k, v) in resp_headers_raw.iter() {
-            let k = jval!(k.to_string());
-            let v = jval!(v.to_str()?.to_string());
+        for (k, v) in response_headers_raw.iter() {
+            let k: JsValue = k.to_string().into();
+            let v: JsValue = v.to_str()?.to_string().into();
             if let Ok(jv) = Reflect::get(&raw_headers, &k) {
                 if jv.is_array() {
                     let arr = Array::from(&jv);
-
                     arr.push(&v);
-                    Reflect::set(&raw_headers, &k, &arr).flatten("Failed to set rawHeader")?;
+                    object_set(&raw_headers, &k, &arr)?;
                 } else if jv.is_truthy() {
-                    Reflect::set(&raw_headers, &k, &Array::of2(&jv, &v))
-                        .flatten("Failed to set rawHeader")?;
+                    object_set(&raw_headers, &k, &Array::of2(&jv, &v))?;
                 } else {
-                    Reflect::set(&raw_headers, &k, &v).flatten("Failed to set rawHeader")?;
+                    object_set(&raw_headers, &k, &v)?;
                 }
             }
         }
         Object::define_property(
             &resp,
-            &jval!("rawHeaders"),
-            &utils::define_property_obj(jval!(&raw_headers), false)
-                .replace_err("Failed to make define_property object for rawHeaders")?,
+            &"rawHeaders".into(),
+            &utils::define_property_obj(raw_headers.into(), false)
+                .map_err(|_| EpoxyError::DefinePropertyObjFailed)?,
         );
 
         Ok(resp)

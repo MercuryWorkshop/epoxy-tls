@@ -1,142 +1,23 @@
-use crate::*;
-use std::{
-    ops::Deref, pin::Pin, sync::atomic::{AtomicBool, Ordering}, task::{Context, Poll}
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
 };
 
+use async_trait::async_trait;
 use bytes::BytesMut;
 use event_listener::Event;
-use futures_util::{FutureExt, Stream};
-use hyper::body::Body;
-use js_sys::ArrayBuffer;
-use pin_project_lite::pin_project;
+use flume::Receiver;
+use futures_util::FutureExt;
+use js_sys::{Array, ArrayBuffer, Uint8Array};
 use send_wrapper::SendWrapper;
-use std::future::Future;
-use tokio::sync::mpsc;
+use wasm_bindgen::{closure::Closure, JsCast};
 use web_sys::{BinaryType, MessageEvent, WebSocket};
 use wisp_mux::{
     ws::{Frame, LockedWebSocketWrite, WebSocketRead, WebSocketWrite},
     WispError,
 };
 
-pin_project! {
-    pub struct IncomingBody {
-        #[pin]
-        incoming: hyper::body::Incoming,
-    }
-}
-
-impl IncomingBody {
-    pub fn new(incoming: hyper::body::Incoming) -> IncomingBody {
-        IncomingBody { incoming }
-    }
-}
-
-impl Stream for IncomingBody {
-    type Item = std::io::Result<Bytes>;
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.project();
-        let ret = this.incoming.poll_frame(cx);
-        match ret {
-            Poll::Ready(item) => Poll::<Option<Self::Item>>::Ready(match item {
-                Some(frame) => frame
-                    .map(|x| {
-                        x.into_data()
-                            .map_err(|_| std::io::Error::other("not data frame"))
-                    })
-                    .ok(),
-                None => None,
-            }),
-            Poll::Pending => Poll::<Option<Self::Item>>::Pending,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct ServiceWrapper(pub Arc<RwLock<ClientMux>>, pub String);
-
-impl tower_service::Service<hyper::Uri> for ServiceWrapper {
-    type Response = TokioIo<EpxIoUnencryptedStream>;
-    type Error = WispError;
-    type Future = impl Future<Output = Result<Self::Response, Self::Error>>;
-
-    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: hyper::Uri) -> Self::Future {
-        let mux = self.0.clone();
-        let mux_url = self.1.clone();
-        async move {
-            let stream = mux
-                .write()
-                .await
-                .client_new_stream(
-                    StreamType::Tcp,
-                    req.host().ok_or(WispError::UriHasNoHost)?.to_string(),
-                    req.port().ok_or(WispError::UriHasNoPort)?.into(),
-                )
-                .await;
-            if stream
-                .as_ref()
-                .is_err_and(|e| matches!(e, WispError::WsImplSocketClosed))
-            {
-                utils::replace_mux(mux, &mux_url).await?;
-            }
-            Ok(TokioIo::new(stream?.into_io().into_asyncrw()))
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct TlsWispService {
-    pub service: ServiceWrapper,
-    pub rustls_config: Arc<rustls::ClientConfig>,
-}
-
-impl tower_service::Service<hyper::Uri> for TlsWispService {
-    type Response = TokioIo<EpxIoStream>;
-    type Error = WispError;
-    type Future = Pin<Box<impl Future<Output = Result<Self::Response, Self::Error>>>>;
-
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.service.poll_ready(cx)
-    }
-
-    fn call(&mut self, req: http::Uri) -> Self::Future {
-        let mut service = self.service.clone();
-        let rustls_config = self.rustls_config.clone();
-        Box::pin(async move {
-            let uri_host = req
-                .host()
-                .ok_or(WispError::UriHasNoHost)?
-                .to_string()
-                .clone();
-            let uri_parsed = Uri::builder()
-                .authority(format!(
-                    "{}:{}",
-                    uri_host,
-                    utils::get_url_port(&req).map_err(|_| WispError::UriHasNoPort)?
-                ))
-                .build()
-                .map_err(|x| WispError::Other(Box::new(x)))?;
-            let stream = service.call(uri_parsed).await?.into_inner();
-            if utils::get_is_secure(&req).map_err(|_| WispError::InvalidUri)? {
-                let connector = TlsConnector::from(rustls_config);
-                Ok(TokioIo::new(Either::Left(
-                    connector
-                        .connect(
-                            uri_host.try_into().map_err(|_| WispError::InvalidUri)?,
-                            stream,
-                        )
-                        .await
-                        .map_err(|x| WispError::Other(Box::new(x)))?,
-                )))
-            } else {
-                Ok(TokioIo::new(Either::Right(stream)))
-            }
-        })
-    }
-}
+use crate::EpoxyError;
 
 #[derive(Debug)]
 pub enum WebSocketError {
@@ -189,12 +70,12 @@ pub struct WebSocketWrapper {
 }
 
 pub struct WebSocketReader {
-    read_rx: mpsc::UnboundedReceiver<WebSocketMessage>,
+    read_rx: Receiver<WebSocketMessage>,
     closed: Arc<AtomicBool>,
     close_event: Arc<Event>,
 }
 
-#[async_trait::async_trait]
+#[async_trait]
 impl WebSocketRead for WebSocketReader {
     async fn wisp_read_frame(&mut self, _: &LockedWebSocketWrite) -> Result<Frame, WispError> {
         use WebSocketMessage::*;
@@ -202,11 +83,11 @@ impl WebSocketRead for WebSocketReader {
             return Err(WispError::WsImplSocketClosed);
         }
         let res = futures_util::select! {
-            data = self.read_rx.recv().fuse() => data,
+            data = self.read_rx.recv_async() => data.ok(),
             _ = self.close_event.listen().fuse() => Some(Closed),
         };
         match res.ok_or(WispError::WsImplSocketClosed)? {
-            Message(bin) => Ok(Frame::binary(BytesMut::from(bin.deref()))),
+            Message(bin) => Ok(Frame::binary(BytesMut::from(bin.as_slice()))),
             Error => Err(WebSocketError::Unknown.into()),
             Closed => Err(WispError::WsImplSocketClosed),
         }
@@ -214,8 +95,8 @@ impl WebSocketRead for WebSocketReader {
 }
 
 impl WebSocketWrapper {
-    pub fn connect(url: &str, protocols: Vec<String>) -> Result<(Self, WebSocketReader), JsValue> {
-        let (read_tx, read_rx) = mpsc::unbounded_channel();
+    pub fn connect(url: &str, protocols: &[String]) -> Result<(Self, WebSocketReader), EpoxyError> {
+        let (read_tx, read_rx) = flume::unbounded();
         let closed = Arc::new(AtomicBool::new(false));
 
         let open_event = Arc::new(Event::new());
@@ -261,13 +142,13 @@ impl WebSocketWrapper {
                 &protocols
                     .iter()
                     .fold(Array::new(), |acc, x| {
-                        acc.push(&jval!(x));
+                        acc.push(&x.into());
                         acc
                     })
                     .into(),
             )
         }
-        .replace_err("Failed to make websocket")?;
+        .map_err(|_| EpoxyError::WebSocketConnectFailed)?;
         ws.set_binary_type(BinaryType::Arraybuffer);
         ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
         ws.set_onopen(Some(onopen.as_ref().unchecked_ref()));
@@ -294,15 +175,18 @@ impl WebSocketWrapper {
         ))
     }
 
-    pub async fn wait_for_open(&self) {
+    pub async fn wait_for_open(&self) -> bool {
+        if self.closed.load(Ordering::Acquire) {
+            return false;
+        }
         futures_util::select! {
-            _ = self.open_event.listen().fuse() => (),
-            _ = self.error_event.listen().fuse() => (),
+            _ = self.open_event.listen().fuse() => true,
+            _ = self.error_event.listen().fuse() => false,
         }
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait]
 impl WebSocketWrite for WebSocketWrapper {
     async fn wisp_write_frame(&mut self, frame: Frame) -> Result<(), WispError> {
         use wisp_mux::ws::OpCode::*;

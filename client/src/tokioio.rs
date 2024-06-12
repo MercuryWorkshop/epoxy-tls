@@ -167,9 +167,3 @@ where
         hyper::rt::Write::poll_write_vectored(self.project().inner, cx, bufs)
     }
 }
-
-impl<T> hyper_util_wasm::client::legacy::connect::Connection for TokioIo<T> {
-    fn connected(&self) -> hyper_util_wasm::client::legacy::connect::Connected {
-        hyper_util_wasm::client::legacy::connect::Connected::new()
-    }
-}
