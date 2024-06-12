@@ -4,7 +4,11 @@ use futures_rustls::{
     rustls::{ClientConfig, RootCertStore},
     TlsConnector, TlsStream,
 };
-use futures_util::{future::Either, lock::Mutex, AsyncRead, AsyncWrite, Future};
+use futures_util::{
+    future::Either,
+    lock::{Mutex, MutexGuard},
+    AsyncRead, AsyncWrite, Future,
+};
 use hyper_util_wasm::client::legacy::connect::{Connected, Connection};
 use js_sys::{Array, Reflect, Uint8Array};
 use pin_project_lite::pin_project;
@@ -14,7 +18,7 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::spawn_local;
 use wisp_mux::{
     extensions::{udp::UdpProtocolExtensionBuilder, ProtocolExtensionBuilder},
-    ClientMux, IoStream, MuxStreamIo, StreamType, WispError,
+    ClientMux, IoStream, MuxStreamIo, StreamType,
 };
 
 use crate::{ws_wrapper::WebSocketWrapper, EpoxyClientOptions, EpoxyError};
@@ -75,7 +79,10 @@ impl StreamProvider {
         })
     }
 
-    async fn create_client(&self) -> Result<(), EpoxyError> {
+    async fn create_client(
+        &self,
+        mut locked: MutexGuard<'_, Option<ClientMux>>,
+    ) -> Result<(), EpoxyError> {
         let extensions_vec: Vec<Box<dyn ProtocolExtensionBuilder + Send + Sync>> =
             vec![Box::new(UdpProtocolExtensionBuilder())];
         let extensions = if self.wisp_v2 {
@@ -93,13 +100,17 @@ impl StreamProvider {
         } else {
             client.with_no_required_extensions()
         };
-        self.current_client.lock().await.replace(mux);
+        locked.replace(mux);
         let current_client = self.current_client.clone();
         spawn_local(async move {
             fut.await;
             current_client.lock().await.take();
         });
         Ok(())
+    }
+
+    pub async fn replace_client(&self) -> Result<(), EpoxyError> {
+        self.create_client(self.current_client.lock().await).await
     }
 
     pub async fn get_stream(
@@ -109,13 +120,14 @@ impl StreamProvider {
         port: u16,
     ) -> Result<ProviderUnencryptedStream, EpoxyError> {
         Box::pin(async {
-            if let Some(mux) = self.current_client.lock().await.as_ref() {
+            let locked = self.current_client.lock().await;
+            if let Some(mux) = locked.as_ref() {
                 Ok(mux
                     .client_new_stream(stream_type, host, port)
                     .await?
                     .into_io())
             } else {
-                self.create_client().await?;
+                self.create_client(locked).await?;
                 self.get_stream(stream_type, host, port).await
             }
         })
@@ -231,12 +243,16 @@ impl Service<hyper::Uri> for StreamProviderService {
         let provider = self.0.clone();
         Box::pin(async move {
             let scheme = req.scheme_str().ok_or(EpoxyError::InvalidUrlScheme)?;
-            let host = req.host().ok_or(WispError::UriHasNoHost)?.to_string();
-            let port = req.port_u16().ok_or(WispError::UriHasNoPort)?;
+            let host = req.host().ok_or(EpoxyError::NoUrlHost)?.to_string();
+            let port = req.port_u16().map(Ok).unwrap_or_else(|| match scheme {
+                "https" | "wss" => Ok(443),
+                "http" | "ws" => Ok(80),
+                _ => Err(EpoxyError::NoUrlPort),
+            })?;
             Ok(HyperIo {
                 inner: match scheme {
-                    "https" => Either::Left(provider.get_tls_stream(host, port).await?),
-                    "http" => {
+                    "https" | "wss" => Either::Left(provider.get_tls_stream(host, port).await?),
+                    "http" | "ws" => {
                         Either::Right(provider.get_asyncread(StreamType::Tcp, host, port).await?)
                     }
                     _ => return Err(EpoxyError::InvalidUrlScheme),

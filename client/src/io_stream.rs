@@ -1,4 +1,4 @@
-use bytes::{BufMut, BytesMut};
+use bytes::{buf::UninitSlice, BufMut, BytesMut};
 use futures_util::{
     io::WriteHalf, lock::Mutex, stream::SplitSink, AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt,
 };
@@ -18,6 +18,7 @@ pub struct EpoxyIoStream {
     onerror: Function,
 }
 
+#[wasm_bindgen]
 impl EpoxyIoStream {
     pub(crate) fn connect(stream: ProviderAsyncRW, handlers: EpoxyHandlers) -> Self {
         let (mut rx, tx) = stream.split();
@@ -32,16 +33,23 @@ impl EpoxyIoStream {
 
         let onerror_cloned = onerror.clone();
 
-        // similar to tokio::io::ReaderStream
+        // similar to tokio_util::io::ReaderStream
         spawn_local(async move {
             let mut buf = BytesMut::with_capacity(4096);
             loop {
-                match rx.read(buf.as_mut()).await {
+                match rx
+                    .read(unsafe {
+                        std::mem::transmute::<&mut UninitSlice, &mut [u8]>(buf.chunk_mut())
+                    })
+                    .await
+                {
                     Ok(cnt) => {
-                        unsafe { buf.advance_mut(cnt) };
+                        if cnt > 0 {
+                            unsafe { buf.advance_mut(cnt) };
 
-                        let _ = onmessage
-                            .call1(&JsValue::null(), &Uint8Array::from(buf.split().as_ref()));
+                            let _ = onmessage
+                                .call1(&JsValue::null(), &Uint8Array::from(buf.split().as_ref()));
+                        }
                     }
                     Err(err) => {
                         let _ = onerror.call1(&JsValue::null(), &JsError::from(err).into());
@@ -101,6 +109,7 @@ pub struct EpoxyUdpStream {
     onerror: Function,
 }
 
+#[wasm_bindgen]
 impl EpoxyUdpStream {
     pub(crate) fn connect(stream: ProviderUnencryptedStream, handlers: EpoxyHandlers) -> Self {
         let (tx, mut rx) = stream.split();

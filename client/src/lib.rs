@@ -37,23 +37,23 @@ type HttpBody = http_body_util::Full<Bytes>;
 
 #[derive(Debug, Error)]
 pub enum EpoxyError {
-    #[error(transparent)]
+    #[error("Invalid DNS name: {0:?}")]
     InvalidDnsName(#[from] futures_rustls::rustls::pki_types::InvalidDnsNameError),
-    #[error(transparent)]
+    #[error("Wisp: {0:?}")]
     Wisp(#[from] wisp_mux::WispError),
-    #[error(transparent)]
+    #[error("IO: {0:?}")]
     Io(#[from] std::io::Error),
-    #[error(transparent)]
+    #[error("HTTP: {0:?}")]
     Http(#[from] http::Error),
-    #[error(transparent)]
+    #[error("Hyper client: {0:?}")]
     HyperClient(#[from] hyper_util_wasm::client::legacy::Error),
-    #[error(transparent)]
+    #[error("Hyper: {0:?}")]
     Hyper(#[from] hyper::Error),
-    #[error(transparent)]
+    #[error("HTTP ToStr: {0:?}")]
     ToStr(#[from] http::header::ToStrError),
-    #[error(transparent)]
+    #[error("Getrandom: {0:?}")]
     GetRandom(#[from] getrandom::Error),
-    #[error(transparent)]
+    #[error("Fastwebsockets: {0:?}")]
     FastWebSockets(#[from] fastwebsockets::WebSocketError),
 
     #[error("Invalid URL scheme")]
@@ -196,13 +196,14 @@ impl EpoxyHandlers {
     }
 }
 
-#[wasm_bindgen]
+#[wasm_bindgen(inspectable)]
 pub struct EpoxyClient {
     stream_provider: Arc<StreamProvider>,
     client: Client<StreamProviderService, HttpBody>,
 
-    redirect_limit: usize,
-    user_agent: String,
+    pub redirect_limit: usize,
+    #[wasm_bindgen(getter_with_clone)]
+    pub user_agent: String,
 }
 
 #[wasm_bindgen]
@@ -233,6 +234,10 @@ impl EpoxyClient {
             redirect_limit: options.redirect_limit,
             user_agent: options.user_agent,
         })
+    }
+
+    pub async fn replace_stream_provider(&self) -> Result<(), EpoxyError> {
+        self.stream_provider.replace_client().await
     }
 
     pub async fn connect_websocket(

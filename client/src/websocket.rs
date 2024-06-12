@@ -30,6 +30,7 @@ pub struct EpoxyWebSocket {
     onerror: Function,
 }
 
+#[wasm_bindgen]
 impl EpoxyWebSocket {
     pub(crate) async fn connect(
         client: &EpoxyClient,
