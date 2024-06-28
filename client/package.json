@@ -1,6 +1,6 @@
 {
   "name": "@mercuryworkshop/epoxy-tls",
-  "version": "2.0.0-2",
+  "version": "2.0.0-3",
   "description": "A wasm library for using raw encrypted tls/ssl/https/websocket streams on the browser",
   "scripts": {
     "build": "./build.sh"
@@ -19,6 +19,10 @@
     "url": "git+https://github.com/MercuryWorkshop/epoxy-tls.git"
   },
   "license": "LGPL-3.0-only",
+  "exports": {
+    ".": "./pkg/epoxy-module-bundled.js",
+    "./certs": "./pkg/certs-module.js"
+  },
   "browser": "./pkg/epoxy-module-bundled.js",
   "module": "./pkg/epoxy-module-bundled.js",
   "main": "./pkg/epoxy-module-bundled.js",
