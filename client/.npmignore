@@ -4,3 +4,4 @@ serve.py
 src
 tests
 test.sh
+.cargo

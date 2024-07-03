@@ -2,5 +2,7 @@
 **/*.pem
 client/pkg
 client/out
+client/full
+client/minimal
 .direnv
 pnpm-lock.yaml

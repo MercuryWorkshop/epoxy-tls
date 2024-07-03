@@ -1,22 +1,23 @@
 [package]
 name = "epoxy-client"
-version = "2.0.2"
+version = "2.0.3"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-async-compression = { version = "0.4.11", features = ["futures-io", "gzip", "brotli"] }
+async-compression = { version = "0.4.11", features = ["futures-io", "gzip", "brotli"], optional = true }
 async-trait = "0.1.80"
-base64 = "0.22.1"
+base64 = { version = "0.22.1", optional = true }
 bytes = "1.6.0"
+cfg-if = "1.0.0"
 event-listener = "5.3.1"
-fastwebsockets = { version = "0.7.2", features = ["unstable-split"] }
+fastwebsockets = { version = "0.7.2", features = ["unstable-split"], optional = true }
 flume = "0.11.0"
 futures-rustls = { version = "0.26.0", default-features = false, features = ["tls12", "ring"] }
 futures-util = { version = "0.3.30", features = ["sink"] }
-getrandom = { version = "0.2.15", features = ["js"] }
+getrandom = { version = "0.2.15", features = ["js", "std"], optional = true }
 http = "1.1.0"
 http-body-util = "0.1.2"
 hyper = "1.3.1"
@@ -42,3 +43,7 @@ features = ["wasm32_unknown_unknown_js"]
 # update whenever rustls updates
 version = "1.4.1"
 features = ["web"]
+
+[features]
+default = ["full"]
+full = ["fastwebsockets", "base64", "async-compression", "getrandom"]

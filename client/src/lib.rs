@@ -1,9 +1,13 @@
 #![feature(let_chains, impl_trait_in_assoc_type)]
 use std::{str::FromStr, sync::Arc};
 
+#[cfg(feature = "full")]
 use async_compression::futures::bufread as async_comp;
 use bytes::Bytes;
-use futures_util::{future::Either, TryStreamExt};
+use cfg_if::cfg_if;
+use futures_util::TryStreamExt;
+#[cfg(feature = "full")]
+use futures_util::future::Either;
 use http::{
     header::{InvalidHeaderName, InvalidHeaderValue},
     method::InvalidMethod,
@@ -12,6 +16,7 @@ use http::{
 };
 use hyper::{body::Incoming, Uri};
 use hyper_util_wasm::client::legacy::Client;
+#[cfg(feature = "full")]
 use io_stream::{EpoxyIoStream, EpoxyUdpStream};
 use js_sys::{Array, Function, Object, Reflect};
 use stream_provider::{StreamProvider, StreamProviderService};
@@ -23,13 +28,17 @@ use utils::{
 use wasm_bindgen::prelude::*;
 use wasm_streams::ReadableStream;
 use web_sys::ResponseInit;
+#[cfg(feature = "full")]
 use websocket::EpoxyWebSocket;
+#[cfg(feature = "full")]
 use wisp_mux::StreamType;
 
+#[cfg(feature = "full")]
 mod io_stream;
 mod stream_provider;
 mod tokioio;
 mod utils;
+#[cfg(feature = "full")]
 mod websocket;
 mod ws_wrapper;
 
@@ -51,8 +60,10 @@ pub enum EpoxyError {
     Hyper(#[from] hyper::Error),
     #[error("HTTP ToStr: {0:?}")]
     ToStr(#[from] http::header::ToStrError),
+    #[cfg(feature = "full")]
     #[error("Getrandom: {0:?}")]
     GetRandom(#[from] getrandom::Error),
+    #[cfg(feature = "full")]
     #[error("Fastwebsockets: {0:?}")]
     FastWebSockets(#[from] fastwebsockets::WebSocketError),
 
@@ -134,6 +145,7 @@ enum EpoxyResponse {
     Redirect((Response<Incoming>, http::Request<HttpBody>)),
 }
 
+#[cfg(feature = "full")]
 enum EpoxyCompression {
     Brotli,
     Gzip,
@@ -178,6 +190,7 @@ pub struct EpoxyHandlers {
     pub onmessage: Function,
 }
 
+#[cfg(feature = "full")]
 #[wasm_bindgen]
 impl EpoxyHandlers {
     #[wasm_bindgen(constructor)]
@@ -240,16 +253,18 @@ impl EpoxyClient {
         self.stream_provider.replace_client().await
     }
 
+    #[cfg(feature = "full")]
     pub async fn connect_websocket(
         &self,
         handlers: EpoxyHandlers,
         url: String,
         protocols: Vec<String>,
-		headers: JsValue,
+        headers: JsValue,
     ) -> Result<EpoxyWebSocket, EpoxyError> {
         EpoxyWebSocket::connect(self, handlers, url, protocols, headers, &self.user_agent).await
     }
 
+    #[cfg(feature = "full")]
     pub async fn connect_tcp(
         &self,
         handlers: EpoxyHandlers,
@@ -273,6 +288,7 @@ impl EpoxyClient {
         }
     }
 
+    #[cfg(feature = "full")]
     pub async fn connect_tls(
         &self,
         handlers: EpoxyHandlers,
@@ -296,6 +312,7 @@ impl EpoxyClient {
         }
     }
 
+    #[cfg(feature = "full")]
     pub async fn connect_udp(
         &self,
         handlers: EpoxyHandlers,
@@ -433,7 +450,13 @@ impl EpoxyClient {
             .headers_mut()
             .ok_or(EpoxyError::InvalidRequest)?;
 
-        headers_map.insert("Accept-Encoding", HeaderValue::from_static("identity"));
+		cfg_if! {
+			if #[cfg(feature = "full")] {
+				headers_map.insert("Accept-Encoding", HeaderValue::from_static("gzip, br"));
+			} else {
+				headers_map.insert("Accept-Encoding", HeaderValue::from_static("identity"));
+			}
+		}
         headers_map.insert("Connection", HeaderValue::from_static("keep-alive"));
         headers_map.insert("User-Agent", HeaderValue::from_str(&self.user_agent)?);
         headers_map.insert("Host", HeaderValue::from_str(host)?);
@@ -480,34 +503,45 @@ impl EpoxyClient {
             .status(response.status().as_u16())
             .status_text(response.status().canonical_reason().unwrap_or_default());
 
-        let response_stream = if !is_null_body(response.status().as_u16()) {
-            let compression = match response
-                .headers()
-                .get("Content-Encoding")
-                .and_then(|val| val.to_str().ok())
-                .unwrap_or_default()
-            {
-                "gzip" => Some(EpoxyCompression::Gzip),
-                "br" => Some(EpoxyCompression::Brotli),
-                _ => None,
-            };
+        cfg_if! {
+            if #[cfg(feature = "full")] {
+				let response_stream = if !is_null_body(response.status().as_u16()) {
+					let compression = match response
+						.headers()
+						.get("Content-Encoding")
+						.and_then(|val| val.to_str().ok())
+						.unwrap_or_default()
+					{
+						"gzip" => Some(EpoxyCompression::Gzip),
+						"br" => Some(EpoxyCompression::Brotli),
+						_ => None,
+					};
 
-            let response_body = IncomingBody::new(response.into_body()).into_async_read();
-            let decompressed_body = match compression {
-                Some(alg) => match alg {
-                    EpoxyCompression::Gzip => {
-                        Either::Left(Either::Left(async_comp::GzipDecoder::new(response_body)))
-                    }
-                    EpoxyCompression::Brotli => {
-                        Either::Left(Either::Right(async_comp::BrotliDecoder::new(response_body)))
-                    }
-                },
-                None => Either::Right(response_body),
-            };
-            Some(ReadableStream::from_async_read(decompressed_body, 1024).into_raw())
-        } else {
-            None
-        };
+					let response_body = IncomingBody::new(response.into_body()).into_async_read();
+					let decompressed_body = match compression {
+						Some(alg) => match alg {
+							EpoxyCompression::Gzip => {
+								Either::Left(Either::Left(async_comp::GzipDecoder::new(response_body)))
+							}
+							EpoxyCompression::Brotli => {
+								Either::Left(Either::Right(async_comp::BrotliDecoder::new(response_body)))
+							}
+						},
+						None => Either::Right(response_body),
+					};
+					Some(ReadableStream::from_async_read(decompressed_body, 1024).into_raw())
+				} else {
+					None
+				};
+            } else {
+                let response_stream = if !is_null_body(response.status().as_u16()) {
+                    let response_body = IncomingBody::new(response.into_body()).into_async_read();
+                    Some(ReadableStream::from_async_read(response_body, 1024).into_raw())
+                } else {
+                    None
+                };
+            }
+        }
 
         let resp = web_sys::Response::new_with_opt_readable_stream_and_init(
             response_stream.as_ref(),
