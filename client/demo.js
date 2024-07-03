@@ -182,8 +182,9 @@ onmessage = async (msg) => {
 		);
 		let ws = await epoxy_client.connect_websocket(
 			handlers,
-			"wss://echo.websocket.events",
+			"ws://localhost:5000",
 			[],
+			{ "x-header": "abc" },
 		);
 		while (true) {
 			log("sending `data`");

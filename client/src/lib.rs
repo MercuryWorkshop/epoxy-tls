@@ -245,8 +245,9 @@ impl EpoxyClient {
         handlers: EpoxyHandlers,
         url: String,
         protocols: Vec<String>,
+		headers: JsValue,
     ) -> Result<EpoxyWebSocket, EpoxyError> {
-        EpoxyWebSocket::connect(self, handlers, url, protocols).await
+        EpoxyWebSocket::connect(self, handlers, url, protocols, headers).await
     }
 
     pub async fn connect_tcp(

@@ -3,7 +3,7 @@ use std::{str::from_utf8, sync::Arc};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use bytes::Bytes;
 use fastwebsockets::{
-    CloseCode, FragmentCollectorRead, Frame, OpCode, Payload, Role, WebSocket, WebSocketWrite,
+    FragmentCollectorRead, Frame, OpCode, Payload, Role, WebSocket, WebSocketWrite,
 };
 use futures_util::lock::Mutex;
 use getrandom::getrandom;
@@ -17,12 +17,12 @@ use hyper::{
     body::Incoming,
     upgrade::{self, Upgraded},
 };
-use js_sys::{ArrayBuffer, Function, Uint8Array};
+use js_sys::{ArrayBuffer, Function, Object, Uint8Array};
 use tokio::io::WriteHalf;
 use wasm_bindgen::{prelude::*, JsError, JsValue};
 use wasm_bindgen_futures::spawn_local;
 
-use crate::{tokioio::TokioIo, EpoxyClient, EpoxyError, EpoxyHandlers, HttpBody};
+use crate::{tokioio::TokioIo, utils::entries_of_object, EpoxyClient, EpoxyError, EpoxyHandlers, HttpBody};
 
 #[wasm_bindgen]
 pub struct EpoxyWebSocket {
@@ -37,6 +37,7 @@ impl EpoxyWebSocket {
         handlers: EpoxyHandlers,
         url: String,
         protocols: Vec<String>,
+		headers: JsValue,
     ) -> Result<Self, EpoxyError> {
         let EpoxyHandlers {
             onopen,
@@ -65,6 +66,16 @@ impl EpoxyWebSocket {
             if !protocols.is_empty() {
                 request = request.header(SEC_WEBSOCKET_PROTOCOL, protocols.join(","));
             }
+
+			if web_sys::Headers::instanceof(&headers) && let Ok(entries) = Object::from_entries(&headers) {
+				for header in entries_of_object(&entries) {
+					request = request.header(&header[0], &header[1]);
+				}
+			} else if headers.is_truthy() {
+				for header in entries_of_object(&headers.into()) {
+					request = request.header(&header[0], &header[1]);
+				}
+			}
 
             let request = request.body(HttpBody::new(Bytes::new()))?;
 
@@ -170,12 +181,12 @@ impl EpoxyWebSocket {
         }
     }
 
-    pub async fn close(&self) -> Result<(), EpoxyError> {
+    pub async fn close(&self, code: u16, reason: String) -> Result<(), EpoxyError> {
         let ret = self
             .tx
             .lock()
             .await
-            .write_frame(Frame::close(CloseCode::Normal.into(), b""))
+            .write_frame(Frame::close(code, reason.as_bytes()))
             .await;
         match ret {
             Ok(ok) => Ok(ok),
