@@ -9,7 +9,7 @@ use futures_util::lock::Mutex;
 use getrandom::getrandom;
 use http::{
     header::{
-        CONNECTION, HOST, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE,
+        CONNECTION, HOST, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE, USER_AGENT,
     },
     Method, Request, Response, StatusCode, Uri,
 };
@@ -38,6 +38,7 @@ impl EpoxyWebSocket {
         url: String,
         protocols: Vec<String>,
 		headers: JsValue,
+		user_agent: &str,
     ) -> Result<Self, EpoxyError> {
         let EpoxyHandlers {
             onopen,
@@ -61,7 +62,8 @@ impl EpoxyWebSocket {
                 .header(CONNECTION, "upgrade")
                 .header(UPGRADE, "websocket")
                 .header(SEC_WEBSOCKET_KEY, key)
-                .header(SEC_WEBSOCKET_VERSION, "13");
+                .header(SEC_WEBSOCKET_VERSION, "13")
+				.header(USER_AGENT, user_agent);
 
             if !protocols.is_empty() {
                 request = request.header(SEC_WEBSOCKET_PROTOCOL, protocols.join(","));
