@@ -1,4 +1,4 @@
-use bytes::{buf::UninitSlice, BufMut, BytesMut};
+use bytes::{buf::UninitSlice, BufMut, Bytes, BytesMut};
 use futures_util::{
     io::WriteHalf, lock::Mutex, stream::SplitSink, AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt,
 };
@@ -105,7 +105,7 @@ impl EpoxyIoStream {
 
 #[wasm_bindgen]
 pub struct EpoxyUdpStream {
-    tx: Mutex<SplitSink<ProviderUnencryptedStream, Vec<u8>>>,
+    tx: Mutex<SplitSink<ProviderUnencryptedStream, Bytes>>,
     onerror: Function,
 }
 
@@ -154,7 +154,7 @@ impl EpoxyUdpStream {
                 .map_err(|_| EpoxyError::InvalidPayload)?
                 .0
                 .to_vec();
-            Ok(self.tx.lock().await.send(payload).await?)
+            Ok(self.tx.lock().await.send(payload.into()).await?)
         }
         .await;
 

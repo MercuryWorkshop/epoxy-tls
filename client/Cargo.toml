@@ -32,7 +32,7 @@ wasm-bindgen = "0.2.92"
 wasm-bindgen-futures = "0.4.42"
 wasm-streams = "0.4.0"
 web-sys = { version = "0.3.69", features = ["BinaryType", "Headers", "MessageEvent", "Request", "RequestInit", "Response", "ResponseInit", "WebSocket"] }
-wisp-mux = { version = "4.0.1", path = "../wisp", features = ["wasm"] }
+wisp-mux = { path = "../wisp", features = ["wasm"] }
 
 [dependencies.ring]
 # update whenever rustls updates

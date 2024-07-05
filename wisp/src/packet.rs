@@ -240,7 +240,7 @@ impl Encode for InfoPacket {
         bytes.put_u8(self.version.major);
         bytes.put_u8(self.version.minor);
         for extension in self.extensions {
-            bytes.extend(Bytes::from(extension));
+            bytes.extend_from_slice(&Bytes::from(extension));
         }
     }
 }
@@ -290,7 +290,7 @@ impl Encode for PacketType {
         use PacketType as P;
         match self {
             P::Connect(x) => x.encode(bytes),
-            P::Data(x) => bytes.extend(x),
+            P::Data(x) => bytes.extend_from_slice(&x),
             P::Continue(x) => x.encode(bytes),
             P::Close(x) => x.encode(bytes),
             P::Info(x) => x.encode(bytes),

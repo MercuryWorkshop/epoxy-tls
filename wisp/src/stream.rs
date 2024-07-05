@@ -4,15 +4,15 @@ use crate::{
     CloseReason, Packet, Role, StreamType, WispError,
 };
 
-pub use async_io_stream::IoStream;
 use bytes::{BufMut, Bytes, BytesMut};
 use event_listener::Event;
 use flume as mpsc;
 use futures::{
     channel::oneshot,
-    select, stream,
+    select,
+    stream::{self, IntoAsyncRead, SplitSink, SplitStream},
     task::{Context, Poll},
-    FutureExt, Sink, Stream,
+    AsyncBufRead, AsyncRead, AsyncWrite, FutureExt, Sink, Stream, StreamExt, TryStreamExt,
 };
 use pin_project_lite::pin_project;
 use std::{
@@ -21,6 +21,7 @@ use std::{
         atomic::{AtomicBool, AtomicU32, Ordering},
         Arc,
     },
+    task::ready,
 };
 
 pub(crate) enum WsEvent {
@@ -367,26 +368,24 @@ pin_project! {
 }
 
 impl MuxStreamIo {
-    /// Turn the stream into one that implements futures `AsyncRead + AsyncWrite`.
-    ///
-    /// Enable the `tokio_io` feature to implement the tokio version of `AsyncRead` and
-    /// `AsyncWrite`.
-    pub fn into_asyncrw(self) -> IoStream<MuxStreamIo, Vec<u8>> {
-        IoStream::new(self)
+    /// Turn the stream into one that implements futures `AsyncRead + AsyncBufRead + AsyncWrite`.
+    pub fn into_asyncrw(self) -> MuxStreamAsyncRW {
+        let (tx, rx) = self.split();
+        MuxStreamAsyncRW {
+            rx: MuxStreamAsyncRead::new(rx),
+            tx: MuxStreamAsyncWrite::new(tx),
+        }
     }
 }
 
 impl Stream for MuxStreamIo {
-    type Item = Result<Vec<u8>, std::io::Error>;
+    type Item = Result<Bytes, std::io::Error>;
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.project()
-            .rx
-            .poll_next(cx)
-            .map(|x| x.map(|x| Ok(x.to_vec())))
+        self.project().rx.poll_next(cx).map(|x| x.map(Ok))
     }
 }
 
-impl Sink<Vec<u8>> for MuxStreamIo {
+impl Sink<Bytes> for MuxStreamIo {
     type Error = std::io::Error;
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.project()
@@ -394,10 +393,10 @@ impl Sink<Vec<u8>> for MuxStreamIo {
             .poll_ready(cx)
             .map_err(std::io::Error::other)
     }
-    fn start_send(self: Pin<&mut Self>, item: Vec<u8>) -> Result<(), Self::Error> {
+    fn start_send(self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
         self.project()
             .tx
-            .start_send(item.into())
+            .start_send(item)
             .map_err(std::io::Error::other)
     }
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -411,5 +410,150 @@ impl Sink<Vec<u8>> for MuxStreamIo {
             .tx
             .poll_close(cx)
             .map_err(std::io::Error::other)
+    }
+}
+
+pin_project! {
+    /// Multiplexor stream that implements futures `AsyncRead + AsyncBufRead + AsyncWrite`.
+    pub struct MuxStreamAsyncRW {
+        #[pin]
+        rx: MuxStreamAsyncRead,
+        #[pin]
+        tx: MuxStreamAsyncWrite,
+    }
+}
+
+impl MuxStreamAsyncRW {
+    /// Split the stream into read and write parts, consuming it.
+    pub fn into_split(self) -> (MuxStreamAsyncRead, MuxStreamAsyncWrite) {
+        (self.rx, self.tx)
+    }
+}
+
+impl AsyncRead for MuxStreamAsyncRW {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<std::io::Result<usize>> {
+        self.project().rx.poll_read(cx, buf)
+    }
+
+    fn poll_read_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &mut [std::io::IoSliceMut<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        self.project().rx.poll_read_vectored(cx, bufs)
+    }
+}
+
+impl AsyncBufRead for MuxStreamAsyncRW {
+    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<&[u8]>> {
+        self.project().rx.poll_fill_buf(cx)
+    }
+
+    fn consume(self: Pin<&mut Self>, amt: usize) {
+        self.project().rx.consume(amt)
+    }
+}
+
+impl AsyncWrite for MuxStreamAsyncRW {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        self.project().tx.poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        self.project().tx.poll_flush(cx)
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        self.project().tx.poll_close(cx)
+    }
+}
+
+pin_project! {
+    /// Read side of a multiplexor stream that implements futures `AsyncRead + AsyncBufRead`.
+    pub struct MuxStreamAsyncRead {
+        #[pin]
+        rx: IntoAsyncRead<SplitStream<MuxStreamIo>>,
+    }
+}
+
+impl MuxStreamAsyncRead {
+    pub(crate) fn new(stream: SplitStream<MuxStreamIo>) -> Self {
+        Self {
+            rx: stream.into_async_read(),
+        }
+    }
+}
+
+impl AsyncRead for MuxStreamAsyncRead {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<std::io::Result<usize>> {
+        self.project().rx.poll_read(cx, buf)
+    }
+
+    fn poll_read_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &mut [std::io::IoSliceMut<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        self.project().rx.poll_read_vectored(cx, bufs)
+    }
+}
+
+impl AsyncBufRead for MuxStreamAsyncRead {
+    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<&[u8]>> {
+        self.project().rx.poll_fill_buf(cx)
+    }
+
+    fn consume(self: Pin<&mut Self>, amt: usize) {
+        self.project().rx.consume(amt)
+    }
+}
+
+pin_project! {
+    /// Write side of a multiplexor stream that implements futures `AsyncWrite`.
+    pub struct MuxStreamAsyncWrite {
+        #[pin]
+        tx: SplitSink<MuxStreamIo, Bytes>,
+    }
+}
+
+impl MuxStreamAsyncWrite {
+    pub(crate) fn new(sink: SplitSink<MuxStreamIo, Bytes>) -> Self {
+        Self { tx: sink }
+    }
+}
+
+impl AsyncWrite for MuxStreamAsyncWrite {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let mut this = self.project();
+
+        ready!(this.tx.as_mut().poll_ready(cx))?;
+        match this.tx.start_send(Bytes::copy_from_slice(buf)) {
+            Ok(()) => Poll::Ready(Ok(buf.len())),
+            Err(e) => Poll::Ready(Err(e)),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        self.project().tx.poll_flush(cx)
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        self.project().tx.poll_close(cx)
     }
 }

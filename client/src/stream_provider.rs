@@ -17,8 +17,7 @@ use tower_service::Service;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::spawn_local;
 use wisp_mux::{
-    extensions::{udp::UdpProtocolExtensionBuilder, ProtocolExtensionBuilder},
-    ClientMux, IoStream, MuxStreamIo, StreamType,
+    extensions::{udp::UdpProtocolExtensionBuilder, ProtocolExtensionBuilder}, ClientMux, MuxStreamAsyncRW, MuxStreamIo, StreamType
 };
 
 use crate::{ws_wrapper::WebSocketWrapper, EpoxyClientOptions, EpoxyError};
@@ -50,7 +49,7 @@ pub struct StreamProvider {
 }
 
 pub type ProviderUnencryptedStream = MuxStreamIo;
-pub type ProviderUnencryptedAsyncRW = IoStream<ProviderUnencryptedStream, Vec<u8>>;
+pub type ProviderUnencryptedAsyncRW = MuxStreamAsyncRW;
 pub type ProviderTlsAsyncRW = TlsStream<ProviderUnencryptedAsyncRW>;
 pub type ProviderAsyncRW = Either<ProviderTlsAsyncRW, ProviderUnencryptedAsyncRW>;
 

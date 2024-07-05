@@ -9,6 +9,15 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{ws::LockedWebSocketWrite, WispError};
 
+fn match_payload(payload: Payload) -> BytesMut {
+	match payload {
+		Payload::Bytes(x) => x,
+		Payload::Owned(x) => BytesMut::from(x.deref()),
+		Payload::BorrowedMut(x) => BytesMut::from(x.deref()),
+		Payload::Borrowed(x) => BytesMut::from(x),
+	}
+}
+
 impl From<OpCode> for crate::ws::OpCode {
     fn from(opcode: OpCode) -> Self {
         use OpCode::*;
@@ -30,7 +39,7 @@ impl From<Frame<'_>> for crate::ws::Frame {
         Self {
             finished: frame.fin,
             opcode: frame.opcode.into(),
-            payload: BytesMut::from(frame.payload.deref()),
+            payload: match_payload(frame.payload),
         }
     }
 }
