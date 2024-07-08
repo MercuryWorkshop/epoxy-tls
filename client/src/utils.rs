@@ -102,10 +102,10 @@ pub fn object_set(obj: &Object, key: &JsValue, value: &JsValue) -> Result<(), Ep
 }
 
 pub async fn convert_body(val: JsValue) -> Result<(Uint8Array, web_sys::Request), JsValue> {
-    let req = web_sys::Request::new_with_str_and_init(
-        "/",
-        web_sys::RequestInit::new().method("POST").body(Some(&val)),
-    )?;
+    let mut request_init = web_sys::RequestInit::new();
+    request_init.method("POST").body(Some(&val));
+    object_set(&request_init, &"duplex".into(), &"half".into())?;
+    let req = web_sys::Request::new_with_str_and_init("/", &request_init)?;
     Ok((
         JsFuture::from(req.array_buffer()?)
             .await?

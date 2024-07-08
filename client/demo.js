@@ -63,10 +63,20 @@ onmessage = async (msg) => {
 		return t1 - t0;
 	};
 
+	const readableStream = (buffer) => {
+		return new ReadableStream({
+			start(controller) {
+				controller.enqueue(buffer);
+				controller.close();
+			}
+		});
+	};
+
 	if (should_feature_test) {
 		let formdata = new FormData();
 		formdata.append("a", "b");
 		for (const url of [
+			["https://httpbin.org/post", { method: "POST", body: readableStream((new TextEncoder()).encode("abc")) }],
 			["https://httpbin.org/get", {}],
 			["https://httpbin.org/gzip", {}],
 			["https://httpbin.org/brotli", {}],
