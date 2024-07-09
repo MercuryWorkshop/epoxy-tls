@@ -22,8 +22,7 @@ use js_sys::{Array, Function, Object, Reflect};
 use stream_provider::{StreamProvider, StreamProviderService};
 use thiserror::Error;
 use utils::{
-    convert_body, entries_of_object, is_null_body, is_redirect, object_get, object_set,
-    IncomingBody, UriExt, WasmExecutor,
+    asyncread_to_readablestream_stream, convert_body, entries_of_object, is_null_body, is_redirect, object_get, object_set, IncomingBody, UriExt, WasmExecutor
 };
 use wasm_bindgen::prelude::*;
 use wasm_streams::ReadableStream;
@@ -529,14 +528,14 @@ impl EpoxyClient {
 						},
 						None => Either::Right(response_body),
 					};
-					Some(ReadableStream::from_async_read(decompressed_body, 1024).into_raw())
+					Some(ReadableStream::from_stream(asyncread_to_readablestream_stream(decompressed_body)).into_raw())
 				} else {
 					None
 				};
             } else {
                 let response_stream = if !is_null_body(response.status().as_u16()) {
                     let response_body = IncomingBody::new(response.into_body()).into_async_read();
-                    Some(ReadableStream::from_async_read(response_body, 1024).into_raw())
+                    Some(ReadableStream::from_stream(asyncread_to_readablestream_stream(response_body)).into_raw())
                 } else {
                     None
                 };
