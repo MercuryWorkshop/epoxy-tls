@@ -10,7 +10,7 @@ clap = { version = "4.4.18", features = ["derive", "help", "usage", "color", "wr
 clio = { version = "0.3.5", features = ["clap-parse"] }
 console-subscriber = { version = "0.2.0", optional = true }
 dashmap = "5.5.3"
-fastwebsockets = { version = "0.7.1", features = ["upgrade", "simdutf8", "unstable-split"] }
+fastwebsockets = { version = "0.8.0", features = ["upgrade", "simdutf8", "unstable-split"] }
 futures-util = { version = "0.3.30", features = ["sink"] }
 http-body-util = "0.1.0"
 hyper = { version = "1.1.0", features = ["server", "http1"] }

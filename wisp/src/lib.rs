@@ -14,6 +14,7 @@ mod stream;
 pub mod ws;
 
 pub use crate::{packet::*, stream::*};
+pub use async_io_stream::IoStream;
 
 use bytes::Bytes;
 use dashmap::DashMap;

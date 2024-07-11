@@ -17,7 +17,7 @@ use hyper_util::rt::TokioIo;
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 use tokio::{
-    io::{copy, AsyncBufReadExt, AsyncWriteExt},
+    io::{copy, copy_bidirectional, AsyncBufReadExt, AsyncWriteExt},
     net::{lookup_host, TcpListener, TcpStream, UdpSocket},
     select,
 };
@@ -34,7 +34,7 @@ use wisp_mux::{
         udp::UdpProtocolExtensionBuilder,
         ProtocolExtensionBuilder,
     },
-    CloseReason, ConnectPacket, MuxStream, MuxStreamAsyncRW, ServerMux, StreamType, WispError,
+    CloseReason, ConnectPacket, MuxStream, IoStream, ServerMux, StreamType, WispError,
 };
 
 type HttpBody = http_body_util::Full<hyper::body::Bytes>;
@@ -269,6 +269,8 @@ async fn accept_http(
     }
 }
 
+// re-enable once MuxStreamAsyncRW is fixed
+/*
 async fn copy_buf(mux: MuxStreamAsyncRW, tcp: TcpStream) -> std::io::Result<()> {
     let (muxrx, muxtx) = mux.into_split();
     let mut muxrx = muxrx.compat();
@@ -300,6 +302,7 @@ async fn copy_buf(mux: MuxStreamAsyncRW, tcp: TcpStream) -> std::io::Result<()> 
         x = slow_fut => x.map(|_| ()),
     }
 }
+*/
 
 async fn handle_mux(
     packet: ConnectPacket,
@@ -311,9 +314,9 @@ async fn handle_mux(
     );
     match packet.stream_type {
         StreamType::Tcp => {
-            let tcp_stream = TcpStream::connect(uri).await?;
-            let mux = stream.into_io().into_asyncrw();
-            copy_buf(mux, tcp_stream).await?;
+            let mut tcp_stream = TcpStream::connect(uri).await?;
+            let mut mux = stream.into_io().into_asyncrw().compat();
+            copy_bidirectional(&mut mux, &mut tcp_stream).await?;
         }
         StreamType::Udp => {
             let uri = lookup_host(uri)

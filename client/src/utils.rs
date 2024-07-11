@@ -9,10 +9,23 @@ use http::{HeaderValue, Uri};
 use hyper::{body::Body, rt::Executor};
 use js_sys::{Array, ArrayBuffer, Object, Reflect, Uint8Array};
 use pin_project_lite::pin_project;
-use wasm_bindgen::{JsCast, JsValue};
+use wasm_bindgen::{prelude::*, JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 
 use crate::EpoxyError;
+
+#[wasm_bindgen]
+extern "C" {
+	#[wasm_bindgen(js_namespace = console, js_name = log)]
+	pub fn js_console_log(s: &str);
+}
+
+#[macro_export]
+macro_rules! console_log {
+	($($expr:expr),*) => {
+		$crate::utils::js_console_log(&format!($($expr),*));
+	};
+}
 
 pub trait UriExt {
 	fn get_redirect(&self, location: &HeaderValue) -> Result<Uri, EpoxyError>;

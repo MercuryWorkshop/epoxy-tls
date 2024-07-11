@@ -196,9 +196,11 @@ onmessage = async (msg) => {
 			[],
 			{ "x-header": "abc" },
 		);
+		let i = 0;
 		while (true) {
-			log("sending `data`");
-			await ws.send("data");
+			log(`sending \`data${i}\``);
+			await ws.send("data"+i);
+			i++;
 			await (new Promise((res, _) => setTimeout(res, 10)));
 		}
 	} else if (should_tls_test) {

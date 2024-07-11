@@ -10,10 +10,11 @@ edition = "2021"
 
 [dependencies]
 async-trait = "0.1.79"
+async_io_stream = "0.3.3"
 bytes = "1.5.0"
 dashmap = { version = "5.5.3", features = ["inline"] }
 event-listener = "5.0.0"
-fastwebsockets = { version = "0.7.1", features = ["unstable-split"], optional = true }
+fastwebsockets = { version = "0.8.0", features = ["unstable-split"], optional = true }
 flume = "0.11.0"
 futures = "0.3.30"
 futures-timer = "3.0.3"

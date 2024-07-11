@@ -1,6 +1,6 @@
 [package]
 name = "epoxy-client"
-version = "2.0.5"
+version = "2.0.6"
 edition = "2021"
 
 [lib]
@@ -13,7 +13,7 @@ base64 = { version = "0.22.1", optional = true }
 bytes = "1.6.0"
 cfg-if = "1.0.0"
 event-listener = "5.3.1"
-fastwebsockets = { version = "0.7.2", features = ["unstable-split"], optional = true }
+fastwebsockets = { version = "0.8.0", features = ["unstable-split"], optional = true }
 flume = "0.11.0"
 futures-rustls = { version = "0.26.0", default-features = false, features = ["tls12", "ring"] }
 futures-util = { version = "0.3.30", features = ["sink"] }

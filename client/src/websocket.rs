@@ -118,7 +118,6 @@ impl EpoxyWebSocket {
                                 );
                             }
                             OpCode::Close => {
-                                let _ = onclose.call0(&JsValue::null());
                                 break;
                             }
                             // ping/pong/continue
