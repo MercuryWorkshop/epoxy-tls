@@ -1,6 +1,5 @@
 use std::{pin::Pin, sync::Arc, task::Poll};
 
-use bytes::Bytes;
 use futures_rustls::{
 	rustls::{ClientConfig, RootCertStore},
 	TlsConnector, TlsStream,
@@ -17,7 +16,7 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::spawn_local;
 use wisp_mux::{
 	extensions::{udp::UdpProtocolExtensionBuilder, ProtocolExtensionBuilder},
-	ClientMux, IoStream, MuxStreamIo, StreamType,
+	ClientMux, MuxStreamAsyncRW, MuxStreamIo, StreamType,
 };
 
 use crate::{ws_wrapper::WebSocketWrapper, EpoxyClientOptions, EpoxyError};
@@ -49,7 +48,7 @@ pub struct StreamProvider {
 }
 
 pub type ProviderUnencryptedStream = MuxStreamIo;
-pub type ProviderUnencryptedAsyncRW = IoStream<ProviderUnencryptedStream, Bytes>;
+pub type ProviderUnencryptedAsyncRW = MuxStreamAsyncRW;
 pub type ProviderTlsAsyncRW = TlsStream<ProviderUnencryptedAsyncRW>;
 pub type ProviderAsyncRW = Either<ProviderTlsAsyncRW, ProviderUnencryptedAsyncRW>;
 

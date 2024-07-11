@@ -1,4 +1,4 @@
-#![deny(missing_docs, warnings)]
+#![deny(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 //! A library for easily creating [Wisp] clients and servers.
 //!
@@ -14,7 +14,6 @@ mod stream;
 pub mod ws;
 
 pub use crate::{packet::*, stream::*};
-pub use async_io_stream::IoStream;
 
 use bytes::Bytes;
 use dashmap::DashMap;
