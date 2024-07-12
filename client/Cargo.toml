@@ -21,7 +21,7 @@ getrandom = { version = "0.2.15", features = ["js", "std"], optional = true }
 http = "1.1.0"
 http-body-util = "0.1.2"
 hyper = "1.3.1"
-hyper-util-wasm = { version = "0.1.3", features = ["client-legacy", "http1", "http2"] }
+hyper-util-wasm = { version = "0.1.3", features = ["client-legacy", "http1"] }
 js-sys = "0.3.69"
 pin-project-lite = "0.2.14"
 send_wrapper = "0.4.0"
@@ -51,5 +51,5 @@ features = ["nightly"]
 
 [features]
 default = ["full"]
-full = ["fastwebsockets", "base64", "async-compression", "getrandom"]
+full = ["fastwebsockets", "base64", "async-compression", "getrandom", "hyper-util-wasm/http2"]
 
