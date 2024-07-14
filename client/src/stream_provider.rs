@@ -18,7 +18,7 @@ use wisp_mux::{
 	ClientMux, MuxStreamAsyncRW, MuxStreamIo, StreamType,
 };
 
-use crate::{ws_wrapper::WebSocketWrapper, EpoxyClientOptions, EpoxyError};
+use crate::{console_log, ws_wrapper::WebSocketWrapper, EpoxyClientOptions, EpoxyError};
 
 fn object_to_trustanchor(obj: JsValue) -> Result<TrustAnchor<'static>, JsValue> {
 	let subject: Uint8Array = Reflect::get(&obj, &"subject".into())?.dyn_into()?;
@@ -100,7 +100,7 @@ impl StreamProvider {
 		locked.replace(mux);
 		let current_client = self.current_client.clone();
 		spawn_local(async move {
-			fut.await;
+			console_log!("multiplexor future result: {:?}", fut.await);
 			current_client.lock().await.take();
 		});
 		Ok(())
