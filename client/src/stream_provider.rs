@@ -7,11 +7,10 @@ use futures_rustls::{
 use futures_util::{
 	future::Either, lock::{Mutex, MutexGuard}, AsyncRead, AsyncWrite, Future
 };
-use hyper_util_wasm::client::legacy::connect::{Connected, Connection};
+use hyper_util_wasm::client::legacy::connect::{ConnectSvc, Connected, Connection};
 use js_sys::{Array, Reflect, Uint8Array};
 use pin_project_lite::pin_project;
 use rustls_pki_types::{Der, TrustAnchor};
-use tower_service::Service;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::spawn_local;
 use wisp_mux::{
@@ -225,19 +224,12 @@ impl Connection for HyperIo {
 #[derive(Clone)]
 pub struct StreamProviderService(pub Arc<StreamProvider>);
 
-impl Service<hyper::Uri> for StreamProviderService {
-	type Response = HyperIo;
+impl ConnectSvc for StreamProviderService {
+	type Connection = HyperIo;
 	type Error = EpoxyError;
-	type Future = Pin<Box<impl Future<Output = Result<Self::Response, Self::Error>>>>;
+	type Future = Pin<Box<impl Future<Output = Result<Self::Connection, Self::Error>>>>;
 
-	fn poll_ready(
-		&mut self,
-		_: &mut std::task::Context<'_>,
-	) -> std::task::Poll<Result<(), Self::Error>> {
-		Poll::Ready(Ok(()))
-	}
-
-	fn call(&mut self, req: hyper::Uri) -> Self::Future {
+	fn connect(self, req: hyper::Uri) -> Self::Future {
 		let provider = self.0.clone();
 		Box::pin(async move {
 			let scheme = req.scheme_str().ok_or(EpoxyError::InvalidUrlScheme)?;
