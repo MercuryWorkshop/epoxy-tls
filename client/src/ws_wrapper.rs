@@ -194,11 +194,7 @@ impl WebSocketWrite for WebSocketWrapper {
             return Err(WispError::WsImplSocketClosed);
         }
         match frame.opcode {
-            Binary => self
-                .inner
-                .send_with_u8_array(&frame.payload)
-                .map_err(|_| WebSocketError::SendFailed.into()),
-            Text => self
+            Binary | Text => self
                 .inner
                 .send_with_u8_array(&frame.payload)
                 .map_err(|_| WebSocketError::SendFailed.into()),
