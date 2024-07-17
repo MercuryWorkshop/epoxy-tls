@@ -5,7 +5,9 @@ use futures_rustls::{
 	TlsConnector, TlsStream,
 };
 use futures_util::{
-	future::Either, lock::{Mutex, MutexGuard}, AsyncRead, AsyncWrite, Future
+	future::Either,
+	lock::{Mutex, MutexGuard},
+	AsyncRead, AsyncWrite, Future,
 };
 use hyper_util_wasm::client::legacy::connect::{ConnectSvc, Connected, Connection};
 use js_sys::{Array, Reflect, Uint8Array};
@@ -81,7 +83,7 @@ impl StreamProvider {
 		mut locked: MutexGuard<'_, Option<ClientMux>>,
 	) -> Result<(), EpoxyError> {
 		let extensions_vec: Vec<Box<dyn ProtocolExtensionBuilder + Send + Sync>> =
-			vec![Box::new(UdpProtocolExtensionBuilder())];
+			vec![Box::new(UdpProtocolExtensionBuilder)];
 		let extensions = if self.wisp_v2 {
 			Some(extensions_vec.as_slice())
 		} else {

@@ -1,6 +1,6 @@
 use crate::{
 	sink_unfold,
-	ws::{Frame, LockedWebSocketWrite},
+	ws::{Frame, LockedWebSocketWrite, Payload},
 	CloseReason, Packet, Role, StreamType, WispError,
 };
 
@@ -9,9 +9,10 @@ use event_listener::Event;
 use flume as mpsc;
 use futures::{
 	channel::oneshot,
-	ready, select, stream::{self, IntoAsyncRead},
+	ready, select,
+	stream::{self, IntoAsyncRead},
 	task::{noop_waker_ref, Context, Poll},
-	AsyncBufRead, AsyncRead, AsyncWrite, FutureExt, Sink, Stream, TryStreamExt,
+	AsyncBufRead, AsyncRead, AsyncWrite, Future, FutureExt, Sink, Stream, TryStreamExt,
 };
 use pin_project_lite::pin_project;
 use std::{
@@ -23,7 +24,7 @@ use std::{
 };
 
 pub(crate) enum WsEvent {
-	Close(Packet, oneshot::Sender<Result<(), WispError>>),
+	Close(Packet<'static>, oneshot::Sender<Result<(), WispError>>),
 	CreateStream(
 		StreamType,
 		String,
@@ -100,8 +101,10 @@ pub struct MuxStreamWrite {
 }
 
 impl MuxStreamWrite {
-	/// Write data to the stream.
-	pub async fn write(&self, data: Bytes) -> Result<(), WispError> {
+	pub(crate) async fn write_payload_internal(
+		&self,
+		frame: Frame<'static>,
+	) -> Result<(), WispError> {
 		if self.role == Role::Client
 			&& self.stream_type == StreamType::Tcp
 			&& self.flow_control.load(Ordering::Acquire) == 0
@@ -112,9 +115,7 @@ impl MuxStreamWrite {
 			return Err(WispError::StreamAlreadyClosed);
 		}
 
-		self.tx
-			.write_frame(Frame::from(Packet::new_data(self.stream_id, data)))
-			.await?;
+		self.tx.write_frame(frame).await?;
 
 		if self.role == Role::Client && self.stream_type == StreamType::Tcp {
 			self.flow_control.store(
@@ -123,6 +124,20 @@ impl MuxStreamWrite {
 			);
 		}
 		Ok(())
+	}
+
+	/// Write a payload to the stream.
+	pub fn write_payload<'a>(
+		&'a self,
+		data: Payload<'_>,
+	) -> impl Future<Output = Result<(), WispError>> + 'a {
+		let frame: Frame<'static> = Frame::from(Packet::new_data(self.stream_id, data));
+		self.write_payload_internal(frame)
+	}
+
+	/// Write data to the stream.
+	pub async fn write<D: AsRef<[u8]>>(&self, data: D) -> Result<(), WispError> {
+		self.write_payload(Payload::Borrowed(data.as_ref())).await
 	}
 
 	/// Get a handle to close the connection.
@@ -173,16 +188,16 @@ impl MuxStreamWrite {
 		Ok(())
 	}
 
-	pub(crate) fn into_sink(self) -> Pin<Box<dyn Sink<Bytes, Error = WispError> + Send>> {
+	pub(crate) fn into_sink(self) -> Pin<Box<dyn Sink<Frame<'static>, Error = WispError> + Send>> {
 		let handle = self.get_close_handle();
 		Box::pin(sink_unfold::unfold(
 			self,
 			|tx, data| async move {
-				tx.write(data).await?;
+				tx.write_payload_internal(data).await?;
 				Ok(tx)
 			},
 			handle,
-			move |handle| async {
+			|handle| async move {
 				handle.close(CloseReason::Unknown).await?;
 				Ok(handle)
 			},
@@ -258,8 +273,13 @@ impl MuxStream {
 		self.rx.read().await
 	}
 
+	/// Write a payload to the stream.
+	pub async fn write_payload(&self, data: Payload<'_>) -> Result<(), WispError> {
+		self.tx.write_payload(data).await
+	}
+
 	/// Write data to the stream.
-	pub async fn write(&self, data: Bytes) -> Result<(), WispError> {
+	pub async fn write<D: AsRef<[u8]>>(&self, data: D) -> Result<(), WispError> {
 		self.tx.write(data).await
 	}
 
@@ -301,6 +321,7 @@ impl MuxStream {
 			},
 			tx: MuxStreamIoSink {
 				tx: self.tx.into_sink(),
+				stream_id: self.stream_id,
 			},
 		}
 	}
@@ -355,7 +376,9 @@ impl MuxProtocolExtensionStream {
 		encoded.put_u8(packet_type);
 		encoded.put_u32_le(self.stream_id);
 		encoded.extend(data);
-		self.tx.write_frame(Frame::binary(encoded)).await
+		self.tx
+			.write_frame(Frame::binary(Payload::Bytes(encoded)))
+			.await
 	}
 }
 
@@ -391,12 +414,12 @@ impl Stream for MuxStreamIo {
 	}
 }
 
-impl Sink<Bytes> for MuxStreamIo {
+impl Sink<&[u8]> for MuxStreamIo {
 	type Error = std::io::Error;
 	fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
 		self.project().tx.poll_ready(cx)
 	}
-	fn start_send(self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
+	fn start_send(self: Pin<&mut Self>, item: &[u8]) -> Result<(), Self::Error> {
 		self.project().tx.start_send(item)
 	}
 	fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -433,7 +456,8 @@ pin_project! {
 	/// Write side of a multiplexor stream that implements futures `Sink`.
 	pub struct MuxStreamIoSink {
 		#[pin]
-		tx: Pin<Box<dyn Sink<Bytes, Error = WispError> + Send>>,
+		tx: Pin<Box<dyn Sink<Frame<'static>, Error = WispError> + Send>>,
+		stream_id: u32,
 	}
 }
 
@@ -444,7 +468,7 @@ impl MuxStreamIoSink {
 	}
 }
 
-impl Sink<Bytes> for MuxStreamIoSink {
+impl Sink<&[u8]> for MuxStreamIoSink {
 	type Error = std::io::Error;
 	fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
 		self.project()
@@ -452,10 +476,14 @@ impl Sink<Bytes> for MuxStreamIoSink {
 			.poll_ready(cx)
 			.map_err(std::io::Error::other)
 	}
-	fn start_send(self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
+	fn start_send(self: Pin<&mut Self>, item: &[u8]) -> Result<(), Self::Error> {
+		let stream_id = self.stream_id;
 		self.project()
 			.tx
-			.start_send(item)
+			.start_send(Frame::from(Packet::new_data(
+				stream_id,
+				Payload::Borrowed(item),
+			)))
 			.map_err(std::io::Error::other)
 	}
 	fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -564,10 +592,10 @@ impl AsyncRead for MuxStreamAsyncRead {
 }
 impl AsyncBufRead for MuxStreamAsyncRead {
 	fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<&[u8]>> {
-	    self.project().rx.poll_fill_buf(cx)
+		self.project().rx.poll_fill_buf(cx)
 	}
 	fn consume(self: Pin<&mut Self>, amt: usize) {
-	    self.project().rx.consume(amt)
+		self.project().rx.consume(amt)
 	}
 }
 
@@ -582,7 +610,10 @@ pin_project! {
 
 impl MuxStreamAsyncWrite {
 	pub(crate) fn new(sink: MuxStreamIoSink) -> Self {
-		Self { tx: sink, error: None }
+		Self {
+			tx: sink,
+			error: None,
+		}
 	}
 }
 
@@ -599,7 +630,7 @@ impl AsyncWrite for MuxStreamAsyncWrite {
 		let mut this = self.as_mut().project();
 
 		ready!(this.tx.as_mut().poll_ready(cx))?;
-		match this.tx.as_mut().start_send(Bytes::copy_from_slice(buf)) {
+		match this.tx.as_mut().start_send(buf) {
 			Ok(()) => {
 				let mut cx = Context::from_waker(noop_waker_ref());
 				let cx = &mut cx;
