@@ -173,8 +173,8 @@ impl EpoxyClientOptions {
 impl Default for EpoxyClientOptions {
 	fn default() -> Self {
 		Self {
-            wisp_v2: true,
-            udp_extension_required: true,
+            wisp_v2: false,
+            udp_extension_required: false,
             websocket_protocols: Vec::new(),
             redirect_limit: 10,
             user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36".to_string(),

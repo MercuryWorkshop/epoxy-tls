@@ -92,9 +92,9 @@ struct Cli {
 	/// Usernames and passwords are sent in plaintext!!
 	#[arg(long)]
 	auth: Option<String>,
-	/// Make a Wisp V1 connection
+	/// Make a Wisp V2 connection
 	#[arg(long)]
-	wisp_v1: bool,
+	wisp_v2: bool,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -166,7 +166,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 		extension_ids.push(PasswordProtocolExtension::ID);
 	}
 
-	let (mux, fut) = if opts.wisp_v1 {
+	let (mux, fut) = if !opts.wisp_v2 {
 		ClientMux::create(rx, tx, None)
 			.await?
 			.with_no_required_extensions()
@@ -178,7 +178,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 	};
 
 	println!(
-		"connected and created ClientMux, was downgraded {}, extensions supported {:?}",
+		"connected and created ClientMux, was downgraded {}, extensions supported {:?}\n",
 		mux.downgraded, mux.supported_extension_ids
 	);
 
