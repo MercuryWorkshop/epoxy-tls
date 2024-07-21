@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["client", "wisp", "simple-wisp-client", "certs-grabber"]
+members = ["server", "client", "wisp", "simple-wisp-client", "certs-grabber"]
 
 [profile.release]
 lto = true

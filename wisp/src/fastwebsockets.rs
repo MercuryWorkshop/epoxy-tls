@@ -9,7 +9,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{ws::LockedWebSocketWrite, WispError};
 
-fn match_payload<'a>(payload: Payload<'a>) -> crate::ws::Payload<'a> {
+fn match_payload(payload: Payload<'_>) -> crate::ws::Payload<'_> {
 	match payload {
 		Payload::Bytes(x) => crate::ws::Payload::Bytes(x),
 		Payload::Owned(x) => crate::ws::Payload::Bytes(BytesMut::from(x.deref())),
@@ -18,7 +18,7 @@ fn match_payload<'a>(payload: Payload<'a>) -> crate::ws::Payload<'a> {
 	}
 }
 
-fn match_payload_reverse<'a>(payload: crate::ws::Payload<'a>) -> Payload<'a> {
+fn match_payload_reverse(payload: crate::ws::Payload<'_>) -> Payload<'_> {
 	match payload {
 		crate::ws::Payload::Bytes(x) => Payload::Bytes(x),
 		crate::ws::Payload::Borrowed(x) => Payload::Borrowed(x),
@@ -92,6 +92,18 @@ impl<S: AsyncRead + Unpin + Send> crate::ws::WebSocketRead for FragmentCollector
 impl<S: AsyncWrite + Unpin + Send> crate::ws::WebSocketWrite for WebSocketWrite<S> {
 	async fn wisp_write_frame(&mut self, frame: crate::ws::Frame<'_>) -> Result<(), WispError> {
 		self.write_frame(frame.into()).await.map_err(|e| e.into())
+	}
+
+	async fn wisp_write_split(&mut self, header: crate::ws::Frame<'_>, body: crate::ws::Frame<'_>) -> Result<(), WispError> {
+		let mut header = Frame::from(header);
+		header.fin = false;
+		self.write_frame(header).await?;
+
+		let mut body = Frame::from(body);
+		body.opcode = OpCode::Continuation;
+		self.write_frame(body).await?;
+
+		Ok(())
 	}
 
 	async fn wisp_close(&mut self) -> Result<(), WispError> {

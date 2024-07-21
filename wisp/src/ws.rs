@@ -166,6 +166,18 @@ pub trait WebSocketWrite {
 
 	/// Close the socket.
 	async fn wisp_close(&mut self) -> Result<(), WispError>;
+
+	/// Write a split frame to the socket.
+	async fn wisp_write_split(
+		&mut self,
+		header: Frame<'_>,
+		body: Frame<'_>,
+	) -> Result<(), WispError> {
+		let mut payload = BytesMut::from(header.payload);
+		payload.extend_from_slice(&body.payload);
+		self.wisp_write_frame(Frame::binary(Payload::Bytes(payload)))
+			.await
+	}
 }
 
 /// Locked WebSocket.
@@ -181,6 +193,14 @@ impl LockedWebSocketWrite {
 	/// Write a frame to the websocket.
 	pub async fn write_frame(&self, frame: Frame<'_>) -> Result<(), WispError> {
 		self.0.lock().await.wisp_write_frame(frame).await
+	}
+
+	pub(crate) async fn write_split(
+		&self,
+		header: Frame<'_>,
+		body: Frame<'_>,
+	) -> Result<(), WispError> {
+		self.0.lock().await.wisp_write_split(header, body).await
 	}
 
 	/// Close the websocket.
