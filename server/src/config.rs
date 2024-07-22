@@ -12,44 +12,6 @@ use wisp_mux::extensions::{
 
 use crate::{CLI, CONFIG};
 
-type AnyProtocolExtensionBuilder = Box<dyn ProtocolExtensionBuilder + Sync + Send>;
-
-struct ConfigCache {
-	pub blocked_ports: Vec<RangeInclusive<u16>>,
-	pub allowed_ports: Vec<RangeInclusive<u16>>,
-
-	pub allowed_hosts: RegexSet,
-	pub blocked_hosts: RegexSet,
-
-	pub wisp_config: (Option<Vec<AnyProtocolExtensionBuilder>>, u32),
-}
-
-lazy_static! {
-	static ref CONFIG_CACHE: ConfigCache = {
-		ConfigCache {
-			allowed_ports: CONFIG
-				.stream
-				.allow_ports
-				.iter()
-				.map(|x| x[0]..=x[1])
-				.collect(),
-			blocked_ports: CONFIG
-				.stream
-				.block_ports
-				.iter()
-				.map(|x| x[0]..=x[1])
-				.collect(),
-			allowed_hosts: RegexSet::new(&CONFIG.stream.allow_hosts).unwrap(),
-			blocked_hosts: RegexSet::new(&CONFIG.stream.block_hosts).unwrap(),
-			wisp_config: CONFIG.wisp.to_opts_inner().unwrap(),
-		}
-	};
-}
-
-pub fn validate_config_cache() {
-	let _ = CONFIG_CACHE.wisp_config;
-}
-
 #[derive(Serialize, Deserialize, Default, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum SocketType {
@@ -93,33 +55,12 @@ pub struct ServerConfig {
 	pub log_level: LevelFilter,
 }
 
-impl Default for ServerConfig {
-	fn default() -> Self {
-		Self {
-			bind: "127.0.0.1:4000".to_string(),
-			socket: SocketType::default(),
-			resolve_ipv6: false,
-			tcp_nodelay: false,
-
-			verbose_stats: true,
-			stats_endpoint: "/stats".to_string(),
-			enable_stats_endpoint: true,
-
-			non_ws_response: ":3".to_string(),
-
-			prefix: String::new(),
-
-			max_message_size: 64 * 1024,
-
-			log_level: LevelFilter::Info,
-		}
-	}
-}
-
 #[derive(Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
 pub enum ProtocolExtension {
+	/// Wisp draft version 2 UDP protocol extension.
 	Udp,
+	/// Wisp draft version 2 password protocol extension.
 	Password,
 }
 
@@ -137,50 +78,6 @@ pub struct WispConfig {
 	pub extensions: Vec<ProtocolExtension>,
 	/// Wisp draft version 2 password extension username/passwords.
 	pub password_extension_users: HashMap<String, String>,
-}
-
-impl Default for WispConfig {
-	fn default() -> Self {
-		Self {
-			buffer_size: 128,
-			allow_wsproxy: true,
-
-			wisp_v2: false,
-			extensions: Vec::new(),
-			password_extension_users: HashMap::new(),
-		}
-	}
-}
-
-impl WispConfig {
-	pub(super) fn to_opts_inner(
-		&self,
-	) -> anyhow::Result<(Option<Vec<AnyProtocolExtensionBuilder>>, u32)> {
-		if self.wisp_v2 {
-			let mut extensions: Vec<Box<dyn ProtocolExtensionBuilder + Sync + Send>> = Vec::new();
-
-			if self.extensions.contains(&ProtocolExtension::Udp) {
-				extensions.push(Box::new(UdpProtocolExtensionBuilder));
-			}
-
-			if self.extensions.contains(&ProtocolExtension::Password) {
-				extensions.push(Box::new(PasswordProtocolExtensionBuilder::new_server(
-					self.password_extension_users.clone(),
-				)));
-			}
-
-			Ok((Some(extensions), self.buffer_size))
-		} else {
-			Ok((None, self.buffer_size))
-		}
-	}
-
-	pub fn to_opts(&self) -> (Option<&'static [AnyProtocolExtensionBuilder]>, u32) {
-		(
-			CONFIG_CACHE.wisp_config.0.as_deref(),
-			CONFIG_CACHE.wisp_config.1,
-		)
-	}
 }
 
 #[derive(Serialize, Deserialize)]
@@ -215,6 +112,119 @@ pub struct StreamConfig {
 	pub allow_ports: Vec<Vec<u16>>,
 	/// Range blacklist of ports. Format is `[lower_bound, upper_bound]`.
 	pub block_ports: Vec<Vec<u16>>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Config {
+	pub server: ServerConfig,
+	pub wisp: WispConfig,
+	pub stream: StreamConfig,
+}
+
+type AnyProtocolExtensionBuilder = Box<dyn ProtocolExtensionBuilder + Sync + Send>;
+
+struct ConfigCache {
+	pub blocked_ports: Vec<RangeInclusive<u16>>,
+	pub allowed_ports: Vec<RangeInclusive<u16>>,
+
+	pub allowed_hosts: RegexSet,
+	pub blocked_hosts: RegexSet,
+
+	pub wisp_config: (Option<Vec<AnyProtocolExtensionBuilder>>, u32),
+}
+
+lazy_static! {
+	static ref CONFIG_CACHE: ConfigCache = {
+		ConfigCache {
+			allowed_ports: CONFIG
+				.stream
+				.allow_ports
+				.iter()
+				.map(|x| x[0]..=x[1])
+				.collect(),
+			blocked_ports: CONFIG
+				.stream
+				.block_ports
+				.iter()
+				.map(|x| x[0]..=x[1])
+				.collect(),
+			allowed_hosts: RegexSet::new(&CONFIG.stream.allow_hosts).unwrap(),
+			blocked_hosts: RegexSet::new(&CONFIG.stream.block_hosts).unwrap(),
+			wisp_config: CONFIG.wisp.to_opts_inner().unwrap(),
+		}
+	};
+}
+
+pub fn validate_config_cache() {
+	let _ = CONFIG_CACHE.wisp_config;
+}
+
+impl Default for ServerConfig {
+	fn default() -> Self {
+		Self {
+			bind: "127.0.0.1:4000".to_string(),
+			socket: SocketType::default(),
+			resolve_ipv6: false,
+			tcp_nodelay: false,
+
+			verbose_stats: true,
+			stats_endpoint: "/stats".to_string(),
+			enable_stats_endpoint: true,
+
+			non_ws_response: ":3".to_string(),
+
+			prefix: String::new(),
+
+			max_message_size: 64 * 1024,
+
+			log_level: LevelFilter::Info,
+		}
+	}
+}
+
+impl Default for WispConfig {
+	fn default() -> Self {
+		Self {
+			buffer_size: 128,
+			allow_wsproxy: true,
+
+			wisp_v2: false,
+			extensions: vec![ProtocolExtension::Udp],
+			password_extension_users: HashMap::new(),
+		}
+	}
+}
+
+impl WispConfig {
+	pub(super) fn to_opts_inner(
+		&self,
+	) -> anyhow::Result<(Option<Vec<AnyProtocolExtensionBuilder>>, u32)> {
+		if self.wisp_v2 {
+			let mut extensions: Vec<Box<dyn ProtocolExtensionBuilder + Sync + Send>> = Vec::new();
+
+			if self.extensions.contains(&ProtocolExtension::Udp) {
+				extensions.push(Box::new(UdpProtocolExtensionBuilder));
+			}
+
+			if self.extensions.contains(&ProtocolExtension::Password) {
+				extensions.push(Box::new(PasswordProtocolExtensionBuilder::new_server(
+					self.password_extension_users.clone(),
+				)));
+			}
+
+			Ok((Some(extensions), self.buffer_size))
+		} else {
+			Ok((None, self.buffer_size))
+		}
+	}
+
+	pub fn to_opts(&self) -> (Option<&'static [AnyProtocolExtensionBuilder]>, u32) {
+		(
+			CONFIG_CACHE.wisp_config.0.as_deref(),
+			CONFIG_CACHE.wisp_config.1,
+		)
+	}
 }
 
 impl Default for StreamConfig {
@@ -257,14 +267,6 @@ impl StreamConfig {
 	pub fn blocked_hosts(&self) -> &RegexSet {
 		&CONFIG_CACHE.blocked_hosts
 	}
-}
-
-#[derive(Serialize, Deserialize, Default)]
-#[serde(default)]
-pub struct Config {
-	pub server: ServerConfig,
-	pub wisp: WispConfig,
-	pub stream: StreamConfig,
 }
 
 impl Config {
