@@ -295,7 +295,7 @@ pub enum ConfigFormat {
 	Yaml,
 }
 
-/// Server implementation of the Wisp protocol in Rust, made for epoxy.
+/// Performant server implementation of the Wisp protocol in Rust, made for epoxy.
 #[derive(Parser)]
 #[command(version = clap::crate_version!())]
 pub struct Cli {
