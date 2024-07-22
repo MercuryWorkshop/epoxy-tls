@@ -53,30 +53,43 @@ pub fn validate_config_cache() {
 #[derive(Serialize, Deserialize, Default, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum SocketType {
+	/// TCP socket listener.
 	#[default]
 	Tcp,
+	/// Unix socket listener.
 	Unix,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct ServerConfig {
+	/// Address to listen on.
 	pub bind: String,
+	/// Socket type to listen on.
 	pub socket: SocketType,
+	/// Whether or not to resolve and connect to IPV6 upstream addresses.
 	pub resolve_ipv6: bool,
+	/// Whether or not to enable TCP nodelay on client TCP streams.
 	pub tcp_nodelay: bool,
 
+	/// Whether or not to show what upstreams each client is connected to in stats. This can
+	/// heavily increase the size of the stats.
 	pub verbose_stats: bool,
+	/// Whether or not to respond to stats requests over HTTP.
 	pub enable_stats_endpoint: bool,
+	/// Path of stats HTTP endpoint.
 	pub stats_endpoint: String,
 
+	/// String sent to a request that is not a websocket upgrade request.
 	pub non_ws_response: String,
 
-	// DO NOT add a trailing slash to this config option
+	/// Prefix of Wisp server. Do NOT add a trailing slash here.
 	pub prefix: String,
 
+	/// Max WebSocket message size that can be recieved.
 	pub max_message_size: usize,
 
+	/// Server log level.
 	pub log_level: LevelFilter,
 }
 
@@ -113,11 +126,16 @@ pub enum ProtocolExtension {
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct WispConfig {
+	/// Allow legacy wsproxy connections.
 	pub allow_wsproxy: bool,
+	/// Buffer size advertised to the client.
 	pub buffer_size: u32,
 
+	/// Whether or not to use Wisp draft version 2.
 	pub wisp_v2: bool,
+	/// Wisp draft version 2 extensions advertised.
 	pub extensions: Vec<ProtocolExtension>,
+	/// Wisp draft version 2 password extension username/passwords.
 	pub password_extension_users: HashMap<String, String>,
 }
 
@@ -168,22 +186,34 @@ impl WispConfig {
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct StreamConfig {
+	/// Whether or not to enable TCP nodelay on proxied streams.
 	pub tcp_nodelay: bool,
 
+	/// Whether or not to allow Wisp clients to create UDP streams.
 	pub allow_udp: bool,
+	/// Whether or not to enable nonstandard legacy wsproxy UDP streams.
 	pub allow_wsproxy_udp: bool,
 
+	/// Whether or not to allow connections to IP addresses.
 	pub allow_direct_ip: bool,
+	/// Whether or not to allow connections to loopback IP addresses.
 	pub allow_loopback: bool,
+	/// Whether or not to allow connections to multicast IP addresses.
 	pub allow_multicast: bool,
 
+	/// Whether or not to allow connections to globally-routable IP addresses.
 	pub allow_global: bool,
+	/// Whether or not to allow connections to non-globally-routable IP addresses.
 	pub allow_non_global: bool,
 
+	/// Regex whitelist of hosts.
 	pub allow_hosts: Vec<String>,
+	/// Regex blacklist of hosts.
 	pub block_hosts: Vec<String>,
 
+	/// Range whitelist of ports. Format is `[lower_bound, upper_bound]`.
 	pub allow_ports: Vec<Vec<u16>>,
+	/// Range blacklist of ports. Format is `[lower_bound, upper_bound]`.
 	pub block_ports: Vec<Vec<u16>>,
 }
 
