@@ -26,6 +26,15 @@ fn match_payload_reverse(payload: crate::ws::Payload<'_>) -> Payload<'_> {
 	}
 }
 
+fn payload_to_bytesmut(payload: Payload<'_>) -> BytesMut {
+	match payload {
+		Payload::Borrowed(borrowed) => BytesMut::from(borrowed),
+		Payload::BorrowedMut(borrowed_mut) => BytesMut::from(&*borrowed_mut),
+		Payload::Owned(owned) => BytesMut::from(owned.as_slice()),
+		Payload::Bytes(b) => b,
+	}
+}
+
 impl From<OpCode> for crate::ws::OpCode {
 	fn from(opcode: OpCode) -> Self {
 		use OpCode::*;
@@ -105,7 +114,7 @@ impl<S: AsyncRead + Unpin + Send> crate::ws::WebSocketRead for WebSocketRead<S> 
 			)));
 		}
 
-		let mut buf = BytesMut::from(frame.payload);
+		let mut buf = payload_to_bytesmut(frame.payload);
 		let opcode = frame.opcode;
 
 		while !frame.fin {
@@ -145,7 +154,7 @@ impl<S: AsyncRead + Unpin + Send> crate::ws::WebSocketRead for WebSocketRead<S> 
 			)));
 		}
 
-		let mut buf = BytesMut::from(frame.payload);
+		let mut buf = payload_to_bytesmut(frame.payload);
 		let opcode = frame.opcode;
 
 		while !frame.fin {
@@ -159,7 +168,7 @@ impl<S: AsyncRead + Unpin + Send> crate::ws::WebSocketRead for WebSocketRead<S> 
 				)));
 			}
 			if frame_cnt == 1 {
-				let payload = BytesMut::from(frame.payload);
+				let payload = payload_to_bytesmut(frame.payload);
 				extra_frame = Some(crate::ws::Frame {
 					opcode: opcode.into(),
 					payload: crate::ws::Payload::Bytes(payload),
