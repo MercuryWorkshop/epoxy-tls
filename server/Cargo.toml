@@ -19,6 +19,7 @@ log = { version = "0.4.22", features = ["serde", "std"] }
 regex = "1.10.5"
 serde = { version = "1.0.204", features = ["derive"] }
 serde_json = "1.0.120"
+serde_yaml = "0.9.34"
 tokio = { version = "1.38.1", features = ["full"] }
 tokio-util = { version = "0.7.11", features = ["compat", "io-util", "net"] }
 toml = "0.8.15"

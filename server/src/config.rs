@@ -242,6 +242,7 @@ impl Config {
 		Ok(match CLI.format {
 			ConfigFormat::Toml => toml::to_string_pretty(self)?,
 			ConfigFormat::Json => serde_json::to_string_pretty(self)?,
+			ConfigFormat::Yaml => serde_yaml::to_string(self)?,
 		})
 	}
 
@@ -249,6 +250,7 @@ impl Config {
 		Ok(match CLI.format {
 			ConfigFormat::Toml => toml::from_str(&string)?,
 			ConfigFormat::Json => serde_json::from_str(&string)?,
+			ConfigFormat::Yaml => serde_yaml::from_str(&string)?,
 		})
 	}
 }
@@ -258,6 +260,7 @@ pub enum ConfigFormat {
 	#[default]
 	Toml,
 	Json,
+	Yaml,
 }
 
 /// Server implementation of the Wisp protocol in Rust, made for epoxy.
