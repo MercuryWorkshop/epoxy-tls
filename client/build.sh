@@ -6,7 +6,7 @@ mkdir out/ || true
 rm -r pkg/ || true
 mkdir pkg/
 
-RUSTFLAGS='-C target-feature=+atomics,+bulk-memory,+simd128' cargo build --target wasm32-unknown-unknown -Z build-std=panic_abort,std --release "$@"
+RUSTFLAGS='-C target-feature=+atomics,+bulk-memory' cargo build --target wasm32-unknown-unknown -Z build-std=panic_abort,std --release "$@"
 echo "[epx] cargo finished"
 wasm-bindgen --weak-refs --target no-modules --no-modules-global epoxy --out-dir out/ ../target/wasm32-unknown-unknown/release/epoxy_client.wasm
 echo "[epx] wasm-bindgen finished"
