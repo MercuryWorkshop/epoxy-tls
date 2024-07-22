@@ -1,9 +1,11 @@
+use std::io::Cursor;
+
 use anyhow::Context;
 use fastwebsockets::upgrade::UpgradeFut;
 use futures_util::FutureExt;
 use hyper_util::rt::TokioIo;
 use tokio::{
-	io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+	io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
 	net::tcp::{OwnedReadHalf, OwnedWriteHalf},
 	select,
 	task::JoinSet,
@@ -162,8 +164,8 @@ pub async fn handle_wisp(fut: UpgradeFut, id: String) -> anyhow::Result<()> {
 
 	let (read, write) = ws.split(|x| {
 		let parts = x.into_inner().downcast::<TokioIo<ServerStream>>().unwrap();
-		assert_eq!(parts.read_buf.len(), 0);
-		parts.io.into_inner().split()
+		let (r, w) = parts.io.into_inner().split();
+		(Cursor::new(parts.read_buf).chain(r), w)
 	});
 
 	let (extensions, buffer_size) = CONFIG.wisp.to_opts();

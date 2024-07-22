@@ -1,7 +1,7 @@
 use atomic_counter::{AtomicCounter, RelaxedCounter};
 use bytes::Bytes;
 use clap::Parser;
-use fastwebsockets::{handshake, FragmentCollectorRead};
+use fastwebsockets::handshake;
 use futures::future::select_all;
 use http_body_util::Empty;
 use humantime::format_duration;
@@ -9,24 +9,24 @@ use hyper::{
 	header::{CONNECTION, UPGRADE},
 	Request, Uri,
 };
+use hyper_util::rt::TokioIo;
 use simple_moving_average::{SingleSumSMA, SMA};
 use std::{
 	error::Error,
 	future::Future,
-	io::{stdout, IsTerminal, Write},
+	io::{stdout, Cursor, IsTerminal, Write},
 	net::SocketAddr,
-	process::exit,
+	process::{abort, exit},
 	sync::Arc,
 	time::{Duration, Instant},
 };
 use tokio::{
+	io::AsyncReadExt,
 	net::TcpStream,
 	select,
 	signal::unix::{signal, SignalKind},
 	time::{interval, sleep},
 };
-use tokio_native_tls::{native_tls, TlsConnector};
-use tokio_util::either::Either;
 use wisp_mux::{
 	extensions::{
 		password::{PasswordProtocolExtension, PasswordProtocolExtensionBuilder},
@@ -103,17 +103,12 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 	console_subscriber::init();
 	let opts = Cli::parse();
 
-	let tls = match opts
-		.wisp
-		.scheme_str()
-		.ok_or(WispClientError::InvalidUriScheme)?
-	{
-		"wss" => Ok(true),
-		"ws" => Ok(false),
-		_ => Err(WispClientError::InvalidUriScheme),
-	}?;
+	if opts.wisp.scheme_str().unwrap_or_default() != "ws" {
+		Err(Box::new(WispClientError::InvalidUriScheme))?;
+	}
+
 	let addr = opts.wisp.host().ok_or(WispClientError::UriHasNoHost)?;
-	let addr_port = opts.wisp.port_u16().unwrap_or(if tls { 443 } else { 80 });
+	let addr_port = opts.wisp.port_u16().unwrap_or(80);
 	let addr_path = opts.wisp.path();
 	let addr_dest = opts.tcp.ip().to_string();
 	let addr_dest_port = opts.tcp.port();
@@ -131,12 +126,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 	);
 
 	let socket = TcpStream::connect(format!("{}:{}", &addr, addr_port)).await?;
-	let socket = if tls {
-		let cx = TlsConnector::from(native_tls::TlsConnector::builder().build()?);
-		Either::Left(cx.connect(addr, socket).await?)
-	} else {
-		Either::Right(socket)
-	};
 	let req = Request::builder()
 		.method("GET")
 		.uri(addr_path)
@@ -152,8 +141,11 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
 	let (ws, _) = handshake::client(&SpawnExecutor, req, socket).await?;
 
-	let (rx, tx) = ws.split(tokio::io::split);
-	let rx = FragmentCollectorRead::new(rx);
+	let (rx, tx) = ws.split(|x| {
+		let parts = x.into_inner().downcast::<TokioIo<TcpStream>>().unwrap();
+		let (r, w) = parts.io.into_inner().into_split();
+		(Cursor::new(parts.read_buf).chain(r), w)
+	});
 
 	let mut extensions: Vec<Box<(dyn ProtocolExtensionBuilder + Send + Sync)>> = Vec::new();
 	let mut extension_ids: Vec<u8> = Vec::new();
@@ -182,12 +174,11 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 		mux.downgraded, mux.supported_extension_ids
 	);
 
-	let mut threads = Vec::with_capacity(opts.streams + 4);
-	let mut reads = Vec::with_capacity(opts.streams);
+	let mut threads = Vec::with_capacity((opts.streams * 2) + 3);
 
 	threads.push(tokio::spawn(fut));
 
-	let payload = Bytes::from(vec![0; 1024 * opts.packet_size]);
+	let payload = vec![0; 1024 * opts.packet_size];
 
 	let cnt = Arc::new(RelaxedCounter::new(0));
 
@@ -201,20 +192,18 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 		let payload = payload.clone();
 		threads.push(tokio::spawn(async move {
 			loop {
-				cw.write(payload.clone()).await?;
+				cw.write(&payload).await?;
 				cnt.inc();
 			}
 			#[allow(unreachable_code)]
 			Ok::<(), WispError>(())
 		}));
-		reads.push(cr);
+		threads.push(tokio::spawn(async move {
+			loop {
+				cr.read().await;
+			}
+		}));
 	}
-
-	threads.push(tokio::spawn(async move {
-		loop {
-			select_all(reads.iter().map(|x| Box::pin(x.read()))).await;
-		}
-	}));
 
 	let cnt_avg = cnt.clone();
 	threads.push(tokio::spawn(async move {
@@ -289,5 +278,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 		);
 	}
 
-	Ok(())
+	// force everything to die
+	abort()
 }
