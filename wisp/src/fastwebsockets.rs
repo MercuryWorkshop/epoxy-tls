@@ -3,7 +3,8 @@ use std::ops::Deref;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use fastwebsockets::{
-	CloseCode, FragmentCollectorRead, Frame, OpCode, Payload, WebSocketError, WebSocketWrite,
+	CloseCode, FragmentCollectorRead, Frame, OpCode, Payload, WebSocketError, WebSocketRead,
+	WebSocketWrite,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -89,12 +90,113 @@ impl<S: AsyncRead + Unpin + Send> crate::ws::WebSocketRead for FragmentCollector
 }
 
 #[async_trait]
+impl<S: AsyncRead + Unpin + Send> crate::ws::WebSocketRead for WebSocketRead<S> {
+	async fn wisp_read_frame(
+		&mut self,
+		tx: &LockedWebSocketWrite,
+	) -> Result<crate::ws::Frame<'static>, WispError> {
+		let mut frame = self
+			.read_frame(&mut |frame| async { tx.write_frame(frame.into()).await })
+			.await?;
+
+		if frame.opcode == OpCode::Continuation {
+			return Err(WispError::WsImplError(Box::new(
+				WebSocketError::InvalidContinuationFrame,
+			)));
+		}
+
+		let mut buf = BytesMut::from(frame.payload);
+		let opcode = frame.opcode;
+
+		while !frame.fin {
+			frame = self
+				.read_frame(&mut |frame| async { tx.write_frame(frame.into()).await })
+				.await?;
+
+			if frame.opcode != OpCode::Continuation {
+				return Err(WispError::WsImplError(Box::new(
+					WebSocketError::InvalidContinuationFrame,
+				)));
+			}
+
+			buf.extend_from_slice(&frame.payload);
+		}
+
+		Ok(crate::ws::Frame {
+			opcode: opcode.into(),
+			payload: crate::ws::Payload::Bytes(buf),
+			finished: frame.fin,
+		})
+	}
+
+	async fn wisp_read_split(
+		&mut self,
+		tx: &LockedWebSocketWrite,
+	) -> Result<(crate::ws::Frame<'static>, Option<crate::ws::Frame<'static>>), WispError> {
+		let mut frame_cnt = 1;
+		let mut frame = self
+			.read_frame(&mut |frame| async { tx.write_frame(frame.into()).await })
+			.await?;
+		let mut extra_frame = None;
+
+		if frame.opcode == OpCode::Continuation {
+			return Err(WispError::WsImplError(Box::new(
+				WebSocketError::InvalidContinuationFrame,
+			)));
+		}
+
+		let mut buf = BytesMut::from(frame.payload);
+		let opcode = frame.opcode;
+
+		while !frame.fin {
+			frame = self
+				.read_frame(&mut |frame| async { tx.write_frame(frame.into()).await })
+				.await?;
+
+			if frame.opcode != OpCode::Continuation {
+				return Err(WispError::WsImplError(Box::new(
+					WebSocketError::InvalidContinuationFrame,
+				)));
+			}
+			if frame_cnt == 1 {
+				let payload = BytesMut::from(frame.payload);
+				extra_frame = Some(crate::ws::Frame {
+					opcode: opcode.into(),
+					payload: crate::ws::Payload::Bytes(payload),
+					finished: true,
+				});
+			} else if frame_cnt == 2 {
+				let extra_payload = extra_frame.take().unwrap().payload;
+				buf.extend_from_slice(&extra_payload);
+				buf.extend_from_slice(&frame.payload);
+			} else {
+				buf.extend_from_slice(&frame.payload);
+			}
+			frame_cnt += 1;
+		}
+
+		Ok((
+			crate::ws::Frame {
+				opcode: opcode.into(),
+				payload: crate::ws::Payload::Bytes(buf),
+				finished: frame.fin,
+			},
+			extra_frame,
+		))
+	}
+}
+
+#[async_trait]
 impl<S: AsyncWrite + Unpin + Send> crate::ws::WebSocketWrite for WebSocketWrite<S> {
 	async fn wisp_write_frame(&mut self, frame: crate::ws::Frame<'_>) -> Result<(), WispError> {
 		self.write_frame(frame.into()).await.map_err(|e| e.into())
 	}
 
-	async fn wisp_write_split(&mut self, header: crate::ws::Frame<'_>, body: crate::ws::Frame<'_>) -> Result<(), WispError> {
+	async fn wisp_write_split(
+		&mut self,
+		header: crate::ws::Frame<'_>,
+		body: crate::ws::Frame<'_>,
+	) -> Result<(), WispError> {
 		let mut header = Frame::from(header);
 		header.fin = false;
 		self.write_frame(header).await?;

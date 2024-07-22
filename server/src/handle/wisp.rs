@@ -1,5 +1,5 @@
 use anyhow::Context;
-use fastwebsockets::{upgrade::UpgradeFut, FragmentCollectorRead};
+use fastwebsockets::upgrade::UpgradeFut;
 use futures_util::FutureExt;
 use hyper_util::rt::TokioIo;
 use tokio::{
@@ -165,7 +165,6 @@ pub async fn handle_wisp(fut: UpgradeFut, id: String) -> anyhow::Result<()> {
 		assert_eq!(parts.read_buf.len(), 0);
 		parts.io.into_inner().split()
 	});
-	let read = FragmentCollectorRead::new(read);
 
 	let (extensions, buffer_size) = CONFIG.wisp.to_opts();
 

@@ -156,6 +156,14 @@ pub trait WebSocketRead {
 		&mut self,
 		tx: &LockedWebSocketWrite,
 	) -> Result<Frame<'static>, WispError>;
+
+	/// Read a split frame from the socket.
+	async fn wisp_read_split(
+		&mut self,
+		tx: &LockedWebSocketWrite,
+	) -> Result<(Frame<'static>, Option<Frame<'static>>), WispError> {
+		self.wisp_read_frame(tx).await.map(|x| (x, None))
+	}
 }
 
 /// Generic WebSocket write trait.
@@ -225,6 +233,16 @@ where
 		if let Some(x) = self.0.take() {
 			return Ok(x);
 		}
-		return self.1.wisp_read_frame(tx).await;
+		self.1.wisp_read_frame(tx).await
+	}
+
+	async fn wisp_read_split(
+		&mut self,
+		tx: &LockedWebSocketWrite,
+	) -> Result<(Frame<'static>, Option<Frame<'static>>), WispError> {
+		if let Some(x) = self.0.take() {
+			return Ok((x, None));
+		}
+		self.1.wisp_read_split(tx).await
 	}
 }

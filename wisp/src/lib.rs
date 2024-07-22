@@ -29,7 +29,7 @@ use std::{
 	},
 	time::Duration,
 };
-use ws::{AppendingWebSocketRead, LockedWebSocketWrite};
+use ws::{AppendingWebSocketRead, LockedWebSocketWrite, Payload};
 
 /// Wisp version supported by this crate.
 pub const WISP_VERSION: WispVersion = WispVersion { major: 2, minor: 0 };
@@ -352,10 +352,19 @@ impl MuxInner {
 		let target_buffer_size = ((self.buffer_size as u64 * 90) / 100) as u32;
 
 		loop {
-			let frame = rx.wisp_read_frame(&self.tx).await?;
+			let (mut frame, optional_frame) = rx.wisp_read_split(&self.tx).await?;
 			if frame.opcode == ws::OpCode::Close {
 				break Ok(());
 			}
+
+			if let Some(ref extra_frame) = optional_frame {
+				if frame.payload[0] != PacketType::Data(Payload::Bytes(BytesMut::new())).as_u8() {
+					let mut payload = BytesMut::from(frame.payload);
+					payload.extend_from_slice(&extra_frame.payload);
+					frame.payload = Payload::Bytes(payload);
+				}
+			}
+
 			if let Some(packet) =
 				Packet::maybe_handle_extension(frame, &mut extensions, &mut rx, &self.tx).await?
 			{
@@ -380,8 +389,16 @@ impl MuxInner {
 						self.stream_map.insert(packet.stream_id, map_value);
 					}
 					Data(data) => {
+						let mut data = BytesMut::from(data);
 						if let Some(stream) = self.stream_map.get(&packet.stream_id) {
-							let _ = stream.stream.try_send(BytesMut::from(data).freeze());
+							if let Some(extra_frame) = optional_frame {
+								if data.is_empty() {
+									data = extra_frame.payload.into();
+								} else {
+									data.extend_from_slice(&extra_frame.payload);
+								}
+							}
+							let _ = stream.stream.try_send(data.freeze());
 							if stream.stream_type == StreamType::Tcp {
 								stream.flow_control.store(
 									stream
@@ -413,9 +430,17 @@ impl MuxInner {
 		R: ws::WebSocketRead + Send,
 	{
 		loop {
-			let frame = rx.wisp_read_frame(&self.tx).await?;
+			let (mut frame, optional_frame) = rx.wisp_read_split(&self.tx).await?;
 			if frame.opcode == ws::OpCode::Close {
 				break Ok(());
+			}
+
+			if let Some(ref extra_frame) = optional_frame {
+				if frame.payload[0] != PacketType::Data(Payload::Bytes(BytesMut::new())).as_u8() {
+					let mut payload = BytesMut::from(frame.payload);
+					payload.extend_from_slice(&extra_frame.payload);
+					frame.payload = Payload::Bytes(payload);
+				}
 			}
 
 			if let Some(packet) =
@@ -425,11 +450,16 @@ impl MuxInner {
 				match packet.packet_type {
 					Connect(_) | Info(_) => break Err(WispError::InvalidPacketType),
 					Data(data) => {
+						let mut data = BytesMut::from(data);
 						if let Some(stream) = self.stream_map.get(&packet.stream_id) {
-							let _ = stream
-								.stream
-								.send_async(BytesMut::from(data).freeze())
-								.await;
+							if let Some(extra_frame) = optional_frame {
+								if data.is_empty() {
+									data = extra_frame.payload.into();
+								} else {
+									data.extend_from_slice(&extra_frame.payload);
+								}
+							}
+							let _ = stream.stream.send_async(data.freeze()).await;
 						}
 					}
 					Continue(inner_packet) => {
