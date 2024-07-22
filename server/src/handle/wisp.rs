@@ -91,16 +91,6 @@ async fn handle_stream(connect: ConnectPacket, muxstream: MuxStream, id: String)
 			let closer = muxstream.get_close_handle();
 
 			let ret: anyhow::Result<()> = async {
-				/*
-				let (muxread, muxwrite) = muxstream.into_io().into_asyncrw().into_split();
-				let (mut tcpread, tcpwrite) = stream.into_split();
-				let mut muxwrite = muxwrite.compat_write();
-				select! {
-					x = copy_read_fast(muxread, tcpwrite) => x?,
-					x = copy(&mut tcpread, &mut muxwrite) => {x?;},
-				}
-				*/
-				// TODO why is copy_write_fast not working?
 				let (muxread, muxwrite) = muxstream.into_split();
 				let muxread = muxread.into_stream().into_asyncread();
 				let (tcpread, tcpwrite) = stream.into_split();
