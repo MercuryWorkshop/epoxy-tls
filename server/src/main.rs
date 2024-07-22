@@ -165,7 +165,10 @@ async fn main() -> anyhow::Result<()> {
 		.init();
 	validate_config_cache();
 
-	info!("listening on {:?} with socket type {:?}", CONFIG.server.bind, CONFIG.server.socket);
+	info!(
+		"listening on {:?} with socket type {:?}",
+		CONFIG.server.bind, CONFIG.server.socket
+	);
 
 	tokio::spawn(async {
 		let mut sig = signal(SignalKind::user_defined1()).unwrap();
