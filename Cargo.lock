@@ -554,6 +554,7 @@ version = "2.0.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "clap",
  "dashmap 6.0.1",
  "env_logger",
  "fastwebsockets",
@@ -565,6 +566,7 @@ dependencies = [
  "log",
  "regex",
  "serde",
+ "serde_json",
  "tokio",
  "tokio-util",
  "toml",

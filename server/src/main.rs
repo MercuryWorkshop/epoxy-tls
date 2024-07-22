@@ -1,9 +1,10 @@
 #![feature(ip)]
 
-use std::{env::args, fmt::Write, fs::read_to_string};
+use std::{fmt::Write, fs::read_to_string};
 
 use bytes::Bytes;
-use config::{validate_config_cache, Config};
+use clap::Parser;
+use config::{validate_config_cache, Cli, Config};
 use dashmap::DashMap;
 use handle::{handle_wisp, handle_wsproxy};
 use http_body_util::Full;
@@ -26,9 +27,10 @@ mod stream;
 type Client = (DashMap<Uuid, (ConnectPacket, ConnectPacket)>, bool);
 
 lazy_static! {
+	pub static ref CLI: Cli = Cli::parse();
 	pub static ref CONFIG: Config = {
-		if let Some(path) = args().nth(1) {
-			toml::from_str(&read_to_string(path).unwrap()).unwrap()
+		if let Some(path) = &CLI.config {
+			Config::de(read_to_string(path).unwrap()).unwrap()
 		} else {
 			Config::default()
 		}
@@ -159,10 +161,16 @@ fn generate_stats() -> Result<String, std::fmt::Error> {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
+	if CLI.default_config {
+		println!("{}", Config::default().ser()?);
+		return Ok(());
+	}
+
 	env_logger::builder()
 		.filter_level(CONFIG.server.log_level)
 		.parse_default_env()
 		.init();
+
 	validate_config_cache();
 
 	info!(

@@ -69,11 +69,18 @@ impl ServerListener {
 
 	pub async fn accept(&self) -> anyhow::Result<(ServerStream, String)> {
 		match self {
-			Self::Tcp(x) => x
-				.accept()
-				.await
-				.map(|(x, y)| (Either::Left(x), y.to_string()))
-				.context("failed to accept tcp connection"),
+			Self::Tcp(x) => {
+				let (stream, addr) = x
+					.accept()
+					.await
+					.context("failed to accept tcp connection")?;
+				if CONFIG.server.tcp_nodelay {
+					stream
+						.set_nodelay(true)
+						.context("failed to set tcp nodelay")?;
+				}
+				Ok((Either::Left(stream), addr.to_string()))
+			}
 			Self::Unix(x) => x
 				.accept()
 				.await
@@ -183,6 +190,12 @@ impl ClientStream {
 					.with_context(|| {
 						format!("failed to connect to host {}", packet.destination_hostname)
 					})?;
+
+				if CONFIG.stream.tcp_nodelay {
+					stream
+						.set_nodelay(true)
+						.context("failed to set tcp nodelay")?;
+				}
 
 				Ok(ClientStream::Tcp(stream))
 			}

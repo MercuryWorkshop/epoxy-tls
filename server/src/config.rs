@@ -1,5 +1,6 @@
-use std::{collections::HashMap, ops::RangeInclusive};
+use std::{collections::HashMap, ops::RangeInclusive, path::PathBuf};
 
+use clap::{Parser, ValueEnum};
 use lazy_static::lazy_static;
 use log::LevelFilter;
 use regex::RegexSet;
@@ -9,7 +10,7 @@ use wisp_mux::extensions::{
 	ProtocolExtensionBuilder,
 };
 
-use crate::CONFIG;
+use crate::{CLI, CONFIG};
 
 type AnyProtocolExtensionBuilder = Box<dyn ProtocolExtensionBuilder + Sync + Send>;
 
@@ -63,6 +64,7 @@ pub struct ServerConfig {
 	pub bind: String,
 	pub socket: SocketType,
 	pub resolve_ipv6: bool,
+	pub tcp_nodelay: bool,
 
 	pub verbose_stats: bool,
 	pub enable_stats_endpoint: bool,
@@ -84,6 +86,7 @@ impl Default for ServerConfig {
 			bind: "127.0.0.1:4000".to_string(),
 			socket: SocketType::default(),
 			resolve_ipv6: false,
+			tcp_nodelay: false,
 
 			verbose_stats: true,
 			stats_endpoint: "/stats".to_string(),
@@ -165,6 +168,8 @@ impl WispConfig {
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct StreamConfig {
+	pub tcp_nodelay: bool,
+
 	pub allow_udp: bool,
 	pub allow_wsproxy_udp: bool,
 
@@ -185,6 +190,8 @@ pub struct StreamConfig {
 impl Default for StreamConfig {
 	fn default() -> Self {
 		Self {
+			tcp_nodelay: false,
+
 			allow_udp: true,
 			allow_wsproxy_udp: false,
 
@@ -228,4 +235,43 @@ pub struct Config {
 	pub server: ServerConfig,
 	pub wisp: WispConfig,
 	pub stream: StreamConfig,
+}
+
+impl Config {
+	pub fn ser(&self) -> anyhow::Result<String> {
+		Ok(match CLI.format {
+			ConfigFormat::Toml => toml::to_string_pretty(self)?,
+			ConfigFormat::Json => serde_json::to_string_pretty(self)?,
+		})
+	}
+
+	pub fn de(string: String) -> anyhow::Result<Self> {
+		Ok(match CLI.format {
+			ConfigFormat::Toml => toml::from_str(&string)?,
+			ConfigFormat::Json => serde_json::from_str(&string)?,
+		})
+	}
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Default, ValueEnum)]
+pub enum ConfigFormat {
+	#[default]
+	Toml,
+	Json,
+}
+
+/// Server implementation of the Wisp protocol in Rust, made for epoxy.
+#[derive(Parser)]
+#[command(version = clap::crate_version!())]
+pub struct Cli {
+	/// Config file to use.
+	pub config: Option<PathBuf>,
+
+	/// Config file format to use.
+	#[arg(short, long, value_enum, default_value_t = ConfigFormat::default())]
+	pub format: ConfigFormat,
+
+	/// Show default config and exit.
+	#[arg(long)]
+	pub default_config: bool,
 }
