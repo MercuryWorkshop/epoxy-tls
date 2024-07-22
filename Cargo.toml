@@ -8,3 +8,6 @@ debug = true
 panic = "abort"
 codegen-units = 1
 opt-level = 3
+
+[patch.crates-io]
+fastwebsockets = { git = "https://github.com/r58Playz/fastwebsockets" }

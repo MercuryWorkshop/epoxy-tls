@@ -1,6 +1,7 @@
 use std::{collections::HashMap, ops::RangeInclusive};
 
 use lazy_static::lazy_static;
+use log::LevelFilter;
 use regex::RegexSet;
 use serde::{Deserialize, Serialize};
 use wisp_mux::extensions::{
@@ -48,7 +49,7 @@ pub fn validate_config_cache() {
 	let _ = CONFIG_CACHE.wisp_config;
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum SocketType {
 	#[default]
@@ -63,19 +64,38 @@ pub struct ServerConfig {
 	pub socket: SocketType,
 	pub resolve_ipv6: bool,
 
+	pub verbose_stats: bool,
+	pub enable_stats_endpoint: bool,
+	pub stats_endpoint: String,
+
+	pub non_ws_response: String,
+
+	// DO NOT add a trailing slash to this config option
+	pub prefix: String,
+
 	pub max_message_size: usize,
-	// TODO
-	// prefix: String,
+
+	pub log_level: LevelFilter,
 }
 
 impl Default for ServerConfig {
 	fn default() -> Self {
 		Self {
-			bind: "127.0.0.1:4000".to_owned(),
+			bind: "127.0.0.1:4000".to_string(),
 			socket: SocketType::default(),
 			resolve_ipv6: false,
 
+			verbose_stats: true,
+			stats_endpoint: "/stats".to_string(),
+			enable_stats_endpoint: true,
+
+			non_ws_response: ":3".to_string(),
+
+			prefix: String::new(),
+
 			max_message_size: 64 * 1024,
+
+			log_level: LevelFilter::Info,
 		}
 	}
 }
@@ -90,21 +110,21 @@ pub enum ProtocolExtension {
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct WispConfig {
-	pub wisp_v2: bool,
+	pub allow_wsproxy: bool,
 	pub buffer_size: u32,
 
+	pub wisp_v2: bool,
 	pub extensions: Vec<ProtocolExtension>,
 	pub password_extension_users: HashMap<String, String>,
-	// TODO
-	// enable_wsproxy: bool,
 }
 
 impl Default for WispConfig {
 	fn default() -> Self {
 		Self {
-			buffer_size: 512,
-			wisp_v2: false,
+			buffer_size: 128,
+			allow_wsproxy: true,
 
+			wisp_v2: false,
 			extensions: Vec::new(),
 			password_extension_users: HashMap::new(),
 		}
@@ -112,7 +132,9 @@ impl Default for WispConfig {
 }
 
 impl WispConfig {
-	pub fn to_opts_inner(&self) -> anyhow::Result<(Option<Vec<AnyProtocolExtensionBuilder>>, u32)> {
+	pub(super) fn to_opts_inner(
+		&self,
+	) -> anyhow::Result<(Option<Vec<AnyProtocolExtensionBuilder>>, u32)> {
 		if self.wisp_v2 {
 			let mut extensions: Vec<Box<dyn ProtocolExtensionBuilder + Sync + Send>> = Vec::new();
 
@@ -144,6 +166,7 @@ impl WispConfig {
 #[serde(default)]
 pub struct StreamConfig {
 	pub allow_udp: bool,
+	pub allow_wsproxy_udp: bool,
 
 	pub allow_direct_ip: bool,
 	pub allow_loopback: bool,
@@ -163,6 +186,7 @@ impl Default for StreamConfig {
 	fn default() -> Self {
 		Self {
 			allow_udp: true,
+			allow_wsproxy_udp: false,
 
 			allow_direct_ip: true,
 			allow_loopback: true,
