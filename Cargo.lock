@@ -516,7 +516,7 @@ dependencies = [
 
 [[package]]
 name = "epoxy-client"
-version = "2.0.8"
+version = "2.0.9"
 dependencies = [
  "async-compression",
  "async-trait",
