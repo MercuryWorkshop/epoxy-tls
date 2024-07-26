@@ -21,7 +21,6 @@
 	"license": "AGPL-3.0-only",
 	"exports": {
 		".": "./full/epoxy-module-bundled.js",
-		"./certs": "./full/certs-module.js",
 		"./epoxy": "./full/epoxy-module.js",
 		"./epoxy-bundled": "./full/epoxy-module-bundled.js",
 		"./minimal-epoxy": "./minimal/epoxy-module.js",

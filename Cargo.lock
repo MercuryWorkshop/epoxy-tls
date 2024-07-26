@@ -300,14 +300,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2aba8f4e9906c7ce3c73463f62a7f0c65183ada1a2d47e397cc8810827f9694f"
 
 [[package]]
-name = "certs-grabber"
-version = "0.1.0"
-dependencies = [
- "rustls-pki-types",
- "webpki-roots",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -534,6 +526,7 @@ dependencies = [
  "hyper 1.4.1",
  "hyper-util-wasm",
  "js-sys",
+ "lazy_static",
  "parking_lot_core",
  "pin-project-lite",
  "ring",
@@ -545,6 +538,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
+ "webpki-roots",
  "wisp-mux",
 ]
 

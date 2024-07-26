@@ -1,8 +1,0 @@
-[package]
-name = "certs-grabber"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-rustls-pki-types = "1.4.1"
-webpki-roots = "0.26.1"

@@ -23,6 +23,7 @@ http-body-util = "0.1.2"
 hyper = "1.3.1"
 hyper-util-wasm = { git = "https://github.com/r58Playz/hyper-util-wasm", branch = "opinionated", version = "0.1.7", features = ["client-legacy", "http1"] }
 js-sys = "0.3.69"
+lazy_static = "1.5.0"
 pin-project-lite = "0.2.14"
 send_wrapper = "0.4.0"
 thiserror = "1.0.61"
@@ -31,6 +32,7 @@ wasm-bindgen = "0.2.92"
 wasm-bindgen-futures = "0.4.42"
 wasm-streams = "0.4.0"
 web-sys = { version = "0.3.69", features = ["BinaryType", "Headers", "MessageEvent", "Request", "RequestInit", "Response", "ResponseInit", "WebSocket"] }
+webpki-roots = "0.26.3"
 wisp-mux = { path = "../wisp", features = ["wasm"] }
 
 [dependencies.ring]

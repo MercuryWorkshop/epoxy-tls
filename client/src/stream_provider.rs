@@ -10,11 +10,10 @@ use futures_util::{
 	AsyncRead, AsyncWrite, Future,
 };
 use hyper_util_wasm::client::legacy::connect::{ConnectSvc, Connected, Connection};
-use js_sys::{Array, Reflect, Uint8Array};
+use lazy_static::lazy_static;
 use pin_project_lite::pin_project;
-use rustls_pki_types::{Der, TrustAnchor};
-use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::spawn_local;
+use webpki_roots::TLS_SERVER_ROOTS;
 use wisp_mux::{
 	extensions::{udp::UdpProtocolExtensionBuilder, ProtocolExtensionBuilder},
 	ClientMux, MuxStreamAsyncRW, MuxStreamIo, StreamType,
@@ -22,18 +21,15 @@ use wisp_mux::{
 
 use crate::{console_log, ws_wrapper::WebSocketWrapper, EpoxyClientOptions, EpoxyError};
 
-fn object_to_trustanchor(obj: JsValue) -> Result<TrustAnchor<'static>, JsValue> {
-	let subject: Uint8Array = Reflect::get(&obj, &"subject".into())?.dyn_into()?;
-	let pub_key_info: Uint8Array =
-		Reflect::get(&obj, &"subject_public_key_info".into())?.dyn_into()?;
-	let name_constraints: Option<Uint8Array> = Reflect::get(&obj, &"name_constraints".into())
-		.and_then(|x| x.dyn_into())
-		.ok();
-	Ok(TrustAnchor {
-		subject: Der::from(subject.to_vec()),
-		subject_public_key_info: Der::from(pub_key_info.to_vec()),
-		name_constraints: name_constraints.map(|x| Der::from(x.to_vec())),
-	})
+lazy_static! {
+	static ref CLIENT_CONFIG: Arc<ClientConfig> = {
+		let certstore = RootCertStore::from_iter(TLS_SERVER_ROOTS.iter().cloned());
+		Arc::new(
+			ClientConfig::builder()
+				.with_root_certificates(certstore)
+				.with_no_client_auth(),
+		)
+	};
 }
 
 pub struct StreamProvider {
@@ -42,8 +38,6 @@ pub struct StreamProvider {
 	wisp_v2: bool,
 	udp_extension: bool,
 	websocket_protocols: Vec<String>,
-
-	client_config: Arc<ClientConfig>,
 
 	current_client: Arc<Mutex<Option<ClientMux>>>,
 }
@@ -54,27 +48,13 @@ pub type ProviderTlsAsyncRW = TlsStream<ProviderUnencryptedAsyncRW>;
 pub type ProviderAsyncRW = Either<ProviderTlsAsyncRW, ProviderUnencryptedAsyncRW>;
 
 impl StreamProvider {
-	pub fn new(
-		wisp_url: String,
-		certs: Array,
-		options: &EpoxyClientOptions,
-	) -> Result<Self, EpoxyError> {
-		let certs: Result<Vec<TrustAnchor>, JsValue> =
-			certs.iter().map(object_to_trustanchor).collect();
-		let certstore = RootCertStore::from_iter(certs.map_err(|_| EpoxyError::InvalidCertStore)?);
-		let client_config = Arc::new(
-			ClientConfig::builder()
-				.with_root_certificates(certstore)
-				.with_no_client_auth(),
-		);
-
+	pub fn new(wisp_url: String, options: &EpoxyClientOptions) -> Result<Self, EpoxyError> {
 		Ok(Self {
 			wisp_url,
 			current_client: Arc::new(Mutex::new(None)),
 			wisp_v2: options.wisp_v2,
 			udp_extension: options.udp_extension_required,
 			websocket_protocols: options.websocket_protocols.clone(),
-			client_config,
 		})
 	}
 
@@ -153,7 +133,7 @@ impl StreamProvider {
 		let stream = self
 			.get_asyncread(StreamType::Tcp, host.clone(), port)
 			.await?;
-		let connector = TlsConnector::from(self.client_config.clone());
+		let connector = TlsConnector::from(CLIENT_CONFIG.clone());
 		Ok(connector.connect(host.try_into()?, stream).await?.into())
 	}
 }

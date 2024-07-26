@@ -224,7 +224,6 @@ impl EpoxyClient {
 	#[wasm_bindgen(constructor)]
 	pub fn new(
 		wisp_url: String,
-		certs: Array,
 		options: EpoxyClientOptions,
 	) -> Result<EpoxyClient, EpoxyError> {
 		let wisp_url: Uri = wisp_url.try_into()?;
@@ -232,7 +231,7 @@ impl EpoxyClient {
 			return Err(EpoxyError::InvalidUrlScheme);
 		}
 
-		let stream_provider = Arc::new(StreamProvider::new(wisp_url.to_string(), certs, &options)?);
+		let stream_provider = Arc::new(StreamProvider::new(wisp_url.to_string(), &options)?);
 
 		let service = StreamProviderService(stream_provider.clone());
 		let client = Client::builder(WasmExecutor)
