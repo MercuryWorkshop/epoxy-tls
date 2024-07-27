@@ -5,17 +5,13 @@ Epoxy is an encrypted proxy for browser javascript. It allows you to make reques
 Epoxy must be served with the [security headers needed for `SharedArrayBuffer`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer#security_requirements). Here is a simple usage example:
 ```javascript
 import epoxy from "./epoxy-module-bundled.js";
-import ROOTS from "./pkg/certs-module.js";
-// or
-// importScripts("epoxy-bundled.js");
-// importScripts("certs.js");
 
 const { EpoxyClient, EpoxyClientOptions } = await epoxy();
 
 let options = new EpoxyClientOptions();
 options.user_agent = navigator.userAgent;
 
-let client = await new EpoxyClient("wss://localhost:4000", ROOTS, options);
+let client = await new EpoxyClient("wss://localhost:4000", options);
 
 let response = await client.fetch("https://httpbin.org/get");
 console.log(await response.text());
