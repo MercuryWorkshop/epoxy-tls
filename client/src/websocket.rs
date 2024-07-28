@@ -1,12 +1,10 @@
 use std::{str::from_utf8, sync::Arc};
 
-use base64::{prelude::BASE64_STANDARD, Engine};
 use bytes::Bytes;
 use fastwebsockets::{
 	FragmentCollectorRead, Frame, OpCode, Payload, Role, WebSocket, WebSocketWrite,
 };
 use futures_util::lock::Mutex;
-use getrandom::getrandom;
 use http::{
 	header::{
 		CONNECTION, HOST, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION,
@@ -24,7 +22,9 @@ use wasm_bindgen::{prelude::*, JsError, JsValue};
 use wasm_bindgen_futures::spawn_local;
 
 use crate::{
-	tokioio::TokioIo, utils::entries_of_object, EpoxyClient, EpoxyError, EpoxyHandlers, HttpBody,
+	tokioio::TokioIo,
+	utils::{entries_of_object, ws_key},
+	EpoxyClient, EpoxyError, EpoxyHandlers, HttpBody,
 };
 
 #[wasm_bindgen]
@@ -54,17 +54,13 @@ impl EpoxyWebSocket {
 			let url: Uri = url.try_into()?;
 			let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
 
-			let mut rand = [0u8; 16];
-			getrandom(&mut rand)?;
-			let key = BASE64_STANDARD.encode(rand);
-
 			let mut request = Request::builder()
 				.method(Method::GET)
 				.uri(url.clone())
 				.header(HOST, host)
 				.header(CONNECTION, "upgrade")
 				.header(UPGRADE, "websocket")
-				.header(SEC_WEBSOCKET_KEY, key)
+				.header(SEC_WEBSOCKET_KEY, ws_key())
 				.header(SEC_WEBSOCKET_VERSION, "13")
 				.header(USER_AGENT, user_agent);
 

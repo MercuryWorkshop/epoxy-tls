@@ -1,4 +1,4 @@
-import epoxyModule from "./pkg/epoxy-module-bundled.js";
+import initEpoxy, { EpoxyClient, EpoxyClientOptions, EpoxyHandlers } from "./pkg/epoxy-bundled.js";
 
 (async () => {
 	const params = (new URL(location.href)).searchParams;
@@ -25,15 +25,7 @@ import epoxyModule from "./pkg/epoxy-module-bundled.js";
 		window.scrollTo(0, document.body.scrollHeight);
 	}
 
-	const plog = (str) => {
-		console.log(str);
-	}
-
-	const epoxy = await epoxyModule();
-	const EpoxyClientOptions = epoxy.EpoxyClientOptions;
-	const EpoxyClient = epoxy.EpoxyClient;
-	const EpoxyHandlers = epoxy.EpoxyHandlers;
-
+	await initEpoxy();
 	let epoxy_client_options = new EpoxyClientOptions();
 	epoxy_client_options.user_agent = navigator.userAgent;
 
@@ -234,7 +226,7 @@ import epoxyModule from "./pkg/epoxy-module-bundled.js";
 		while (true) {
 			log("sending `data`");
 			await ws.send("data");
-			await (new Promise((res, _) => setTimeout(res, 10)));
+			await (new Promise((res, _) => setTimeout(res, 100)));
 		}
 	} else if (should_reconnect_test) {
 		while (true) {

@@ -7,10 +7,9 @@ use bytes::{buf::UninitSlice, BufMut, Bytes, BytesMut};
 use futures_util::{ready, AsyncRead, Future, Stream, TryStreamExt};
 use http::{HeaderValue, Uri};
 use hyper::{body::Body, rt::Executor};
-use js_sys::{Array, ArrayBuffer, Object, Reflect, Uint8Array};
+use js_sys::{Array, JsString, Object, Uint8Array};
 use pin_project_lite::pin_project;
 use wasm_bindgen::{prelude::*, JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
 
 use crate::EpoxyError;
 
@@ -177,54 +176,65 @@ pub fn is_null_body(code: u16) -> bool {
 	[101, 204, 205, 304].contains(&code)
 }
 
-pub fn object_get(obj: &Object, key: &str) -> Option<JsValue> {
-	Reflect::get(obj, &key.into()).ok()
-}
-
-pub fn object_set(obj: &Object, key: &JsValue, value: &JsValue) -> Result<(), EpoxyError> {
-	if Reflect::set(obj, key, value).map_err(|_| EpoxyError::RawHeaderSetFailed)? {
-		Ok(())
-	} else {
-		Err(EpoxyError::RawHeaderSetFailed)
+#[wasm_bindgen(inline_js = r#"
+export function object_get(obj, k) { 
+	try {
+		return obj[k]
+	} catch {
+		return undefined
 	}
+};
+export function object_set(obj, k, v) {
+	try { obj[k] = v } catch {}
+};
+
+export async function convert_body_inner(body) {
+	let req = new Request("", { method: "POST", duplex: "half", body });
+	let type = req.headers.get("content-type");
+	return [new Uint8Array(await req.arrayBuffer()), type];
 }
 
-pub async fn convert_body(val: JsValue) -> Result<(Uint8Array, web_sys::Request), JsValue> {
-	let mut request_init = web_sys::RequestInit::new();
-	request_init.method("POST").body(Some(&val));
-	object_set(&request_init, &"duplex".into(), &"half".into())?;
-	let req = web_sys::Request::new_with_str_and_init("/", &request_init)?;
-	Ok((
-		JsFuture::from(req.array_buffer()?)
-			.await?
-			.dyn_into::<ArrayBuffer>()
-			.map(|x| Uint8Array::new(&x))?,
-		req,
-	))
+export function entries_of_object_inner(obj) {
+	Object.entries(obj).map(x => x.map(String))
+}
+
+export function define_property(obj, k, v) {
+	Object.defineProperty(obj, k, { value: v, writable: false });
+}
+
+export function ws_key() {
+	let key = new Uint8Array(16);
+	crypto.getRandomValues(key);
+	return btoa(Array.from(key).map(String.fromCharCode).join(''));
+}
+"#)]
+extern "C" {
+	pub fn object_get(obj: &Object, key: &str) -> JsValue;
+	pub fn object_set(obj: &Object, key: &str, val: JsValue);
+
+	#[wasm_bindgen(catch)]
+	async fn convert_body_inner(val: JsValue) -> Result<JsValue, JsValue>;
+
+	fn entries_of_object_inner(obj: &Object) -> Vec<Array>;
+	pub fn define_property(obj: &Object, key: &str, val: JsValue);
+	pub fn ws_key() -> String;
+}
+
+pub async fn convert_body(val: JsValue) -> Result<(Uint8Array, Option<String>), JsValue> {
+	let req: Array = convert_body_inner(val).await?.unchecked_into();
+	let str: Option<JsString> = object_truthy(req.at(1)).map(|x| x.unchecked_into());
+	Ok((req.at(0).unchecked_into(), str.map(Into::into)))
 }
 
 pub fn entries_of_object(obj: &Object) -> Vec<Vec<String>> {
-	Object::entries(obj)
-		.to_vec()
-		.iter()
-		.filter_map(|val| {
-			Array::from(val)
-				.to_vec()
-				.iter()
-				.map(|val| val.as_string())
-				.collect::<Option<Vec<_>>>()
+	entries_of_object_inner(obj)
+		.into_iter()
+		.map(|x| {
+			x.iter()
+				.map(|x| x.unchecked_into::<JsString>().into())
+				.collect()
 		})
-		.collect::<Vec<Vec<_>>>()
-}
-
-pub fn define_property_obj(value: JsValue, writable: bool) -> Result<Object, JsValue> {
-	let entries: Array = [
-		Array::of2(&"value".into(), &value),
-		Array::of2(&"writable".into(), &writable.into()),
-	]
-	.iter()
-	.collect::<Array>();
-	Object::from_entries(&entries)
+		.collect()
 }
 
 pub fn asyncread_to_readablestream_stream<R: AsyncRead>(
@@ -233,4 +243,12 @@ pub fn asyncread_to_readablestream_stream<R: AsyncRead>(
 	ReaderStream::new(read)
 		.map_ok(|x| Uint8Array::from(x.as_ref()).into())
 		.map_err(|x| EpoxyError::from(x).into())
+}
+
+pub fn object_truthy(val: JsValue) -> Option<JsValue> {
+	if val.is_truthy() {
+		Some(val)
+	} else {
+		None
+	}
 }

@@ -18,12 +18,12 @@ use hyper::{body::Incoming, Uri};
 use hyper_util_wasm::client::legacy::Client;
 #[cfg(feature = "full")]
 use io_stream::{EpoxyIoStream, EpoxyUdpStream};
-use js_sys::{Array, Function, Object, Reflect};
+use js_sys::{Array, Function, Object};
 use stream_provider::{StreamProvider, StreamProviderService};
 use thiserror::Error;
 use utils::{
 	asyncread_to_readablestream_stream, convert_body, entries_of_object, is_null_body, is_redirect,
-	object_get, object_set, IncomingBody, UriExt, WasmExecutor,
+	object_get, object_set, object_truthy, IncomingBody, UriExt, WasmExecutor,
 };
 use wasm_bindgen::prelude::*;
 use wasm_streams::ReadableStream;
@@ -97,10 +97,6 @@ pub enum EpoxyError {
 	ResponseHeadersFromEntriesFailed,
 	#[error("Failed to construct response object")]
 	ResponseNewFailed,
-	#[error("Failed to construct define_property object")]
-	DefinePropertyObjFailed,
-	#[error("Failed to set raw header item")]
-	RawHeaderSetFailed,
 }
 
 impl From<EpoxyError> for JsValue {
@@ -222,10 +218,7 @@ pub struct EpoxyClient {
 #[wasm_bindgen]
 impl EpoxyClient {
 	#[wasm_bindgen(constructor)]
-	pub fn new(
-		wisp_url: String,
-		options: EpoxyClientOptions,
-	) -> Result<EpoxyClient, EpoxyError> {
+	pub fn new(wisp_url: String, options: EpoxyClientOptions) -> Result<EpoxyClient, EpoxyError> {
 		let wisp_url: Uri = wisp_url.try_into()?;
 		if wisp_url.scheme_str() != Some("wss") && wisp_url.scheme_str() != Some("ws") {
 			return Err(EpoxyError::InvalidUrlScheme);
@@ -406,32 +399,31 @@ impl EpoxyClient {
 		let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
 
 		let request_method = object_get(&options, "method")
-			.and_then(|x| x.as_string())
+			.as_string()
 			.unwrap_or_else(|| "GET".to_string());
 		let request_method: Method = Method::from_str(&request_method)?;
 
-		let request_redirect = object_get(&options, "redirect")
-			.map(|x| {
-				!matches!(
-					x.as_string().unwrap_or_default().as_str(),
-					"error" | "manual"
-				)
-			})
-			.unwrap_or(true);
+		let request_redirect = !matches!(
+			object_get(&options, "redirect")
+				.as_string()
+				.unwrap_or_default()
+				.as_str(),
+			"error" | "manual"
+		);
 
 		let mut body_content_type: Option<String> = None;
-		let body = match object_get(&options, "body") {
+		let body = match object_truthy(object_get(&options, "body")) {
 			Some(buf) => {
-				let (body, req) = convert_body(buf)
+				let (body, content_type) = convert_body(buf)
 					.await
 					.map_err(|_| EpoxyError::InvalidRequestBody)?;
-				body_content_type = req.headers().get("Content-Type").ok().flatten();
+				body_content_type = content_type;
 				Bytes::from(body.to_vec())
 			}
 			None => Bytes::new(),
 		};
 
-		let headers = object_get(&options, "headers").and_then(|val| {
+		let headers = object_truthy(object_get(&options, "headers")).and_then(|val| {
 			if web_sys::Headers::instanceof(&val) {
 				Some(entries_of_object(&Object::from_entries(&val).ok()?))
 			} else if val.is_truthy() {
@@ -548,42 +540,25 @@ impl EpoxyClient {
 		)
 		.map_err(|_| EpoxyError::ResponseNewFailed)?;
 
-		Object::define_property(
-			&resp,
-			&"url".into(),
-			&utils::define_property_obj(response_uri.to_string().into(), false)
-				.map_err(|_| EpoxyError::DefinePropertyObjFailed)?,
-		);
-
-		Object::define_property(
-			&resp,
-			&"redirected".into(),
-			&utils::define_property_obj(redirected.into(), false)
-				.map_err(|_| EpoxyError::DefinePropertyObjFailed)?,
-		);
+		utils::define_property(&resp, "url", response_uri.to_string().into());
+		utils::define_property(&resp, "redirected", redirected.into());
 
 		let raw_headers = Object::new();
 		for (k, v) in response_headers_raw.iter() {
-			let k: JsValue = k.to_string().into();
+			let k = k.as_str();
 			let v: JsValue = v.to_str()?.to_string().into();
-			if let Ok(jv) = Reflect::get(&raw_headers, &k) {
-				if jv.is_array() {
-					let arr = Array::from(&jv);
-					arr.push(&v);
-					object_set(&raw_headers, &k, &arr)?;
-				} else if jv.is_truthy() {
-					object_set(&raw_headers, &k, &Array::of2(&jv, &v))?;
-				} else {
-					object_set(&raw_headers, &k, &v)?;
-				}
+			let jv = object_get(&raw_headers, k);
+			if jv.is_array() {
+				let arr = Array::from(&jv);
+				arr.push(&v);
+				object_set(&raw_headers, &k, arr.into());
+			} else if jv.is_truthy() {
+				object_set(&raw_headers, &k, Array::of2(&jv, &v).into());
+			} else {
+				object_set(&raw_headers, &k, v);
 			}
 		}
-		Object::define_property(
-			&resp,
-			&"rawHeaders".into(),
-			&utils::define_property_obj(raw_headers.into(), false)
-				.map_err(|_| EpoxyError::DefinePropertyObjFailed)?,
-		);
+		utils::define_property(&resp, "rawHeaders", raw_headers.into());
 
 		Ok(resp)
 	}

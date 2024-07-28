@@ -21,28 +21,28 @@
 	"license": "AGPL-3.0-only",
 	"exports": {
 		".": {
-			"import": "./full/epoxy-module-bundled.js",
-			"types": "./full/epoxy-module-bundled.d.ts"
+			"import": "./full/epoxy-bundled.js",
+			"types": "./full/epoxy-bundled.d.ts"
 		},
 		"./epoxy": {
-			"import": "./full/epoxy-module.js",
-			"types": "./full/epoxy-module.d.ts"
+			"import": "./full/epoxy.js",
+			"types": "./full/epoxy.d.ts"
 		},
 		"./epoxy-bundled": {
-			"import": "./full/epoxy-module-bundled.js",
-			"types": "./full/epoxy-module-bundled.d.ts"
+			"import": "./full/epoxy-bundled.js",
+			"types": "./full/epoxy-bundled.d.ts"
 		},
 		"./minimal-epoxy": {
-			"import": "./minimal/epoxy-module.js",
-			"types": "./minimal/epoxy-module.d.ts"
+			"import": "./minimal/epoxy.js",
+			"types": "./minimal/epoxy.d.ts"
 		},
 		"./minimal-epoxy-bundled": {
-			"import": "./minimal/epoxy-module-bundled.js",
-			"types": "./minimal/epoxy-module-bundled.d.ts"
+			"import": "./minimal/epoxy-bundled.js",
+			"types": "./minimal/epoxy-bundled.d.ts"
 		}
 	},
-	"browser": "./full/epoxy-module-bundled.js",
-	"module": "./full/epoxy-module-bundled.js",
-	"main": "./full/epoxy-module-bundled.js",
-	"types": "./full/epoxy-module-bundled.d.ts"
+	"browser": "./full/epoxy-bundled.js",
+	"module": "./full/epoxy-bundled.js",
+	"main": "./full/epoxy-bundled.js",
+	"types": "./full/epoxy-bundled.d.ts"
 }
