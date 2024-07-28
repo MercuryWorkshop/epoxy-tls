@@ -46,25 +46,25 @@ type HttpBody = http_body_util::Full<Bytes>;
 
 #[derive(Debug, Error)]
 pub enum EpoxyError {
-	#[error("Invalid DNS name: {0:?}")]
+	#[error("Invalid DNS name: {0:?} ({0})")]
 	InvalidDnsName(#[from] futures_rustls::rustls::pki_types::InvalidDnsNameError),
-	#[error("Wisp: {0:?}")]
+	#[error("Wisp: {0:?} ({0})")]
 	Wisp(#[from] wisp_mux::WispError),
-	#[error("IO: {0:?}")]
+	#[error("IO: {0:?} ({0})")]
 	Io(#[from] std::io::Error),
-	#[error("HTTP: {0:?}")]
+	#[error("HTTP: {0:?} ({0})")]
 	Http(#[from] http::Error),
-	#[error("Hyper client: {0:?}")]
+	#[error("Hyper client: {0:?} ({0})")]
 	HyperClient(#[from] hyper_util_wasm::client::legacy::Error),
-	#[error("Hyper: {0:?}")]
+	#[error("Hyper: {0:?} ({0})")]
 	Hyper(#[from] hyper::Error),
-	#[error("HTTP ToStr: {0:?}")]
+	#[error("HTTP ToStr: {0:?} ({0})")]
 	ToStr(#[from] http::header::ToStrError),
 	#[cfg(feature = "full")]
-	#[error("Getrandom: {0:?}")]
+	#[error("Getrandom: {0:?} ({0})")]
 	GetRandom(#[from] getrandom::Error),
 	#[cfg(feature = "full")]
-	#[error("Fastwebsockets: {0:?}")]
+	#[error("Fastwebsockets: {0:?} ({0})")]
 	FastWebSockets(#[from] fastwebsockets::WebSocketError),
 
 	#[error("Invalid URL scheme")]
@@ -231,7 +231,7 @@ impl EpoxyClient {
 			.http09_responses(true)
 			.http1_title_case_headers(true)
 			.http1_preserve_header_case(true)
-			.http1_max_headers(200)
+			.http1_max_headers(1)
 			.build(service);
 
 		Ok(Self {
