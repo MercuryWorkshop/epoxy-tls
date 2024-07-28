@@ -103,6 +103,16 @@ pub struct StreamConfig {
 	/// Whether or not to allow connections to non-globally-routable IP addresses.
 	pub allow_non_global: bool,
 
+	/// Regex whitelist of hosts for TCP connections.
+	pub allow_tcp_hosts: Vec<String>,
+	/// Regex blacklist of hosts for TCP connections.
+	pub block_tcp_hosts: Vec<String>,
+
+	/// Regex whitelist of hosts for UDP connections.
+	pub allow_udp_hosts: Vec<String>,
+	/// Regex blacklist of hosts for UDP connections.
+	pub block_udp_hosts: Vec<String>,
+
 	/// Regex whitelist of hosts.
 	pub allow_hosts: Vec<String>,
 	/// Regex blacklist of hosts.
@@ -131,6 +141,12 @@ struct ConfigCache {
 	pub allowed_hosts: RegexSet,
 	pub blocked_hosts: RegexSet,
 
+	pub allowed_tcp_hosts: RegexSet,
+	pub blocked_tcp_hosts: RegexSet,
+
+	pub allowed_udp_hosts: RegexSet,
+	pub blocked_udp_hosts: RegexSet,
+
 	pub wisp_config: (Option<Vec<AnyProtocolExtensionBuilder>>, u32),
 }
 
@@ -149,8 +165,16 @@ lazy_static! {
 				.iter()
 				.map(|x| x[0]..=x[1])
 				.collect(),
+
 			allowed_hosts: RegexSet::new(&CONFIG.stream.allow_hosts).unwrap(),
 			blocked_hosts: RegexSet::new(&CONFIG.stream.block_hosts).unwrap(),
+
+			allowed_tcp_hosts: RegexSet::new(&CONFIG.stream.allow_tcp_hosts).unwrap(),
+			blocked_tcp_hosts: RegexSet::new(&CONFIG.stream.block_tcp_hosts).unwrap(),
+
+			allowed_udp_hosts: RegexSet::new(&CONFIG.stream.allow_udp_hosts).unwrap(),
+			blocked_udp_hosts: RegexSet::new(&CONFIG.stream.block_udp_hosts).unwrap(),
+
 			wisp_config: CONFIG.wisp.to_opts_inner().unwrap(),
 		}
 	};
@@ -242,6 +266,12 @@ impl Default for StreamConfig {
 			allow_global: true,
 			allow_non_global: true,
 
+			allow_tcp_hosts: Vec::new(),
+			block_tcp_hosts: Vec::new(),
+
+			allow_udp_hosts: Vec::new(),
+			block_udp_hosts: Vec::new(),
+
 			allow_hosts: Vec::new(),
 			block_hosts: Vec::new(),
 
@@ -266,6 +296,22 @@ impl StreamConfig {
 
 	pub fn blocked_hosts(&self) -> &RegexSet {
 		&CONFIG_CACHE.blocked_hosts
+	}
+
+	pub fn allowed_tcp_hosts(&self) -> &RegexSet {
+		&CONFIG_CACHE.allowed_tcp_hosts
+	}
+
+	pub fn blocked_tcp_hosts(&self) -> &RegexSet {
+		&CONFIG_CACHE.blocked_tcp_hosts
+	}
+
+	pub fn allowed_udp_hosts(&self) -> &RegexSet {
+		&CONFIG_CACHE.allowed_udp_hosts
+	}
+
+	pub fn blocked_udp_hosts(&self) -> &RegexSet {
+		&CONFIG_CACHE.blocked_udp_hosts
 	}
 }
 

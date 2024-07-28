@@ -8,6 +8,7 @@ use bytes::BytesMut;
 use fastwebsockets::{FragmentCollector, Frame, OpCode, Payload, WebSocketError};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
+use regex::RegexSet;
 use tokio::{
 	fs::{remove_file, try_exists},
 	net::{lookup_host, tcp, unix, TcpListener, TcpStream, UdpSocket, UnixListener, UnixStream},
@@ -98,6 +99,26 @@ impl ServerListener {
 	}
 }
 
+fn match_addr(str: &str, allowed: &RegexSet, blocked: &RegexSet) -> bool {
+	blocked.is_match(str) && !allowed.is_match(str)
+}
+
+fn allowed_set(stream_type: StreamType) -> &'static RegexSet {
+	match stream_type {
+		StreamType::Tcp => CONFIG.stream.allowed_tcp_hosts(),
+		StreamType::Udp => CONFIG.stream.allowed_udp_hosts(),
+		StreamType::Unknown(_) => unreachable!(),
+	}
+}
+
+fn blocked_set(stream_type: StreamType) -> &'static RegexSet {
+	match stream_type {
+		StreamType::Tcp => CONFIG.stream.blocked_tcp_hosts(),
+		StreamType::Udp => CONFIG.stream.blocked_udp_hosts(),
+		StreamType::Unknown(_) => unreachable!(),
+	}
+}
+
 pub enum ClientStream {
 	Tcp(TcpStream),
 	Udp(UdpSocket),
@@ -151,14 +172,20 @@ impl ClientStream {
 			}
 		}
 
-		if CONFIG
-			.stream
-			.blocked_hosts()
-			.is_match(&packet.destination_hostname)
-			&& !CONFIG
-				.stream
-				.allowed_hosts()
-				.is_match(&packet.destination_hostname)
+		if match_addr(
+			&packet.destination_hostname,
+			allowed_set(packet.stream_type),
+			blocked_set(packet.stream_type),
+		) {
+			return Ok(ResolvedPacket::Blocked);
+		}
+
+		// allow stream type whitelists through
+		if match_addr(
+			&packet.destination_hostname,
+			CONFIG.stream.allowed_hosts(),
+			CONFIG.stream.blocked_hosts(),
+		) && !allowed_set(packet.stream_type).is_match(&packet.destination_hostname)
 		{
 			return Ok(ResolvedPacket::Blocked);
 		}
