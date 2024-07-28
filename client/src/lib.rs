@@ -231,7 +231,7 @@ impl EpoxyClient {
 			.http09_responses(true)
 			.http1_title_case_headers(true)
 			.http1_preserve_header_case(true)
-			.http1_max_headers(1)
+			.http1_max_headers(200)
 			.build(service);
 
 		Ok(Self {
