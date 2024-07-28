@@ -130,10 +130,15 @@ pub enum ResolvedPacket {
 	Valid(ConnectPacket),
 	NoResolvedAddrs,
 	Blocked,
+	Invalid,
 }
 
 impl ClientStream {
 	pub async fn resolve(packet: ConnectPacket) -> anyhow::Result<ResolvedPacket> {
+		if matches!(packet.stream_type, StreamType::Unknown(_)) {
+			return Ok(ResolvedPacket::Invalid);
+		}
+
 		if !CONFIG.stream.allow_udp && packet.stream_type == StreamType::Udp {
 			return Ok(ResolvedPacket::Blocked);
 		}

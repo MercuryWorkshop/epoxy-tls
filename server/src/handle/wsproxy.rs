@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use fastwebsockets::{upgrade::UpgradeFut, CloseCode, FragmentCollector};
+use futures_util::io::Close;
 use tokio::{
 	io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
 	select,
@@ -66,6 +67,15 @@ pub async fn handle_wsproxy(
 		}
 		ResolvedPacket::Blocked => {
 			let _ = ws.close(CloseCode::Error.into(), b"host is blocked").await;
+			return Ok(());
+		}
+		ResolvedPacket::Invalid => {
+			let _ = ws
+				.close(
+					CloseCode::Error.into(),
+					b"invalid host/port/type combination",
+				)
+				.await;
 			return Ok(());
 		}
 	};

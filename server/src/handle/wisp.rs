@@ -71,6 +71,10 @@ async fn handle_stream(connect: ConnectPacket, muxstream: MuxStream, id: String)
 				.await;
 			return;
 		}
+		ResolvedPacket::Invalid => {
+			let _ = muxstream.close(CloseReason::ServerStreamInvalidInfo).await;
+			return;
+		}
 	};
 
 	let resolved_stream = connect.clone();
