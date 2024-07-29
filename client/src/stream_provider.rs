@@ -82,7 +82,8 @@ impl StreamProvider {
 		locked.replace(mux);
 		let current_client = self.current_client.clone();
 		spawn_local(async move {
-			console_log!("multiplexor future result: {:?}", fut.await);
+			let result = fut.await;
+			console_log!("multiplexor future result: {:?}",result);
 			current_client.lock().await.take();
 		});
 		Ok(())
