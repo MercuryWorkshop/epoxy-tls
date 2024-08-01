@@ -763,17 +763,20 @@ impl ClientMux {
 			let (supported_extensions, extra_packet, downgraded) =
 				if let Some(builders) = extension_builders {
 					let x = maybe_wisp_v2(&mut read, &write, builders).await?;
-					write
-						.write_frame(
-							Packet::new_info(
-								builders
-									.iter()
-									.map(|x| x.build_to_extension(Role::Client))
-									.collect(),
+					// if not downgraded
+					if !x.2 {
+						write
+							.write_frame(
+								Packet::new_info(
+									builders
+										.iter()
+										.map(|x| x.build_to_extension(Role::Client))
+										.collect(),
+								)
+								.into(),
 							)
-							.into(),
-						)
-						.await?;
+							.await?;
+					}
 					x
 				} else {
 					(Vec::new(), None, true)

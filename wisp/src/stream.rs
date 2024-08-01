@@ -215,7 +215,7 @@ impl MuxStreamWrite {
 		))
 	}
 
-	/// Turn the write half into one that implements futures `Sink`, consuming it. 
+	/// Turn the write half into one that implements futures `Sink`, consuming it.
 	pub fn into_sink(self) -> MuxStreamIoSink {
 		MuxStreamIoSink {
 			tx: self.into_inner_sink(),
