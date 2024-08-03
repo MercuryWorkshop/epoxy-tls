@@ -157,9 +157,12 @@ impl std::error::Error for WispError {}
 struct MuxMapValue {
 	stream: mpsc::Sender<Bytes>,
 	stream_type: StreamType,
+
 	flow_control: Arc<AtomicU32>,
 	flow_control_event: Arc<Event>,
+
 	is_closed: Arc<AtomicBool>,
+	close_reason: Arc<AtomicCloseReason>,
 	is_closed_event: Arc<Event>,
 }
 
@@ -239,15 +242,20 @@ impl MuxInner {
 		let flow_control: Arc<AtomicU32> = AtomicU32::new(self.buffer_size).into();
 
 		let is_closed: Arc<AtomicBool> = AtomicBool::new(false).into();
+		let close_reason: Arc<AtomicCloseReason> =
+			AtomicCloseReason::new(CloseReason::Unknown).into();
 		let is_closed_event: Arc<Event> = Event::new().into();
 
 		Ok((
 			MuxMapValue {
 				stream: ch_tx,
 				stream_type,
+
 				flow_control: flow_control.clone(),
 				flow_control_event: flow_control_event.clone(),
+
 				is_closed: is_closed.clone(),
+				close_reason: close_reason.clone(),
 				is_closed_event: is_closed_event.clone(),
 			},
 			MuxStream::new(
@@ -259,6 +267,7 @@ impl MuxInner {
 				tx,
 				is_closed,
 				is_closed_event,
+				close_reason,
 				flow_control,
 				flow_control_event,
 				target_buffer_size,
@@ -309,6 +318,9 @@ impl MuxInner {
 				}
 				WsEvent::Close(packet, channel) => {
 					if let Some((_, stream)) = self.stream_map.remove(&packet.stream_id) {
+						if let PacketType::Close(close) = packet.packet_type {
+							self.close_stream(packet.stream_id, close);
+						}
 						let _ = channel.send(self.tx.write_frame(packet.into()).await);
 						drop(stream.stream)
 					} else {
@@ -328,8 +340,11 @@ impl MuxInner {
 		}
 	}
 
-	fn close_stream(&self, packet: Packet) {
-		if let Some((_, stream)) = self.stream_map.remove(&packet.stream_id) {
+	fn close_stream(&self, stream_id: u32, close_packet: ClosePacket) {
+		if let Some((_, stream)) = self.stream_map.remove(&stream_id) {
+			stream
+				.close_reason
+				.store(close_packet.reason, Ordering::Release);
 			stream.is_closed.store(true, Ordering::Release);
 			stream.is_closed_event.notify(usize::MAX);
 			stream.flow_control.store(u32::MAX, Ordering::Release);
@@ -410,11 +425,11 @@ impl MuxInner {
 							}
 						}
 					}
-					Close(_) => {
+					Close(inner_packet) => {
 						if packet.stream_id == 0 {
 							break Ok(());
 						}
-						self.close_stream(packet)
+						self.close_stream(packet.stream_id, inner_packet)
 					}
 				}
 			}
@@ -472,11 +487,11 @@ impl MuxInner {
 							}
 						}
 					}
-					Close(_) => {
+					Close(inner_packet) => {
 						if packet.stream_id == 0 {
 							break Ok(());
 						}
-						self.close_stream(packet)
+						self.close_stream(packet.stream_id, inner_packet);
 					}
 				}
 			}

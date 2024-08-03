@@ -38,59 +38,100 @@ impl From<StreamType> for u8 {
 	}
 }
 
-/// Close reason.
-///
-/// See [the
-/// docs](https://github.com/MercuryWorkshop/wisp-protocol/blob/main/protocol.md#clientserver-close-reasons)
-#[derive(Debug, PartialEq, Copy, Clone)]
-pub enum CloseReason {
-	/// Reason unspecified or unknown.
-	Unknown = 0x01,
-	/// Voluntary stream closure.
-	Voluntary = 0x02,
-	/// Unexpected stream closure due to a network error.
-	Unexpected = 0x03,
-	/// Incompatible extensions. Only used during the handshake.
-	IncompatibleExtensions = 0x04,
-	/// Stream creation failed due to invalid information.
-	ServerStreamInvalidInfo = 0x41,
-	/// Stream creation failed due to an unreachable destination host.
-	ServerStreamUnreachable = 0x42,
-	/// Stream creation timed out due to the destination server not responding.
-	ServerStreamConnectionTimedOut = 0x43,
-	/// Stream creation failed due to the destination server refusing the connection.
-	ServerStreamConnectionRefused = 0x44,
-	/// TCP data transfer timed out.
-	ServerStreamTimedOut = 0x47,
-	/// Stream destination address/domain is intentionally blocked by the proxy server.
-	ServerStreamBlockedAddress = 0x48,
-	/// Connection throttled by the server.
-	ServerStreamThrottled = 0x49,
-	/// The client has encountered an unexpected error.
-	ClientUnexpected = 0x81,
-}
+mod close {
+	use std::fmt::Display;
 
-impl TryFrom<u8> for CloseReason {
-	type Error = WispError;
-	fn try_from(close_reason: u8) -> Result<Self, Self::Error> {
-		use CloseReason as R;
-		match close_reason {
-			0x01 => Ok(R::Unknown),
-			0x02 => Ok(R::Voluntary),
-			0x03 => Ok(R::Unexpected),
-			0x04 => Ok(R::IncompatibleExtensions),
-			0x41 => Ok(R::ServerStreamInvalidInfo),
-			0x42 => Ok(R::ServerStreamUnreachable),
-			0x43 => Ok(R::ServerStreamConnectionTimedOut),
-			0x44 => Ok(R::ServerStreamConnectionRefused),
-			0x47 => Ok(R::ServerStreamTimedOut),
-			0x48 => Ok(R::ServerStreamBlockedAddress),
-			0x49 => Ok(R::ServerStreamThrottled),
-			0x81 => Ok(R::ClientUnexpected),
-			_ => Err(Self::Error::InvalidCloseReason),
+	use atomic_enum::atomic_enum;
+
+	use crate::WispError;
+
+	/// Close reason.
+	///
+	/// See [the
+	/// docs](https://github.com/MercuryWorkshop/wisp-protocol/blob/main/protocol.md#clientserver-close-reasons)
+	#[derive(PartialEq)]
+	#[repr(u8)]
+	#[atomic_enum]
+	pub enum CloseReason {
+		/// Reason unspecified or unknown.
+		Unknown = 0x01,
+		/// Voluntary stream closure.
+		Voluntary = 0x02,
+		/// Unexpected stream closure due to a network error.
+		Unexpected = 0x03,
+		/// Incompatible extensions. Only used during the handshake.
+		IncompatibleExtensions = 0x04,
+		/// Stream creation failed due to invalid information.
+		ServerStreamInvalidInfo = 0x41,
+		/// Stream creation failed due to an unreachable destination host.
+		ServerStreamUnreachable = 0x42,
+		/// Stream creation timed out due to the destination server not responding.
+		ServerStreamConnectionTimedOut = 0x43,
+		/// Stream creation failed due to the destination server refusing the connection.
+		ServerStreamConnectionRefused = 0x44,
+		/// TCP data transfer timed out.
+		ServerStreamTimedOut = 0x47,
+		/// Stream destination address/domain is intentionally blocked by the proxy server.
+		ServerStreamBlockedAddress = 0x48,
+		/// Connection throttled by the server.
+		ServerStreamThrottled = 0x49,
+		/// The client has encountered an unexpected error.
+		ClientUnexpected = 0x81,
+	}
+
+	impl TryFrom<u8> for CloseReason {
+		type Error = WispError;
+		fn try_from(close_reason: u8) -> Result<Self, Self::Error> {
+			use CloseReason as R;
+			match close_reason {
+				0x01 => Ok(R::Unknown),
+				0x02 => Ok(R::Voluntary),
+				0x03 => Ok(R::Unexpected),
+				0x04 => Ok(R::IncompatibleExtensions),
+				0x41 => Ok(R::ServerStreamInvalidInfo),
+				0x42 => Ok(R::ServerStreamUnreachable),
+				0x43 => Ok(R::ServerStreamConnectionTimedOut),
+				0x44 => Ok(R::ServerStreamConnectionRefused),
+				0x47 => Ok(R::ServerStreamTimedOut),
+				0x48 => Ok(R::ServerStreamBlockedAddress),
+				0x49 => Ok(R::ServerStreamThrottled),
+				0x81 => Ok(R::ClientUnexpected),
+				_ => Err(Self::Error::InvalidCloseReason),
+			}
+		}
+	}
+
+	impl Display for CloseReason {
+		fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+			use CloseReason as C;
+			write!(
+				f,
+				"{}",
+				match self {
+					C::Unknown => "Unknown close reason",
+					C::Voluntary => "Voluntarily closed",
+					C::Unexpected => "Unexpectedly closed",
+					C::IncompatibleExtensions => "Incompatible protocol extensions",
+					C::ServerStreamInvalidInfo =>
+						"Stream creation failed due to invalid information",
+					C::ServerStreamUnreachable =>
+						"Stream creation failed due to an unreachable destination",
+					C::ServerStreamConnectionTimedOut =>
+						"Stream creation failed due to destination not responding",
+					C::ServerStreamConnectionRefused =>
+						"Stream creation failed due to destination refusing connection",
+					C::ServerStreamTimedOut => "TCP timed out",
+					C::ServerStreamBlockedAddress => "Destination address is blocked",
+					C::ServerStreamThrottled => "Throttled",
+					C::ClientUnexpected => "Client encountered unexpected error",
+				}
+			)
 		}
 	}
 }
+
+pub(crate) use close::AtomicCloseReason;
+pub use close::CloseReason;
 
 trait Encode {
 	fn encode(self, bytes: &mut BytesMut);

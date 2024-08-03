@@ -2,7 +2,6 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use fastwebsockets::{upgrade::UpgradeFut, CloseCode, FragmentCollector};
-use futures_util::io::Close;
 use tokio::{
 	io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
 	select,

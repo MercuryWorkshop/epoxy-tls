@@ -111,7 +111,7 @@ pub struct EpoxyUdpStream {
 #[wasm_bindgen]
 impl EpoxyUdpStream {
 	pub(crate) fn connect(stream: ProviderUnencryptedStream, handlers: EpoxyHandlers) -> Self {
-		let (mut rx, tx) = stream.into_split();
+		let (mut rx, tx) = stream.into_inner().into_split();
 
 		let EpoxyHandlers {
 			onopen,

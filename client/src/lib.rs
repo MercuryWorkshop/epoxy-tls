@@ -30,6 +30,7 @@ use wasm_streams::ReadableStream;
 use web_sys::ResponseInit;
 #[cfg(feature = "full")]
 use websocket::EpoxyWebSocket;
+use wisp_mux::CloseReason;
 #[cfg(feature = "full")]
 use wisp_mux::StreamType;
 
@@ -50,6 +51,8 @@ pub enum EpoxyError {
 	InvalidDnsName(#[from] futures_rustls::rustls::pki_types::InvalidDnsNameError),
 	#[error("Wisp: {0:?} ({0})")]
 	Wisp(#[from] wisp_mux::WispError),
+	#[error("Wisp server closed: {0}")]
+	WispCloseReason(wisp_mux::CloseReason),
 	#[error("IO: {0:?} ({0})")]
 	Io(#[from] std::io::Error),
 	#[error("HTTP: {0:?} ({0})")]
@@ -60,9 +63,6 @@ pub enum EpoxyError {
 	Hyper(#[from] hyper::Error),
 	#[error("HTTP ToStr: {0:?} ({0})")]
 	ToStr(#[from] http::header::ToStrError),
-	#[cfg(feature = "full")]
-	#[error("Getrandom: {0:?} ({0})")]
-	GetRandom(#[from] getrandom::Error),
 	#[cfg(feature = "full")]
 	#[error("Fastwebsockets: {0:?} ({0})")]
 	FastWebSockets(#[from] fastwebsockets::WebSocketError),
@@ -132,6 +132,12 @@ impl From<InvalidHeaderValue> for EpoxyError {
 impl From<InvalidMethod> for EpoxyError {
 	fn from(value: InvalidMethod) -> Self {
 		http::Error::from(value).into()
+	}
+}
+
+impl From<CloseReason> for EpoxyError {
+	fn from(value: CloseReason) -> Self {
+	    EpoxyError::WispCloseReason(value)
 	}
 }
 

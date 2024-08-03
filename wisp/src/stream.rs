@@ -1,7 +1,7 @@
 use crate::{
 	sink_unfold,
 	ws::{Frame, LockedWebSocketWrite, Payload},
-	CloseReason, Packet, Role, StreamType, WispError,
+	AtomicCloseReason, CloseReason, Packet, Role, StreamType, WispError,
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -40,11 +40,16 @@ pub struct MuxStreamRead {
 	pub stream_id: u32,
 	/// Type of the stream.
 	pub stream_type: StreamType,
+
 	role: Role,
+
 	tx: LockedWebSocketWrite,
 	rx: mpsc::Receiver<Bytes>,
+
 	is_closed: Arc<AtomicBool>,
 	is_closed_event: Arc<Event>,
+	close_reason: Arc<AtomicCloseReason>,
+
 	flow_control: Arc<AtomicU32>,
 	flow_control_read: AtomicU32,
 	target_flow_control: u32,
@@ -91,6 +96,15 @@ impl MuxStreamRead {
 			rx: self.into_inner_stream(),
 		}
 	}
+
+	/// Get the stream's close reason, if it was closed.
+	pub fn get_close_reason(&self) -> Option<CloseReason> {
+		if self.is_closed.load(Ordering::Acquire) {
+			Some(self.close_reason.load(Ordering::Acquire))
+		} else {
+			None
+		}
+	}
 }
 
 /// Write side of a multiplexor stream.
@@ -99,10 +113,14 @@ pub struct MuxStreamWrite {
 	pub stream_id: u32,
 	/// Type of the stream.
 	pub stream_type: StreamType,
+
 	role: Role,
 	mux_tx: mpsc::Sender<WsEvent>,
 	tx: LockedWebSocketWrite,
+
 	is_closed: Arc<AtomicBool>,
+	close_reason: Arc<AtomicCloseReason>,
+
 	continue_recieved: Arc<Event>,
 	flow_control: Arc<AtomicU32>,
 }
@@ -165,6 +183,7 @@ impl MuxStreamWrite {
 			stream_id: self.stream_id,
 			close_channel: self.mux_tx.clone(),
 			is_closed: self.is_closed.clone(),
+			close_reason: self.close_reason.clone(),
 		}
 	}
 
@@ -195,6 +214,15 @@ impl MuxStreamWrite {
 		rx.await.map_err(|_| WispError::MuxMessageFailedToRecv)??;
 
 		Ok(())
+	}
+
+	/// Get the stream's close reason, if it was closed.
+	pub fn get_close_reason(&self) -> Option<CloseReason> {
+		if self.is_closed.load(Ordering::Acquire) {
+			Some(self.close_reason.load(Ordering::Acquire))
+		} else {
+			None
+		}
 	}
 
 	pub(crate) fn into_inner_sink(
@@ -255,6 +283,7 @@ impl MuxStream {
 		tx: LockedWebSocketWrite,
 		is_closed: Arc<AtomicBool>,
 		is_closed_event: Arc<Event>,
+		close_reason: Arc<AtomicCloseReason>,
 		flow_control: Arc<AtomicU32>,
 		continue_recieved: Arc<Event>,
 		target_flow_control: u32,
@@ -269,6 +298,7 @@ impl MuxStream {
 				rx,
 				is_closed: is_closed.clone(),
 				is_closed_event: is_closed_event.clone(),
+				close_reason: close_reason.clone(),
 				flow_control: flow_control.clone(),
 				flow_control_read: AtomicU32::new(0),
 				target_flow_control,
@@ -280,6 +310,7 @@ impl MuxStream {
 				mux_tx,
 				tx,
 				is_closed: is_closed.clone(),
+				close_reason: close_reason.clone(),
 				flow_control: flow_control.clone(),
 				continue_recieved: continue_recieved.clone(),
 			},
@@ -347,6 +378,7 @@ pub struct MuxStreamCloser {
 	pub stream_id: u32,
 	close_channel: mpsc::Sender<WsEvent>,
 	is_closed: Arc<AtomicBool>,
+	close_reason: Arc<AtomicCloseReason>,
 }
 
 impl MuxStreamCloser {
@@ -368,6 +400,15 @@ impl MuxStreamCloser {
 		rx.await.map_err(|_| WispError::MuxMessageFailedToRecv)??;
 
 		Ok(())
+	}
+
+	/// Get the stream's close reason, if it was closed.
+	pub fn get_close_reason(&self) -> Option<CloseReason> {
+		if self.is_closed.load(Ordering::Acquire) {
+			Some(self.close_reason.load(Ordering::Acquire))
+		} else {
+			None
+		}
 	}
 }
 
