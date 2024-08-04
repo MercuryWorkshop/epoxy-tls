@@ -11,30 +11,19 @@ use hyper::{
 };
 use hyper_util::rt::TokioIo;
 use tokio::net::{TcpListener, TcpStream};
-use tokio_native_tls::{native_tls, TlsAcceptor};
 use tokio_util::codec::{BytesCodec, Framed};
 
 type HttpBody = http_body_util::Empty<hyper::body::Bytes>;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Error> {
-    let pem = include_bytes!("./pem.pem");
-    let key = include_bytes!("./key.pem");
-    let identity = native_tls::Identity::from_pkcs8(pem, key).expect("failed to make identity");
-
     let socket = TcpListener::bind("0.0.0.0:4000")
         .await
         .expect("failed to bind");
-    let acceptor = TlsAcceptor::from(
-        native_tls::TlsAcceptor::new(identity).expect("failed to make tls acceptor"),
-    );
-    let acceptor = std::sync::Arc::new(acceptor);
 
     println!("listening on 0.0.0.0:4000");
     while let Ok((stream, addr)) = socket.accept().await {
-        let acceptor_cloned = acceptor.clone();
         tokio::spawn(async move {
-            let stream = acceptor_cloned.accept(stream).await.expect("not tls");
             let io = TokioIo::new(stream);
             let service = service_fn(move |res| accept_http(res, addr.to_string()));
             let conn = http1::Builder::new()
