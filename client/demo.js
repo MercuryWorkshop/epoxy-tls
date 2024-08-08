@@ -1,4 +1,4 @@
-import initEpoxy, { EpoxyClient, EpoxyClientOptions, EpoxyHandlers } from "./pkg/epoxy-bundled.js";
+import initEpoxy, { EpoxyClient, EpoxyClientOptions, EpoxyHandlers, info as epoxyInfo } from "./pkg/epoxy-bundled.js";
 
 (async () => {
 	const params = (new URL(location.href)).searchParams;
@@ -40,6 +40,7 @@ import initEpoxy, { EpoxyClient, EpoxyClientOptions, EpoxyHandlers } from "./pkg
 	console.log(epoxy_client);
 	// you can change the user agent and redirect limit in JS
 	epoxy_client.redirect_limit = 15;
+	console.log(epoxyInfo());
 
 	const test_mux = async (url) => {
 		const t0 = performance.now();
