@@ -2186,7 +2186,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-mux"
-version = "5.0.1"
+version = "5.1.0"
 dependencies = [
  "async-trait",
  "atomic_enum",
