@@ -195,7 +195,7 @@ export async function convert_body_inner(body) {
 }
 
 export function entries_of_object_inner(obj) {
-	Object.entries(obj).map(x => x.map(String))
+	return Object.entries(obj).map(x => x.map(String));
 }
 
 export function define_property(obj, k, v) {
