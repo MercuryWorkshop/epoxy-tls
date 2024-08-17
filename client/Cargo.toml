@@ -23,7 +23,7 @@ hyper-util-wasm = { git = "https://github.com/r58Playz/hyper-util-wasm", branch 
 js-sys = "0.3.69"
 lazy_static = "1.5.0"
 pin-project-lite = "0.2.14"
-send_wrapper = "0.4.0"
+send_wrapper = { version = "0.6.0", features = ["futures"] }
 thiserror = "1.0.61"
 tokio = "1.38.0"
 wasm-bindgen = "0.2.92"

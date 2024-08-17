@@ -2,6 +2,6 @@ build.sh
 Cargo.toml
 serve.py
 src
-tests
-test.sh
 .cargo
+index.html
+demo.js

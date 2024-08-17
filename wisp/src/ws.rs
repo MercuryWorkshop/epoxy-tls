@@ -166,6 +166,23 @@ pub trait WebSocketRead {
 	}
 }
 
+#[async_trait]
+impl WebSocketRead for Box<dyn WebSocketRead + Send + Sync> {
+	async fn wisp_read_frame(
+		&mut self,
+		tx: &LockedWebSocketWrite,
+	) -> Result<Frame<'static>, WispError> {
+		self.as_mut().wisp_read_frame(tx).await
+	}
+
+	async fn wisp_read_split(
+		&mut self,
+		tx: &LockedWebSocketWrite,
+	) -> Result<(Frame<'static>, Option<Frame<'static>>), WispError> {
+		self.as_mut().wisp_read_split(tx).await
+	}
+}
+
 /// Generic WebSocket write trait.
 #[async_trait]
 pub trait WebSocketWrite {
@@ -185,6 +202,25 @@ pub trait WebSocketWrite {
 		payload.extend_from_slice(&body.payload);
 		self.wisp_write_frame(Frame::binary(Payload::Bytes(payload)))
 			.await
+	}
+}
+
+#[async_trait]
+impl WebSocketWrite for Box<dyn WebSocketWrite + Send + Sync> {
+	async fn wisp_write_frame(&mut self, frame: Frame<'_>) -> Result<(), WispError> {
+		self.as_mut().wisp_write_frame(frame).await
+	}
+
+	async fn wisp_close(&mut self) -> Result<(), WispError> {
+		self.as_mut().wisp_close().await
+	}
+
+	async fn wisp_write_split(
+		&mut self,
+		header: Frame<'_>,
+		body: Frame<'_>,
+	) -> Result<(), WispError> {
+		self.as_mut().wisp_write_split(header, body).await
 	}
 }
 

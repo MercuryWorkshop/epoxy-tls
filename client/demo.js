@@ -254,7 +254,6 @@ import initEpoxy, { EpoxyClient, EpoxyClientOptions, EpoxyHandlers, info as epox
 		}
 		total_mux_multi = total_mux_multi / num_outer_tests;
 		log(`total avg mux (${num_outer_tests} tests of ${num_inner_tests} reqs): ${total_mux_multi} ms or ${total_mux_multi / 1000} s`);
-
 	} else {
 		console.time();
 		let resp = await epoxy_client.fetch("https://www.example.com/");

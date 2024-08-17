@@ -93,6 +93,8 @@ impl MuxStreamRead {
 	/// Turn the read half into one that implements futures `Stream`, consuming it.
 	pub fn into_stream(self) -> MuxStreamIoStream {
 		MuxStreamIoStream {
+			close_reason: self.close_reason.clone(),
+			is_closed: self.is_closed.clone(),
 			rx: self.into_inner_stream(),
 		}
 	}
@@ -246,6 +248,8 @@ impl MuxStreamWrite {
 	/// Turn the write half into one that implements futures `Sink`, consuming it.
 	pub fn into_sink(self) -> MuxStreamIoSink {
 		MuxStreamIoSink {
+			close_reason: self.close_reason.clone(),
+			is_closed: self.is_closed.clone(),
 			tx: self.into_inner_sink(),
 		}
 	}
@@ -352,6 +356,11 @@ impl MuxStream {
 		self.tx.get_protocol_extension_stream()
 	}
 
+	/// Get the stream's close reason, if it was closed.
+	pub fn get_close_reason(&self) -> Option<CloseReason> {
+		self.rx.get_close_reason()
+	}
+
 	/// Close the stream. You will no longer be able to write or read after this has been called.
 	pub async fn close(&self, reason: CloseReason) -> Result<(), WispError> {
 		self.tx.close(reason).await
@@ -455,6 +464,11 @@ impl MuxStreamIo {
 		}
 	}
 
+	/// Get the stream's close reason, if it was closed.
+	pub fn get_close_reason(&self) -> Option<CloseReason> {
+		self.rx.get_close_reason()
+	}
+
 	/// Split the stream into read and write parts, consuming it.
 	pub fn into_split(self) -> (MuxStreamIoStream, MuxStreamIoSink) {
 		(self.rx, self.tx)
@@ -489,6 +503,8 @@ pin_project! {
 	pub struct MuxStreamIoStream {
 		#[pin]
 		rx: Pin<Box<dyn Stream<Item = Bytes> + Send>>,
+		is_closed: Arc<AtomicBool>,
+		close_reason: Arc<AtomicCloseReason>,
 	}
 }
 
@@ -496,6 +512,15 @@ impl MuxStreamIoStream {
 	/// Turn the stream into one that implements futures `AsyncRead + AsyncBufRead`.
 	pub fn into_asyncread(self) -> MuxStreamAsyncRead {
 		MuxStreamAsyncRead::new(self)
+	}
+
+	/// Get the stream's close reason, if it was closed.
+	pub fn get_close_reason(&self) -> Option<CloseReason> {
+		if self.is_closed.load(Ordering::Acquire) {
+			Some(self.close_reason.load(Ordering::Acquire))
+		} else {
+			None
+		}
 	}
 }
 
@@ -511,6 +536,8 @@ pin_project! {
 	pub struct MuxStreamIoSink {
 		#[pin]
 		tx: Pin<Box<dyn Sink<Payload<'static>, Error = WispError> + Send>>,
+		is_closed: Arc<AtomicBool>,
+		close_reason: Arc<AtomicCloseReason>,
 	}
 }
 
@@ -518,6 +545,15 @@ impl MuxStreamIoSink {
 	/// Turn the sink into one that implements futures `AsyncWrite`.
 	pub fn into_asyncwrite(self) -> MuxStreamAsyncWrite {
 		MuxStreamAsyncWrite::new(self)
+	}
+
+	/// Get the stream's close reason, if it was closed.
+	pub fn get_close_reason(&self) -> Option<CloseReason> {
+		if self.is_closed.load(Ordering::Acquire) {
+			Some(self.close_reason.load(Ordering::Acquire))
+		} else {
+			None
+		}
 	}
 }
 
@@ -560,6 +596,11 @@ pin_project! {
 }
 
 impl MuxStreamAsyncRW {
+	/// Get the stream's close reason, if it was closed.
+	pub fn get_close_reason(&self) -> Option<CloseReason> {
+		self.rx.get_close_reason()
+	}
+
 	/// Split the stream into read and write parts, consuming it.
 	pub fn into_split(self) -> (MuxStreamAsyncRead, MuxStreamAsyncWrite) {
 		(self.rx, self.tx)
@@ -617,15 +658,26 @@ pin_project! {
 	pub struct MuxStreamAsyncRead {
 		#[pin]
 		rx: IntoAsyncRead<MuxStreamIoStream>,
-		// state: Option<MuxStreamAsyncReadState>
+		is_closed: Arc<AtomicBool>,
+		close_reason: Arc<AtomicCloseReason>,
 	}
 }
 
 impl MuxStreamAsyncRead {
 	pub(crate) fn new(stream: MuxStreamIoStream) -> Self {
 		Self {
+			is_closed: stream.is_closed.clone(),
+			close_reason: stream.close_reason.clone(),
 			rx: stream.into_async_read(),
-			// state: None,
+		}
+	}
+
+	/// Get the stream's close reason, if it was closed.
+	pub fn get_close_reason(&self) -> Option<CloseReason> {
+		if self.is_closed.load(Ordering::Acquire) {
+			Some(self.close_reason.load(Ordering::Acquire))
+		} else {
+			None
 		}
 	}
 }
@@ -663,6 +715,11 @@ impl MuxStreamAsyncWrite {
 			tx: sink,
 			error: None,
 		}
+	}
+
+	/// Get the stream's close reason, if it was closed.
+	pub fn get_close_reason(&self) -> Option<CloseReason> {
+		self.tx.get_close_reason()
 	}
 }
 

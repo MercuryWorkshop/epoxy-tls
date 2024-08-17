@@ -3,13 +3,20 @@ use std::{
 	task::{Context, Poll},
 };
 
+use async_trait::async_trait;
 use bytes::{buf::UninitSlice, BufMut, Bytes, BytesMut};
-use futures_util::{ready, AsyncRead, Future, Stream, TryStreamExt};
+use futures_util::{ready, AsyncRead, Future, SinkExt, Stream, StreamExt, TryStreamExt};
 use http::{HeaderValue, Uri};
 use hyper::{body::Body, rt::Executor};
-use js_sys::{Array, JsString, Object, Uint8Array};
+use js_sys::{Array, ArrayBuffer, JsString, Object, Uint8Array};
 use pin_project_lite::pin_project;
+use send_wrapper::SendWrapper;
 use wasm_bindgen::{prelude::*, JsCast, JsValue};
+use wasm_streams::{readable::IntoStream, writable::IntoSink};
+use wisp_mux::{
+	ws::{Frame, LockedWebSocketWrite, Payload, WebSocketRead, WebSocketWrite},
+	WispError,
+};
 
 use crate::EpoxyError;
 
@@ -165,6 +172,64 @@ impl<R: AsyncRead> Stream for ReaderStream<R> {
 				Poll::Ready(Some(Ok(chunk.freeze())))
 			}
 		}
+	}
+}
+
+pub struct WispTransportRead {
+	pub inner: SendWrapper<IntoStream<'static>>,
+}
+
+#[async_trait]
+impl WebSocketRead for WispTransportRead {
+	async fn wisp_read_frame(
+		&mut self,
+		_tx: &LockedWebSocketWrite,
+	) -> Result<Frame<'static>, wisp_mux::WispError> {
+		let obj = self.inner.next().await;
+
+		if let Some(pkt) = obj {
+			let pkt =
+				pkt.map_err(|x| WispError::WsImplError(Box::new(EpoxyError::wisp_transport(x))))?;
+			let arr: ArrayBuffer = pkt.dyn_into().map_err(|_| {
+				WispError::WsImplError(Box::new(EpoxyError::InvalidWispTransportPacket))
+			})?;
+
+			Ok(Frame::binary(Payload::Bytes(
+				Uint8Array::new(&arr).to_vec().as_slice().into(),
+			)))
+		} else {
+			Ok(Frame::close(Payload::Borrowed(&[])))
+		}
+	}
+}
+
+pub struct WispTransportWrite {
+	pub inner: Option<SendWrapper<IntoSink<'static>>>,
+}
+
+#[async_trait]
+impl WebSocketWrite for WispTransportWrite {
+	async fn wisp_write_frame(&mut self, frame: Frame<'_>) -> Result<(), WispError> {
+		SendWrapper::new(
+			self.inner
+				.as_mut()
+				.ok_or_else(|| WispError::WsImplError(Box::new(EpoxyError::WispTransportClosed)))?
+				.send(Uint8Array::from(frame.payload.as_ref()).into()),
+		)
+		.await
+		.map_err(|x| WispError::WsImplError(Box::new(EpoxyError::wisp_transport(x))))
+	}
+
+	async fn wisp_close(&mut self) -> Result<(), WispError> {
+		SendWrapper::new(
+			self.inner
+				.take()
+				.ok_or_else(|| WispError::WsImplError(Box::new(EpoxyError::WispTransportClosed)))?
+				.take()
+				.abort(),
+		)
+		.await
+		.map_err(|x| WispError::WsImplError(Box::new(EpoxyError::wisp_transport(x))))
 	}
 }
 
