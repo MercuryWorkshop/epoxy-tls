@@ -40,7 +40,7 @@ import initEpoxy, { EpoxyClient, EpoxyClientOptions, EpoxyHandlers, info as epox
 	console.log(epoxy_client);
 	// you can change the user agent and redirect limit in JS
 	epoxy_client.redirect_limit = 15;
-	console.log(epoxyInfo());
+	console.log(epoxyInfo);
 
 	const test_mux = async (url) => {
 		const t0 = performance.now();

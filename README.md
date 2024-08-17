@@ -30,7 +30,7 @@ See the [server readme](server/README.md).
 > [!IMPORTANT]
 > Building the client is only supported on Linux.
 
-Make sure you have the `wasm32-unknown-unknown` rust target, the `rust-std` component, and the `wasm-bindgen`, `wasm-opt`, and `base64` binaries installed.
+Make sure you have the `wasm32-unknown-unknown` rust target, the `rust-std` component, and the `wasm-bindgen`, `wasm-opt`, `jq`, and `base64` binaries installed.
 
 In the `client` directory:
 ```

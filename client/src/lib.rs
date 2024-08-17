@@ -43,20 +43,6 @@ mod utils;
 mod websocket;
 mod ws_wrapper;
 
-#[wasm_bindgen]
-pub fn info() -> Object {
-	let obj = Object::new();
-	object_set(&obj, "version", env!("CARGO_PKG_VERSION").into());
-	cfg_if! {
-		if #[cfg(feature = "full")] {
-			object_set(&obj, "minimal", false.into());
-		} else {
-			object_set(&obj, "minimal", true.into());
-		}
-	};
-	obj
-}
-
 type HttpBody = http_body_util::Full<Bytes>;
 
 #[derive(Debug, Error)]

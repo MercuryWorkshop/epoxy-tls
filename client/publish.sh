@@ -9,5 +9,5 @@ rm -r full minimal || true
 cargo clean
 bash build.sh
 mv pkg full
-bash build.sh --no-default-features
+MINIMAL=1 bash build.sh
 mv pkg minimal
