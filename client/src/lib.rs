@@ -583,11 +583,10 @@ impl EpoxyClient {
 
 		let response_headers_raw = response.headers().clone();
 
-		let mut response_builder = ResponseInit::new();
-		response_builder
-			.headers(&response_headers)
-			.status(response.status().as_u16())
-			.status_text(response.status().canonical_reason().unwrap_or_default());
+		let response_builder = ResponseInit::new();
+		response_builder.set_headers(&response_headers);
+		response_builder.set_status(response.status().as_u16());
+		response_builder.set_status_text(response.status().canonical_reason().unwrap_or_default());
 
 		cfg_if! {
 			if #[cfg(feature = "full")] {

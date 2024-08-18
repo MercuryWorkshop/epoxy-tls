@@ -7,9 +7,9 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-async-compression = { version = "0.4.11", features = ["futures-io", "gzip", "brotli"], optional = true }
-async-trait = "0.1.80"
-bytes = "1.6.0"
+async-compression = { version = "0.4.12", features = ["futures-io", "gzip", "brotli"], optional = true }
+async-trait = "0.1.81"
+bytes = "1.7.1"
 cfg-if = "1.0.0"
 event-listener = "5.3.1"
 fastwebsockets = { version = "0.8.0", features = ["unstable-split"], optional = true }
@@ -18,18 +18,18 @@ futures-rustls = { version = "0.26.0", default-features = false, features = ["tl
 futures-util = { version = "0.3.30", features = ["sink"] }
 http = "1.1.0"
 http-body-util = "0.1.2"
-hyper = "1.3.1"
+hyper = "1.4.1"
 hyper-util-wasm = { git = "https://github.com/r58Playz/hyper-util-wasm", branch = "opinionated", version = "0.1.7", features = ["client-legacy", "http1"] }
-js-sys = "0.3.69"
+js-sys = "0.3.70"
 lazy_static = "1.5.0"
 pin-project-lite = "0.2.14"
 send_wrapper = { version = "0.6.0", features = ["futures"] }
-thiserror = "1.0.61"
-tokio = "1.38.0"
-wasm-bindgen = "0.2.92"
-wasm-bindgen-futures = "0.4.42"
+thiserror = "1.0.63"
+tokio = "1.39.3"
+wasm-bindgen = "0.2.93"
+wasm-bindgen-futures = "0.4.43"
 wasm-streams = "0.4.0"
-web-sys = { version = "0.3.69", features = ["BinaryType", "Headers", "MessageEvent", "Request", "RequestInit", "Response", "ResponseInit", "WebSocket"] }
+web-sys = { version = "0.3.70", features = ["BinaryType", "Headers", "MessageEvent", "Request", "RequestInit", "Response", "ResponseInit", "WebSocket"] }
 webpki-roots = "0.26.3"
 wisp-mux = { path = "../wisp", features = ["wasm"] }
 

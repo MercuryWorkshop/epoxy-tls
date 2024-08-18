@@ -5,17 +5,17 @@ edition = "2021"
 
 [dependencies]
 atomic-counter = "1.0.1"
-bytes = "1.5.0"
-clap = { version = "4.5.4", features = ["cargo", "derive"] }
-console-subscriber = { version = "0.2.0", optional = true }
+bytes = "1.7.1"
+clap = { version = "4.5.16", features = ["cargo", "derive"] }
+console-subscriber = { version = "0.4.0", optional = true }
 fastwebsockets = { version = "0.8.0", features = ["unstable-split", "upgrade"] }
 futures = "0.3.30"
-http-body-util = "0.1.0"
+http-body-util = "0.1.2"
 humantime = "2.1.0"
-hyper = { version = "1.1.0", features = ["http1", "client"] }
-hyper-util = { version = "0.1.6", features = ["tokio"] }
+hyper = { version = "1.4.1", features = ["http1", "client"] }
+hyper-util = { version = "0.1.7", features = ["tokio"] }
 simple_moving_average = "1.0.2"
-tokio = { version = "1.36.0", features = ["full"] }
+tokio = { version = "1.39.3", features = ["full"] }
 wisp-mux = { path = "../wisp", features = ["fastwebsockets"]}
 
 [features]
