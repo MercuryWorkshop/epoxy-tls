@@ -5,14 +5,16 @@ use std::{
 
 use async_trait::async_trait;
 use bytes::{buf::UninitSlice, BufMut, Bytes, BytesMut};
-use futures_util::{ready, AsyncRead, Future, SinkExt, Stream, StreamExt, TryStreamExt};
+use futures_util::{ready, AsyncRead, Future, Stream, StreamExt, TryStreamExt};
 use http::{HeaderValue, Uri};
 use hyper::{body::Body, rt::Executor};
 use js_sys::{Array, ArrayBuffer, JsString, Object, Uint8Array};
 use pin_project_lite::pin_project;
 use send_wrapper::SendWrapper;
 use wasm_bindgen::{prelude::*, JsCast, JsValue};
-use wasm_streams::{readable::IntoStream, writable::IntoSink};
+use wasm_bindgen_futures::JsFuture;
+use wasm_streams::readable::IntoStream;
+use web_sys::WritableStreamDefaultWriter;
 use wisp_mux::{
 	ws::{Frame, LockedWebSocketWrite, Payload, WebSocketRead, WebSocketWrite},
 	WispError,
@@ -204,32 +206,27 @@ impl WebSocketRead for WispTransportRead {
 }
 
 pub struct WispTransportWrite {
-	pub inner: Option<SendWrapper<IntoSink<'static>>>,
+	pub inner: SendWrapper<WritableStreamDefaultWriter>,
 }
 
 #[async_trait]
 impl WebSocketWrite for WispTransportWrite {
 	async fn wisp_write_frame(&mut self, frame: Frame<'_>) -> Result<(), WispError> {
-		SendWrapper::new(
-			self.inner
-				.as_mut()
-				.ok_or_else(|| WispError::WsImplError(Box::new(EpoxyError::WispTransportClosed)))?
-				.send(Uint8Array::from(frame.payload.as_ref()).into()),
-		)
+		SendWrapper::new(async {
+			let chunk = Uint8Array::from(frame.payload.as_ref()).into();
+			JsFuture::from(self.inner.write_with_chunk(&chunk))
+				.await
+				.map(|_| ())
+				.map_err(|x| WispError::WsImplError(Box::new(EpoxyError::wisp_transport(x))))
+		})
 		.await
-		.map_err(|x| WispError::WsImplError(Box::new(EpoxyError::wisp_transport(x))))
 	}
 
 	async fn wisp_close(&mut self) -> Result<(), WispError> {
-		SendWrapper::new(
-			self.inner
-				.take()
-				.ok_or_else(|| WispError::WsImplError(Box::new(EpoxyError::WispTransportClosed)))?
-				.take()
-				.abort(),
-		)
-		.await
-		.map_err(|x| WispError::WsImplError(Box::new(EpoxyError::wisp_transport(x))))
+		SendWrapper::new(JsFuture::from(self.inner.abort()))
+			.await
+			.map(|_| ())
+			.map_err(|x| WispError::WsImplError(Box::new(EpoxyError::wisp_transport(x))))
 	}
 }
 

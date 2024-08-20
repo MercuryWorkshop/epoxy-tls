@@ -12,6 +12,7 @@ import initEpoxy, { EpoxyClient, EpoxyClientOptions, EpoxyHandlers, info as epox
 	const should_udp_test = params.has("udp_test");
 	const should_reconnect_test = params.has("reconnect_test");
 	const should_perf2_test = params.has("perf2_test");
+	const should_wisptransport = params.has("wisptransport");
 	console.log(
 		"%cWASM is significantly slower with DevTools open!",
 		"color:red;font-size:3rem;font-weight:bold"
@@ -29,7 +30,18 @@ import initEpoxy, { EpoxyClient, EpoxyClientOptions, EpoxyHandlers, info as epox
 	let epoxy_client_options = new EpoxyClientOptions();
 	epoxy_client_options.user_agent = navigator.userAgent;
 
-	let epoxy_client = new EpoxyClient("ws://localhost:4000", epoxy_client_options);
+	let epoxy_client;
+
+	if (should_wisptransport) {
+		log("using wisptransport with websocketstream backend");
+		epoxy_client = new EpoxyClient(async () => {
+			let wss = new WebSocketStream("ws://localhost:4000/");
+			let {readable, writable} = await wss.opened;
+			return {read: readable, write: writable};
+		}, epoxy_client_options);
+	} else {
+		epoxy_client = new EpoxyClient("ws://localhost:4000/", epoxy_client_options);
+	}
 
 	const tconn0 = performance.now();
 	await epoxy_client.replace_stream_provider();

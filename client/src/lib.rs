@@ -30,7 +30,7 @@ use utils::{
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use wasm_streams::ReadableStream;
-use web_sys::ResponseInit;
+use web_sys::{ResponseInit, WritableStream};
 #[cfg(feature = "full")]
 use websocket::EpoxyWebSocket;
 #[cfg(feature = "full")]
@@ -117,7 +117,11 @@ pub enum EpoxyError {
 
 impl EpoxyError {
 	pub fn wisp_transport(value: JsValue) -> Self {
-		Self::WispTransport(format!("{:?}", value))
+		if let Some(err) = value.dyn_ref::<js_sys::Error>() {
+			Self::WispTransport(err.to_string().into())
+		} else {
+			Self::WispTransport(format!("{:?}", value))
+		}
 	}
 }
 
@@ -299,13 +303,11 @@ impl EpoxyClient {
 								.into_stream(),
 							),
 						};
+						let write: WritableStream = object_get(&transport, "write").into();
 						let write = WispTransportWrite {
-							inner: Some(SendWrapper::new(
-								wasm_streams::WritableStream::from_raw(
-									object_get(&transport, "write").into(),
-								)
-								.into_sink(),
-							)),
+							inner: SendWrapper::new(
+								write.get_writer().map_err(EpoxyError::wisp_transport)?,
+							),
 						};
 
 						Ok((
