@@ -5,9 +5,6 @@ use std::{
 
 use anyhow::Context;
 use bytes::BytesMut;
-use fastwebsockets::{FragmentCollector, Frame, OpCode, Payload, WebSocketError};
-use hyper::upgrade::Upgraded;
-use hyper_util::rt::TokioIo;
 use regex::RegexSet;
 use tokio::{
 	fs::{remove_file, try_exists},
@@ -252,34 +249,5 @@ impl ClientStream {
 			}
 			StreamType::Unknown(_) => Ok(ClientStream::Invalid),
 		}
-	}
-}
-
-pub enum WebSocketFrame {
-	Data(BytesMut),
-	Close,
-	Ignore,
-}
-
-pub struct WebSocketStreamWrapper(pub FragmentCollector<TokioIo<Upgraded>>);
-
-impl WebSocketStreamWrapper {
-	pub async fn read(&mut self) -> Result<WebSocketFrame, WebSocketError> {
-		let frame = self.0.read_frame().await?;
-		Ok(match frame.opcode {
-			OpCode::Text | OpCode::Binary => WebSocketFrame::Data(frame.payload.into()),
-			OpCode::Close => WebSocketFrame::Close,
-			_ => WebSocketFrame::Ignore,
-		})
-	}
-
-	pub async fn write(&mut self, data: &[u8]) -> Result<(), WebSocketError> {
-		self.0
-			.write_frame(Frame::binary(Payload::Borrowed(data)))
-			.await
-	}
-
-	pub async fn close(&mut self, code: u16, reason: &[u8]) -> Result<(), WebSocketError> {
-		self.0.write_frame(Frame::close(code, reason)).await
 	}
 }

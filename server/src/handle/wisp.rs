@@ -1,9 +1,7 @@
-use std::io::Cursor;
+use std::{io::Cursor, sync::Arc};
 
 use anyhow::Context;
-use fastwebsockets::upgrade::UpgradeFut;
 use futures_util::FutureExt;
-use hyper_util::rt::TokioIo;
 use tokio::{
 	io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
 	net::tcp::{OwnedReadHalf, OwnedWriteHalf},
@@ -12,13 +10,14 @@ use tokio::{
 };
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 use uuid::Uuid;
+use webrtc::data::data_channel::DataChannel;
 use wisp_mux::{
 	CloseReason, ConnectPacket, MuxStream, MuxStreamAsyncRead, MuxStreamWrite, ServerMux,
 };
 
 use crate::{
 	stream::{ClientStream, ResolvedPacket, ServerStream, ServerStreamExt},
-	CLIENTS, CONFIG,
+	WebrtcRead, WebrtcWrite, CLIENTS, CONFIG,
 };
 
 async fn copy_read_fast(
@@ -162,17 +161,11 @@ async fn handle_stream(connect: ConnectPacket, muxstream: MuxStream, id: String)
 	CLIENTS.get(&id).unwrap().0.remove(&uuid);
 }
 
-pub async fn handle_wisp(fut: UpgradeFut, id: String) -> anyhow::Result<()> {
-	let mut ws = fut.await.context("failed to await upgrade future")?;
-	ws.set_max_message_size(CONFIG.server.max_message_size);
-
-	let (read, write) = ws.split(|x| {
-		let parts = x.into_inner().downcast::<TokioIo<ServerStream>>().unwrap();
-		let (r, w) = parts.io.into_inner().split();
-		(Cursor::new(parts.read_buf).chain(r), w)
-	});
-
+pub async fn handle_wisp(rtc: Arc<DataChannel>, id: String) -> anyhow::Result<()> {
 	let (extensions, buffer_size) = CONFIG.wisp.to_opts();
+
+	let read = WebrtcRead(rtc.clone());
+	let write = WebrtcWrite(rtc);
 
 	let (mux, fut) = ServerMux::create(read, write, buffer_size, extensions)
 		.await

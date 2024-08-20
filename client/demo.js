@@ -30,18 +30,44 @@ import initEpoxy, { EpoxyClient, EpoxyClientOptions, EpoxyHandlers, info as epox
 	let epoxy_client_options = new EpoxyClientOptions();
 	epoxy_client_options.user_agent = navigator.userAgent;
 
-	let epoxy_client;
 
-	if (should_wisptransport) {
-		log("using wisptransport with websocketstream backend");
-		epoxy_client = new EpoxyClient(async () => {
-			let wss = new WebSocketStream("ws://localhost:4000/");
-			let {readable, writable} = await wss.opened;
-			return {read: readable, write: writable};
-		}, epoxy_client_options);
-	} else {
-		epoxy_client = new EpoxyClient("ws://localhost:4000/", epoxy_client_options);
-	}
+	log("using wisptransport with webrtc backend");
+	let epoxy_client = new EpoxyClient(async () => {
+		let peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.voip.blackberry.com:3478' }] });
+		let chan = peer.createDataChannel("wisp");
+
+		peer.onnegotiationneeded = e => peer.createOffer().then(d => peer.setLocalDescription(d));
+
+		await new Promise(r => {
+			peer.onicecandidate = event => {
+				if (event.candidate === null) {
+					console.log(btoa(JSON.stringify(peer.localDescription)));
+					let desc = new RTCSessionDescription(JSON.parse(atob(prompt())));
+					peer.setRemoteDescription(desc);
+					r()
+				}
+			}
+		});
+
+		await new Promise(r => {
+			chan.onopen = r;
+		});
+
+		let readable = new ReadableStream({
+			start(controller) {
+				chan.binaryType = "arraybuffer";
+				chan.onmessage = ({data}) => controller.enqueue(data);
+			}
+		});
+
+		let writable = new WritableStream({
+			write(chunk) {
+				chan.send(chunk);
+			}
+		});
+
+		return { read: readable, write: writable };
+	}, epoxy_client_options);
 
 	const tconn0 = performance.now();
 	await epoxy_client.replace_stream_provider();
