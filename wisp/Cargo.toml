@@ -22,7 +22,9 @@ pin-project-lite = "0.2.14"
 tokio = { version = "1.39.3", optional = true, default-features = false }
 
 [features]
+default = ["generic_stream"]
 fastwebsockets = ["dep:fastwebsockets", "dep:tokio"]
+generic_stream = []
 wasm = ["futures-timer/wasm-bindgen"]
 
 [package.metadata.docs.rs]

@@ -1,11 +1,7 @@
-use std::io::Cursor;
-
 use anyhow::Context;
-use fastwebsockets::upgrade::UpgradeFut;
 use futures_util::FutureExt;
-use hyper_util::rt::TokioIo;
 use tokio::{
-	io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+	io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
 	net::tcp::{OwnedReadHalf, OwnedWriteHalf},
 	select,
 	task::JoinSet,
@@ -17,7 +13,8 @@ use wisp_mux::{
 };
 
 use crate::{
-	stream::{ClientStream, ResolvedPacket, ServerStream, ServerStreamExt},
+	listener::WispResult,
+	stream::{ClientStream, ResolvedPacket},
 	CLIENTS, CONFIG,
 };
 
@@ -162,16 +159,8 @@ async fn handle_stream(connect: ConnectPacket, muxstream: MuxStream, id: String)
 	CLIENTS.get(&id).unwrap().0.remove(&uuid);
 }
 
-pub async fn handle_wisp(fut: UpgradeFut, id: String) -> anyhow::Result<()> {
-	let mut ws = fut.await.context("failed to await upgrade future")?;
-	ws.set_max_message_size(CONFIG.server.max_message_size);
-
-	let (read, write) = ws.split(|x| {
-		let parts = x.into_inner().downcast::<TokioIo<ServerStream>>().unwrap();
-		let (r, w) = parts.io.into_inner().split();
-		(Cursor::new(parts.read_buf).chain(r), w)
-	});
-
+pub async fn handle_wisp(stream: WispResult, id: String) -> anyhow::Result<()> {
+	let (read, write) = stream;
 	let (extensions, buffer_size) = CONFIG.wisp.to_opts();
 
 	let (mux, fut) = ServerMux::create(read, write, buffer_size, extensions)

@@ -2,26 +2,20 @@
 
 use std::{fmt::Write, fs::read_to_string};
 
-use bytes::Bytes;
 use clap::Parser;
 use config::{validate_config_cache, Cli, Config};
 use dashmap::DashMap;
 use handle::{handle_wisp, handle_wsproxy};
-use http_body_util::Full;
-use hyper::{
-	body::Incoming, server::conn::http1::Builder, service::service_fn, Request, Response,
-	StatusCode,
-};
-use hyper_util::rt::TokioIo;
 use lazy_static::lazy_static;
+use listener::{ServerListener, ServerRouteResult, ServerStreamExt};
 use log::{error, info};
-use stream::ServerListener;
 use tokio::signal::unix::{signal, SignalKind};
 use uuid::Uuid;
 use wisp_mux::{ConnectPacket, StreamType};
 
 mod config;
 mod handle;
+mod listener;
 mod stream;
 
 type Client = (DashMap<Uuid, (ConnectPacket, ConnectPacket)>, bool);
@@ -36,67 +30,6 @@ lazy_static! {
 		}
 	};
 	pub static ref CLIENTS: DashMap<String, Client> = DashMap::new();
-}
-
-type Body = Full<Bytes>;
-fn non_ws_resp() -> Response<Body> {
-	Response::builder()
-		.status(StatusCode::OK)
-		.body(Body::new(CONFIG.server.non_ws_response.as_bytes().into()))
-		.unwrap()
-}
-
-async fn upgrade(mut req: Request<Incoming>, id: String) -> anyhow::Result<Response<Body>> {
-	if CONFIG.server.enable_stats_endpoint && req.uri().path() == CONFIG.server.stats_endpoint {
-		match generate_stats() {
-			Ok(x) => {
-				return Ok(Response::builder()
-					.status(StatusCode::OK)
-					.body(Body::new(x.into()))
-					.unwrap())
-			}
-			Err(x) => {
-				return Ok(Response::builder()
-					.status(StatusCode::INTERNAL_SERVER_ERROR)
-					.body(Body::new(x.to_string().into()))
-					.unwrap())
-			}
-		}
-	} else if !fastwebsockets::upgrade::is_upgrade_request(&req) {
-		return Ok(non_ws_resp());
-	}
-
-	let (resp, fut) = fastwebsockets::upgrade::upgrade(&mut req)?;
-	// replace body of Empty<Bytes> with Full<Bytes>
-	let resp = Response::from_parts(resp.into_parts().0, Body::new(Bytes::new()));
-
-	if req
-		.uri()
-		.path()
-		.starts_with(&(CONFIG.server.prefix.clone() + "/"))
-	{
-		tokio::spawn(async move {
-			CLIENTS.insert(id.clone(), (DashMap::new(), false));
-			if let Err(e) = handle_wisp(fut, id.clone()).await {
-				error!("error while handling upgraded client: {:?}", e);
-			};
-			CLIENTS.remove(&id)
-		});
-	} else if CONFIG.wisp.allow_wsproxy {
-		let udp = req.uri().query().unwrap_or_default() == "?udp";
-		tokio::spawn(async move {
-			CLIENTS.insert(id.clone(), (DashMap::new(), true));
-			if let Err(e) = handle_wsproxy(fut, id.clone(), req.uri().path().to_string(), udp).await
-			{
-				error!("error while handling upgraded client: {:?}", e);
-			};
-			CLIENTS.remove(&id)
-		});
-	} else {
-		return Ok(non_ws_resp());
-	}
-
-	Ok(resp)
 }
 
 fn format_stream_type(stream_type: StreamType) -> &'static str {
@@ -159,6 +92,22 @@ fn generate_stats() -> Result<String, std::fmt::Error> {
 	Ok(out)
 }
 
+fn handle_stream(stream: ServerRouteResult, id: String) {
+	tokio::spawn(async move {
+		CLIENTS.insert(id.clone(), (DashMap::new(), false));
+		let res = match stream {
+			ServerRouteResult::Wisp(stream) => handle_wisp(stream, id.clone()).await,
+			ServerRouteResult::WsProxy(ws, path, udp) => {
+				handle_wsproxy(ws, id.clone(), path, udp).await
+			}
+		};
+		if let Err(e) = res {
+			error!("error while handling client: {:?}", e);
+		}
+		CLIENTS.remove(&id)
+	});
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
 	if CLI.default_config {
@@ -174,8 +123,8 @@ async fn main() -> anyhow::Result<()> {
 	validate_config_cache();
 
 	info!(
-		"listening on {:?} with socket type {:?}",
-		CONFIG.server.bind, CONFIG.server.socket
+		"listening on {:?} with socket type {:?} and socket transport {:?}",
+		CONFIG.server.bind, CONFIG.server.socket, CONFIG.server.transport
 	);
 
 	tokio::spawn(async {
@@ -189,14 +138,10 @@ async fn main() -> anyhow::Result<()> {
 	loop {
 		let (stream, id) = listener.accept().await?;
 		tokio::spawn(async move {
-			let stream = TokioIo::new(stream);
+			let res = stream.route(move |stream| handle_stream(stream, id)).await;
 
-			let fut = Builder::new()
-				.serve_connection(stream, service_fn(|req| upgrade(req, id.clone())))
-				.with_upgrades();
-
-			if let Err(e) = fut.await {
-				error!("error while serving client: {:?}", e);
+			if let Err(e) = res {
+				error!("error while routing client: {:?}", e);
 			}
 		});
 	}

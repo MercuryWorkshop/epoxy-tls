@@ -1,7 +1,6 @@
 use std::str::FromStr;
 
-use anyhow::Context;
-use fastwebsockets::{upgrade::UpgradeFut, CloseCode, FragmentCollector};
+use fastwebsockets::CloseCode;
 use tokio::{
 	io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
 	select,
@@ -15,16 +14,11 @@ use crate::{
 };
 
 pub async fn handle_wsproxy(
-	fut: UpgradeFut,
+	mut ws: WebSocketStreamWrapper,
 	id: String,
 	path: String,
 	udp: bool,
 ) -> anyhow::Result<()> {
-	let mut ws = fut.await.context("failed to await upgrade future")?;
-	ws.set_max_message_size(CONFIG.server.max_message_size);
-	let ws = FragmentCollector::new(ws);
-	let mut ws = WebSocketStreamWrapper(ws);
-
 	if udp && !CONFIG.stream.allow_wsproxy_udp {
 		let _ = ws.close(CloseCode::Error.into(), b"udp is blocked").await;
 		return Ok(());

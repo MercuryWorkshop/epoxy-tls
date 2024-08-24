@@ -8,6 +8,9 @@ pub mod extensions;
 #[cfg(feature = "fastwebsockets")]
 #[cfg_attr(docsrs, doc(cfg(feature = "fastwebsockets")))]
 mod fastwebsockets;
+#[cfg(feature = "generic_stream")]
+#[cfg_attr(docsrs, doc(cfg(feature = "generic_stream")))]
+pub mod generic;
 mod packet;
 mod sink_unfold;
 mod stream;

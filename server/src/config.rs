@@ -22,6 +22,18 @@ pub enum SocketType {
 	Unix,
 }
 
+#[derive(Serialize, Deserialize, Default, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum SocketTransport {
+	/// WebSocket transport.
+	#[default]
+	WebSocket,
+	/// Little-endian u32 length-delimited codec. See
+	/// [tokio-util](https://docs.rs/tokio-util/latest/tokio_util/codec/length_delimited/index.html)
+	/// for more information.
+	LengthDelimitedLe,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct ServerConfig {
@@ -29,6 +41,8 @@ pub struct ServerConfig {
 	pub bind: String,
 	/// Socket type to listen on.
 	pub socket: SocketType,
+	/// Transport to listen on.
+	pub transport: SocketTransport,
 	/// Whether or not to resolve and connect to IPV6 upstream addresses.
 	pub resolve_ipv6: bool,
 	/// Whether or not to enable TCP nodelay on client TCP streams.
@@ -189,6 +203,7 @@ impl Default for ServerConfig {
 		Self {
 			bind: "127.0.0.1:4000".to_string(),
 			socket: SocketType::default(),
+			transport: SocketTransport::default(),
 			resolve_ipv6: false,
 			tcp_nodelay: false,
 
@@ -318,16 +333,22 @@ impl StreamConfig {
 impl Config {
 	pub fn ser(&self) -> anyhow::Result<String> {
 		Ok(match CLI.format {
+			#[cfg(feature = "toml")]
 			ConfigFormat::Toml => toml::to_string_pretty(self)?,
+			#[cfg(feature = "json")]
 			ConfigFormat::Json => serde_json::to_string_pretty(self)?,
+			#[cfg(feature = "yaml")]
 			ConfigFormat::Yaml => serde_yaml::to_string(self)?,
 		})
 	}
 
 	pub fn de(string: String) -> anyhow::Result<Self> {
 		Ok(match CLI.format {
+			#[cfg(feature = "toml")]
 			ConfigFormat::Toml => toml::from_str(&string)?,
+			#[cfg(feature = "json")]
 			ConfigFormat::Json => serde_json::from_str(&string)?,
+			#[cfg(feature = "yaml")]
 			ConfigFormat::Yaml => serde_yaml::from_str(&string)?,
 		})
 	}
@@ -335,9 +356,12 @@ impl Config {
 
 #[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Default, ValueEnum)]
 pub enum ConfigFormat {
+	#[cfg(feature = "toml")]
 	#[default]
 	Toml,
+	#[cfg(feature = "json")]
 	Json,
+	#[cfg(feature = "yaml")]
 	Yaml,
 }
 

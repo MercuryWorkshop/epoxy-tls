@@ -167,7 +167,7 @@ pub trait WebSocketRead {
 }
 
 #[async_trait]
-impl WebSocketRead for Box<dyn WebSocketRead + Send + Sync> {
+impl WebSocketRead for Box<dyn WebSocketRead + Send> {
 	async fn wisp_read_frame(
 		&mut self,
 		tx: &LockedWebSocketWrite,
@@ -206,7 +206,7 @@ pub trait WebSocketWrite {
 }
 
 #[async_trait]
-impl WebSocketWrite for Box<dyn WebSocketWrite + Send + Sync> {
+impl WebSocketWrite for Box<dyn WebSocketWrite + Send> {
 	async fn wisp_write_frame(&mut self, frame: Frame<'_>) -> Result<(), WispError> {
 		self.as_mut().wisp_write_frame(frame).await
 	}
