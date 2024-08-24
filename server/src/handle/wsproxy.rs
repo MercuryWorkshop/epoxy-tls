@@ -159,6 +159,10 @@ pub async fn handle_wsproxy(
 				}
 			}
 		}
+		#[cfg(feature = "twisp")]
+		ClientStream::Pty(_, _) => {
+			let _ = ws.close(CloseCode::Error.into(), b"twisp is not supported").await;
+		}
 		ClientStream::Blocked => {
 			let _ = ws.close(CloseCode::Error.into(), b"host is blocked").await;
 		}

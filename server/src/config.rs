@@ -104,6 +104,9 @@ pub struct StreamConfig {
 	pub allow_udp: bool,
 	/// Whether or not to enable nonstandard legacy wsproxy UDP streams.
 	pub allow_wsproxy_udp: bool,
+	/// Whether or not to allow TWisp streams.
+	#[cfg(feature = "twisp")]
+	pub allow_twisp: bool,
 
 	/// Whether or not to allow connections to IP addresses.
 	pub allow_direct_ip: bool,
@@ -160,8 +163,6 @@ struct ConfigCache {
 
 	pub allowed_udp_hosts: RegexSet,
 	pub blocked_udp_hosts: RegexSet,
-
-	pub wisp_config: (Option<Vec<AnyProtocolExtensionBuilder>>, u32),
 }
 
 lazy_static! {
@@ -188,14 +189,13 @@ lazy_static! {
 
 			allowed_udp_hosts: RegexSet::new(&CONFIG.stream.allow_udp_hosts).unwrap(),
 			blocked_udp_hosts: RegexSet::new(&CONFIG.stream.block_udp_hosts).unwrap(),
-
-			wisp_config: CONFIG.wisp.to_opts_inner().unwrap(),
 		}
 	};
 }
 
 pub fn validate_config_cache() {
-	let _ = CONFIG_CACHE.wisp_config;
+	let _ = CONFIG_CACHE.allowed_ports;
+	CONFIG.wisp.to_opts().unwrap();
 }
 
 impl Default for ServerConfig {
@@ -236,11 +236,9 @@ impl Default for WispConfig {
 }
 
 impl WispConfig {
-	pub(super) fn to_opts_inner(
-		&self,
-	) -> anyhow::Result<(Option<Vec<AnyProtocolExtensionBuilder>>, u32)> {
+	pub fn to_opts(&self) -> anyhow::Result<(Option<Vec<AnyProtocolExtensionBuilder>>, u32)> {
 		if self.wisp_v2 {
-			let mut extensions: Vec<Box<dyn ProtocolExtensionBuilder + Sync + Send>> = Vec::new();
+			let mut extensions: Vec<AnyProtocolExtensionBuilder> = Vec::new();
 
 			if self.extensions.contains(&ProtocolExtension::Udp) {
 				extensions.push(Box::new(UdpProtocolExtensionBuilder));
@@ -257,13 +255,6 @@ impl WispConfig {
 			Ok((None, self.buffer_size))
 		}
 	}
-
-	pub fn to_opts(&self) -> (Option<&'static [AnyProtocolExtensionBuilder]>, u32) {
-		(
-			CONFIG_CACHE.wisp_config.0.as_deref(),
-			CONFIG_CACHE.wisp_config.1,
-		)
-	}
 }
 
 impl Default for StreamConfig {
@@ -273,6 +264,8 @@ impl Default for StreamConfig {
 
 			allow_udp: true,
 			allow_wsproxy_udp: false,
+			#[cfg(feature = "twisp")]
+			allow_twisp: false,
 
 			allow_direct_ip: true,
 			allow_loopback: true,

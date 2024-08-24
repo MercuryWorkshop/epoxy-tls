@@ -46,10 +46,15 @@ fn non_ws_resp() -> Response<Body> {
 
 async fn ws_upgrade<T, R>(mut req: Request<Incoming>, callback: T) -> anyhow::Result<Response<Body>>
 where
-	T: FnOnce(UpgradeFut, bool, bool, String) -> R,
-	R: Future<Output = anyhow::Result<()>>,
+	T: FnOnce(UpgradeFut, bool, bool, String) -> R + Send + 'static,
+	R: Future<Output = anyhow::Result<()>> + Send,
 {
-	if CONFIG.server.enable_stats_endpoint && req.uri().path() == CONFIG.server.stats_endpoint {
+	let is_upgrade = fastwebsockets::upgrade::is_upgrade_request(&req);
+
+	if !is_upgrade
+		&& CONFIG.server.enable_stats_endpoint
+		&& req.uri().path() == CONFIG.server.stats_endpoint
+	{
 		match generate_stats() {
 			Ok(x) => {
 				return Ok(Response::builder()
@@ -64,7 +69,7 @@ where
 					.unwrap())
 			}
 		}
-	} else if !fastwebsockets::upgrade::is_upgrade_request(&req) {
+	} else if !is_upgrade {
 		return Ok(non_ws_resp());
 	}
 
@@ -77,10 +82,18 @@ where
 		.path()
 		.starts_with(&(CONFIG.server.prefix.clone() + "/"))
 	{
-		(callback)(fut, false, false, req.uri().path().to_string());
+		tokio::spawn(async move {
+			if let Err(err) = (callback)(fut, false, false, req.uri().path().to_string()).await {
+				error!("error while serving client: {:?}", err);
+			}
+		});
 	} else if CONFIG.wisp.allow_wsproxy {
 		let udp = req.uri().query().unwrap_or_default() == "?udp";
-		(callback)(fut, true, udp, req.uri().path().to_string());
+		tokio::spawn(async move {
+			if let Err(err) = (callback)(fut, false, udp, req.uri().path().to_string()).await {
+				error!("error while serving client: {:?}", err);
+			}
+		});
 	} else {
 		return Ok(non_ws_resp());
 	}
@@ -90,7 +103,10 @@ where
 
 pub trait ServerStreamExt {
 	fn split(self) -> (ServerStreamRead, ServerStreamWrite);
-	async fn route(self, callback: impl FnOnce(ServerRouteResult) + Clone) -> anyhow::Result<()>;
+	async fn route(
+		self,
+		callback: impl FnOnce(ServerRouteResult) + Clone + Send + 'static,
+	) -> anyhow::Result<()>;
 }
 
 impl ServerStreamExt for ServerStream {
@@ -107,7 +123,10 @@ impl ServerStreamExt for ServerStream {
 		}
 	}
 
-	async fn route(self, callback: impl FnOnce(ServerRouteResult) + Clone) -> anyhow::Result<()> {
+	async fn route(
+		self,
+		callback: impl FnOnce(ServerRouteResult) + Clone + Send + 'static,
+	) -> anyhow::Result<()> {
 		match CONFIG.server.transport {
 			SocketTransport::WebSocket => {
 				let stream = TokioIo::new(self);

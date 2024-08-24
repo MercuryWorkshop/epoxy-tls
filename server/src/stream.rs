@@ -5,6 +5,7 @@ use std::{
 
 use anyhow::Context;
 use bytes::BytesMut;
+use cfg_if::cfg_if;
 use fastwebsockets::{FragmentCollector, Frame, OpCode, Payload, WebSocketError};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
@@ -37,6 +38,8 @@ fn blocked_set(stream_type: StreamType) -> &'static RegexSet {
 pub enum ClientStream {
 	Tcp(TcpStream),
 	Udp(UdpSocket),
+	#[cfg(feature = "twisp")]
+	Pty(tokio::process::Child, pty_process::Pty),
 	Blocked,
 	Invalid,
 }
@@ -50,8 +53,20 @@ pub enum ResolvedPacket {
 
 impl ClientStream {
 	pub async fn resolve(packet: ConnectPacket) -> anyhow::Result<ResolvedPacket> {
-		if matches!(packet.stream_type, StreamType::Unknown(_)) {
-			return Ok(ResolvedPacket::Invalid);
+		cfg_if! {
+			if #[cfg(feature = "twisp")] {
+				if let StreamType::Unknown(ty) = packet.stream_type {
+					if ty == crate::handle::twisp::STREAM_TYPE && CONFIG.stream.allow_twisp && CONFIG.wisp.wisp_v2 {
+						return Ok(ResolvedPacket::Valid(packet));
+					} else {
+						return Ok(ResolvedPacket::Invalid);
+					}
+				}
+			} else {
+				if matches!(packet.stream_type, StreamType::Unknown(_)) {
+					return Ok(ResolvedPacket::Invalid);
+				}
+			}
 		}
 
 		if !CONFIG.stream.allow_udp && packet.stream_type == StreamType::Udp {
@@ -127,11 +142,10 @@ impl ClientStream {
 	}
 
 	pub async fn connect(packet: ConnectPacket) -> anyhow::Result<Self> {
-		let ipaddr = IpAddr::from_str(&packet.destination_hostname)
-			.context("failed to parse hostname as ipaddr")?;
-
 		match packet.stream_type {
 			StreamType::Tcp => {
+				let ipaddr = IpAddr::from_str(&packet.destination_hostname)
+					.context("failed to parse hostname as ipaddr")?;
 				let stream = TcpStream::connect(SocketAddr::new(ipaddr, packet.destination_port))
 					.await
 					.with_context(|| {
@@ -151,6 +165,9 @@ impl ClientStream {
 					return Ok(ClientStream::Blocked);
 				}
 
+				let ipaddr = IpAddr::from_str(&packet.destination_hostname)
+					.context("failed to parse hostname as ipaddr")?;
+
 				let bind_addr = if ipaddr.is_ipv4() {
 					SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0)
 				} else {
@@ -164,6 +181,25 @@ impl ClientStream {
 					.await?;
 
 				Ok(ClientStream::Udp(stream))
+			}
+			#[cfg(feature = "twisp")]
+			StreamType::Unknown(crate::handle::twisp::STREAM_TYPE) => {
+				if !CONFIG.stream.allow_twisp {
+					return Ok(ClientStream::Blocked);
+				}
+
+				let cmdline: Vec<std::ffi::OsString> =
+					shell_words::split(&packet.destination_hostname)?
+						.into_iter()
+						.map(Into::into)
+						.collect();
+				let pty = pty_process::Pty::new()?;
+
+				let cmd = pty_process::Command::new(&cmdline[0])
+					.args(&cmdline[1..])
+					.spawn(&pty.pts()?)?;
+
+				Ok(ClientStream::Pty(cmd, pty))
 			}
 			StreamType::Unknown(_) => Ok(ClientStream::Invalid),
 		}

@@ -1,4 +1,5 @@
 use anyhow::Context;
+use cfg_if::cfg_if;
 use futures_util::FutureExt;
 use tokio::{
 	io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -9,7 +10,8 @@ use tokio::{
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 use uuid::Uuid;
 use wisp_mux::{
-	CloseReason, ConnectPacket, MuxStream, MuxStreamAsyncRead, MuxStreamWrite, ServerMux,
+	CloseReason, ConnectPacket, MuxStream, MuxStreamAsyncRead, MuxStreamWrite,
+	ServerMux,
 };
 
 use crate::{
@@ -49,7 +51,12 @@ async fn copy_write_fast(muxtx: MuxStreamWrite, tcprx: OwnedReadHalf) -> anyhow:
 	}
 }
 
-async fn handle_stream(connect: ConnectPacket, muxstream: MuxStream, id: String) {
+async fn handle_stream(
+	connect: ConnectPacket,
+	muxstream: MuxStream,
+	id: String,
+	#[cfg(feature = "twisp")] twisp_map: super::twisp::TwispMap,
+) {
 	let requested_stream = connect.clone();
 
 	let Ok(resolved) = ClientStream::resolve(connect).await else {
@@ -146,6 +153,23 @@ async fn handle_stream(connect: ConnectPacket, muxstream: MuxStream, id: String)
 				}
 			}
 		}
+		#[cfg(feature = "twisp")]
+		ClientStream::Pty(cmd, pty) => {
+			let closer = muxstream.get_close_handle();
+			let id = muxstream.stream_id;
+			let (mut rx, mut tx) = muxstream.into_io().into_asyncrw().into_split();
+
+			match super::twisp::handle_twisp(id, &mut rx, &mut tx, twisp_map.clone(), pty, cmd)
+				.await
+			{
+				Ok(()) => {
+					let _ = closer.close(CloseReason::Voluntary).await;
+				}
+				Err(_) => {
+					let _ = closer.close(CloseReason::Unexpected).await;
+				}
+			}
+		}
 		ClientStream::Invalid => {
 			let _ = muxstream.close(CloseReason::ServerStreamInvalidInfo).await;
 		}
@@ -161,9 +185,26 @@ async fn handle_stream(connect: ConnectPacket, muxstream: MuxStream, id: String)
 
 pub async fn handle_wisp(stream: WispResult, id: String) -> anyhow::Result<()> {
 	let (read, write) = stream;
-	let (extensions, buffer_size) = CONFIG.wisp.to_opts();
+	cfg_if! {
+		if #[cfg(feature = "twisp")] {
+			let twisp_map = super::twisp::new_map();
+			let (extensions, buffer_size) = CONFIG.wisp.to_opts()?;
 
-	let (mux, fut) = ServerMux::create(read, write, buffer_size, extensions)
+			let extensions = match extensions {
+				Some(mut exts) => {
+					exts.push(super::twisp::new_ext(twisp_map.clone()));
+					Some(exts)
+				},
+				None => {
+					None
+				}
+			};
+		} else {
+			let (extensions, buffer_size) = CONFIG.wisp.to_opts()?;
+		}
+	}
+
+	let (mux, fut) = ServerMux::create(read, write, buffer_size, extensions.as_deref())
 		.await
 		.context("failed to create server multiplexor")?
 		.with_no_required_extensions();
@@ -177,6 +218,8 @@ pub async fn handle_wisp(stream: WispResult, id: String) -> anyhow::Result<()> {
 			connect,
 			stream,
 			id.clone(),
+			#[cfg(feature = "twisp")]
+			twisp_map.clone(),
 		)));
 	}
 

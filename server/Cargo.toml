@@ -5,7 +5,9 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.86"
+async-trait = { version = "0.1.81", optional = true }
 bytes = "1.7.1"
+cfg-if = "1.0.0"
 clap = { version = "4.5.16", features = ["cargo", "derive"] }
 dashmap = "6.0.1"
 env_logger = "0.11.5"
@@ -15,11 +17,15 @@ http-body-util = "0.1.2"
 hyper = { version = "1.4.1", features = ["server", "http1"] }
 hyper-util = { version = "0.1.7", features = ["tokio"] }
 lazy_static = "1.5.0"
+libc = { version = "0.2.158", optional = true }
 log = { version = "0.4.22", features = ["serde", "std"] }
+pty-process = { version = "0.4.0", features = ["async", "tokio"], optional = true }
 regex = "1.10.6"
+rustix = { version = "0.38.34", optional = true }
 serde = { version = "1.0.208", features = ["derive"] }
 serde_json = { version = "1.0.125", optional = true }
 serde_yaml = { version = "0.9.34", optional = true }
+shell-words = { version = "1.1.0", optional = true }
 tokio = { version = "1.39.3", features = ["full"] }
 tokio-util = { version = "0.7.11", features = ["codec", "compat", "io-util", "net"] }
 toml = { version = "0.8.19", optional = true }
@@ -28,6 +34,9 @@ wisp-mux = { version = "5.0.0", path = "../wisp", features = ["fastwebsockets", 
 
 [features]
 default = ["toml"]
+
 json = ["dep:serde_json"]
 yaml = ["dep:serde_yaml"]
 toml = ["dep:toml"]
+
+twisp = ["dep:pty-process", "dep:libc", "dep:rustix", "dep:async-trait", "dep:shell-words"]
