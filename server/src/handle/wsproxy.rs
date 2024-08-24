@@ -1,6 +1,7 @@
 use std::str::FromStr;
 
 use fastwebsockets::CloseCode;
+use log::debug;
 use tokio::{
 	io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
 	select,
@@ -84,6 +85,11 @@ pub async fn handle_wsproxy(
 
 	let uuid = Uuid::new_v4();
 
+	debug!(
+		"new wsproxy client id {:?} connected: (stream uuid {:?}) {:?} {:?}",
+		id, uuid, requested_stream, resolved_stream
+	);
+
 	CLIENTS
 		.get(&id)
 		.unwrap()
@@ -161,7 +167,9 @@ pub async fn handle_wsproxy(
 		}
 		#[cfg(feature = "twisp")]
 		ClientStream::Pty(_, _) => {
-			let _ = ws.close(CloseCode::Error.into(), b"twisp is not supported").await;
+			let _ = ws
+				.close(CloseCode::Error.into(), b"twisp is not supported")
+				.await;
 		}
 		ClientStream::Blocked => {
 			let _ = ws.close(CloseCode::Error.into(), b"host is blocked").await;
@@ -170,6 +178,11 @@ pub async fn handle_wsproxy(
 			let _ = ws.close(CloseCode::Error.into(), b"host is invalid").await;
 		}
 	}
+
+	debug!(
+		"wsproxy client id {:?} disconnected (stream uuid {:?})",
+		id, uuid
+	);
 
 	Ok(())
 }

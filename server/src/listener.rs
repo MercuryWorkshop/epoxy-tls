@@ -9,7 +9,7 @@ use hyper::{
 	StatusCode,
 };
 use hyper_util::rt::TokioIo;
-use log::error;
+use log::{debug, error};
 use tokio::{
 	fs::{remove_file, try_exists},
 	io::AsyncReadExt,
@@ -57,19 +57,22 @@ where
 	{
 		match generate_stats() {
 			Ok(x) => {
+				debug!("sent server stats to http client");
 				return Ok(Response::builder()
 					.status(StatusCode::OK)
 					.body(Body::new(x.into()))
-					.unwrap())
+					.unwrap());
 			}
 			Err(x) => {
+				error!("failed to send stats to http client: {:?}", x);
 				return Ok(Response::builder()
 					.status(StatusCode::INTERNAL_SERVER_ERROR)
 					.body(Body::new(x.to_string().into()))
-					.unwrap())
+					.unwrap());
 			}
 		}
 	} else if !is_upgrade {
+		debug!("sent non_ws_response to http client");
 		return Ok(non_ws_resp());
 	}
 
@@ -95,6 +98,7 @@ where
 			}
 		});
 	} else {
+		debug!("sent non_ws_response to http client");
 		return Ok(non_ws_resp());
 	}
 

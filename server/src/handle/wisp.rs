@@ -1,6 +1,7 @@
 use anyhow::Context;
 use cfg_if::cfg_if;
 use futures_util::FutureExt;
+use log::{debug, trace};
 use tokio::{
 	io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
 	net::tcp::{OwnedReadHalf, OwnedWriteHalf},
@@ -89,6 +90,8 @@ async fn handle_stream(
 	};
 
 	let uuid = Uuid::new_v4();
+
+	trace!("new stream created for client id {:?}: (stream uuid {:?}) {:?} {:?}", id, uuid, requested_stream, resolved_stream);
 
 	CLIENTS
 		.get(&id)
@@ -180,6 +183,8 @@ async fn handle_stream(
 		}
 	};
 
+	trace!("stream uuid {:?} disconnected for client id {:?}", uuid, id);
+
 	CLIENTS.get(&id).unwrap().0.remove(&uuid);
 }
 
@@ -209,6 +214,8 @@ pub async fn handle_wisp(stream: WispResult, id: String) -> anyhow::Result<()> {
 		.context("failed to create server multiplexor")?
 		.with_no_required_extensions();
 
+	debug!("new wisp client id {:?} connected with extensions {:?}", id, mux.supported_extension_ids);
+
 	let mut set: JoinSet<()> = JoinSet::new();
 
 	set.spawn(tokio::task::unconstrained(fut.map(|_| {})));
@@ -223,9 +230,13 @@ pub async fn handle_wisp(stream: WispResult, id: String) -> anyhow::Result<()> {
 		)));
 	}
 
+	let _ = mux.close().await;
+
 	set.abort_all();
 
 	while set.join_next().await.is_some() {}
+
+	debug!("wisp client id {:?} disconnected", id);
 
 	Ok(())
 }
