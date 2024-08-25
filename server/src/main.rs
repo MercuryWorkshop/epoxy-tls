@@ -40,9 +40,45 @@ fn format_stream_type(stream_type: StreamType) -> &'static str {
 	}
 }
 
-fn generate_stats() -> Result<String, std::fmt::Error> {
+fn generate_stats() -> anyhow::Result<String> {
 	let mut out = String::new();
 	let len = CLIENTS.len();
+
+	use tikv_jemalloc_ctl::stats::{active, allocated, mapped, metadata, resident, retained};
+	tikv_jemalloc_ctl::epoch::advance()?;
+
+	writeln!(&mut out, "Memory usage:")?;
+	writeln!(
+		&mut out,
+		"\tActive: {:?} MiB",
+		active::read()? as f64 / (1024 * 1024) as f64
+	)?;
+	writeln!(
+		&mut out,
+		"\tAllocated: {:?} MiB",
+		allocated::read()? as f64 / (1024 * 1024) as f64
+	)?;
+	writeln!(
+		&mut out,
+		"\tMapped: {:?} MiB",
+		mapped::read()? as f64 / (1024 * 1024) as f64
+	)?;
+	writeln!(
+		&mut out,
+		"\tMetadata: {:?} MiB",
+		metadata::read()? as f64 / (1024 * 1024) as f64
+	)?;
+	writeln!(
+		&mut out,
+		"\tResident: {:?} MiB",
+		resident::read()? as f64 / (1024 * 1024) as f64
+	)?;
+	writeln!(
+		&mut out,
+		"\tRetained: {:?} MiB",
+		retained::read()? as f64 / (1024 * 1024) as f64
+	)?;
+
 	writeln!(
 		&mut out,
 		"{} clients connected{}",
@@ -107,6 +143,9 @@ fn handle_stream(stream: ServerRouteResult, id: String) {
 		CLIENTS.remove(&id)
 	});
 }
+
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
