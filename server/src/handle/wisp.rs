@@ -48,8 +48,13 @@ async fn copy_write_fast(muxtx: MuxStreamWrite, tcprx: OwnedReadHalf) -> anyhow:
 	let mut tcprx = BufReader::new(tcprx);
 	loop {
 		let buf = tcprx.fill_buf().await?;
-		muxtx.write(&buf).await?;
+
 		let len = buf.len();
+		if len == 0 {
+			return Ok(())
+		}
+
+		muxtx.write(&buf).await?;
 		tcprx.consume(len);
 	}
 }

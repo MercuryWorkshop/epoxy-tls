@@ -2,7 +2,7 @@ use std::{io::ErrorKind, pin::Pin, sync::Arc, task::Poll};
 
 use futures_rustls::{
 	rustls::{ClientConfig, RootCertStore},
-	TlsConnector, TlsStream,
+	TlsConnector,
 };
 use futures_util::{
 	future::Either,
@@ -20,7 +20,7 @@ use wisp_mux::{
 	ClientMux, MuxStreamAsyncRW, MuxStreamIo, StreamType,
 };
 
-use crate::{console_log, EpoxyClientOptions, EpoxyError};
+use crate::{console_log, utils::IgnoreCloseNotify, EpoxyClientOptions, EpoxyError};
 
 lazy_static! {
 	static ref CLIENT_CONFIG: Arc<ClientConfig> = {
@@ -35,22 +35,24 @@ lazy_static! {
 
 pub type ProviderUnencryptedStream = MuxStreamIo;
 pub type ProviderUnencryptedAsyncRW = MuxStreamAsyncRW;
-pub type ProviderTlsAsyncRW = TlsStream<ProviderUnencryptedAsyncRW>;
+pub type ProviderTlsAsyncRW = IgnoreCloseNotify;
 pub type ProviderAsyncRW = Either<ProviderTlsAsyncRW, ProviderUnencryptedAsyncRW>;
 pub type ProviderWispTransportGenerator = Box<
 	dyn Fn() -> Pin<
-		Box<
-			dyn Future<
-				Output = Result<
-					(
-						Box<dyn WebSocketRead + Sync + Send>,
-						Box<dyn WebSocketWrite + Sync + Send>,
-					),
-					EpoxyError,
-				>,
-			> + Sync + Send,
-		>,
-	> + Sync + Send,
+			Box<
+				dyn Future<
+						Output = Result<
+							(
+								Box<dyn WebSocketRead + Send>,
+								Box<dyn WebSocketWrite + Send>,
+							),
+							EpoxyError,
+						>,
+					> + Sync
+					+ Send,
+			>,
+		> + Sync
+		+ Send,
 >;
 
 pub struct StreamProvider {
@@ -153,7 +155,9 @@ impl StreamProvider {
 			.into_fallible()
 			.await;
 		match ret {
-			Ok(stream) => Ok(stream.into()),
+			Ok(stream) => Ok(IgnoreCloseNotify {
+				inner: stream.into(),
+			}),
 			Err((err, stream)) => {
 				if matches!(err.kind(), ErrorKind::UnexpectedEof) {
 					// maybe actually a wisp error?

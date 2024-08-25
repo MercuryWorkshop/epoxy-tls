@@ -269,8 +269,8 @@ impl EpoxyClient {
 							return Err(EpoxyError::WebSocketConnectFailed);
 						}
 						Ok((
-							Box::new(read) as Box<dyn WebSocketRead + Send + Sync>,
-							Box::new(write) as Box<dyn WebSocketWrite + Send + Sync>,
+							Box::new(read) as Box<dyn WebSocketRead + Send>,
+							Box::new(write) as Box<dyn WebSocketWrite + Send>,
 						))
 					})
 				}),
@@ -311,8 +311,8 @@ impl EpoxyClient {
 						};
 
 						Ok((
-							Box::new(read) as Box<dyn WebSocketRead + Send + Sync>,
-							Box::new(write) as Box<dyn WebSocketWrite + Send + Sync>,
+							Box::new(read) as Box<dyn WebSocketRead + Send>,
+							Box::new(write) as Box<dyn WebSocketWrite + Send>,
 						))
 					}))
 				}),
