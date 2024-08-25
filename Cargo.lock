@@ -557,6 +557,7 @@ dependencies = [
  "clap",
  "dashmap",
  "env_logger",
+ "event-listener",
  "fastwebsockets",
  "futures-util",
  "http-body-util",
