@@ -24,7 +24,17 @@ else
 fi
 
 mv out/epoxy_client_bg.wasm out/epoxy_client_unoptimized.wasm
-time wasm-opt $WASMOPTFLAGS -Oz --vacuum --dce --enable-threads --enable-bulk-memory out/epoxy_client_unoptimized.wasm -o out/epoxy_client_bg.wasm
+(
+	G="--generate-global-effects"
+	time wasm-opt $WASMOPTFLAGS --enable-threads --enable-bulk-memory --traps-never-happen \
+		out/epoxy_client_unoptimized.wasm -o out/epoxy_client_bg.wasm \
+		--converge \
+		$G --type-unfinalizing $G --type-ssa $G -O4 $G --flatten $G --rereloop $G -O4 $G -O4 $G --type-merging $G --type-finalizing $G -O4 \
+		$G --type-unfinalizing $G --type-ssa $G -Oz $G --flatten $G --rereloop $G -Oz $G -Oz $G --type-merging $G --type-finalizing $G -Oz \
+		$G --abstract-type-refining $G --code-folding $G --const-hoisting $G --dae $G --flatten $G --dfo $G --merge-locals $G --merge-similar-functions --type-finalizing \
+		$G --type-unfinalizing $G --type-ssa $G -O4 $G --flatten $G --rereloop $G -O4 $G -O4 $G --type-merging $G --type-finalizing $G -O4 \
+		$G --type-unfinalizing $G --type-ssa $G -Oz $G --flatten $G --rereloop $G -Oz $G -Oz $G --type-merging $G --type-finalizing $G -Oz 
+)
 echo "[epx] wasm-opt finished"
 
 # === js ===
