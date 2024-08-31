@@ -1,7 +1,5 @@
 use crate::{
-	sink_unfold,
-	ws::{Frame, LockedWebSocketWrite, Payload},
-	AtomicCloseReason, CloseReason, Packet, Role, StreamType, WispError,
+	inner::WsEvent, sink_unfold, ws::{Frame, LockedWebSocketWrite, Payload}, AtomicCloseReason, CloseReason, Packet, Role, StreamType, WispError
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -22,17 +20,6 @@ use std::{
 		Arc,
 	},
 };
-
-pub(crate) enum WsEvent {
-	Close(Packet<'static>, oneshot::Sender<Result<(), WispError>>),
-	CreateStream(
-		StreamType,
-		String,
-		u16,
-		oneshot::Sender<Result<MuxStream, WispError>>,
-	),
-	EndFut(Option<CloseReason>),
-}
 
 /// Read side of a multiplexor stream.
 pub struct MuxStreamRead {
