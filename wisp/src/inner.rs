@@ -1,10 +1,10 @@
 use std::{
-	collections::HashMap,
 	sync::{
 		atomic::{AtomicBool, AtomicU32, Ordering},
 		Arc,
 	},
 };
+
 
 use crate::{
 	extensions::AnyProtocolExtension,
@@ -12,6 +12,7 @@ use crate::{
 	AtomicCloseReason, ClosePacket, CloseReason, ConnectPacket, MuxStream, Packet, PacketType,
 	Role, StreamType, WispError,
 };
+use nohash_hasher::IntMap;
 use bytes::{Bytes, BytesMut};
 use event_listener::Event;
 use flume as mpsc;
@@ -51,7 +52,7 @@ pub struct MuxInner<R: WebSocketRead + Send> {
 	fut_tx: mpsc::Sender<WsEvent>,
 	fut_exited: Arc<AtomicBool>,
 
-	stream_map: HashMap<u32, MuxMapValue>,
+	stream_map: IntMap<u32, MuxMapValue>,
 
 	buffer_size: u32,
 	target_buffer_size: u32,
@@ -91,7 +92,7 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 
 				role: Role::Server,
 
-				stream_map: HashMap::new(),
+				stream_map: IntMap::default(),
 
 				server_tx,
 			},
@@ -127,7 +128,7 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 
 				role: Role::Client,
 
-				stream_map: HashMap::new(),
+				stream_map: IntMap::default(),
 
 				server_tx,
 			},
