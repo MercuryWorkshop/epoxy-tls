@@ -194,7 +194,6 @@ pub struct EpoxyClientOptions {
 	pub redirect_limit: usize,
 	#[wasm_bindgen(getter_with_clone)]
 	pub user_agent: String,
-	pub disable_certificate_validation: bool,
 	#[cfg(feature = "full")]
 	#[wasm_bindgen(getter_with_clone)]
 	pub pem_files: Vec<String>,
@@ -216,7 +215,6 @@ impl Default for EpoxyClientOptions {
             websocket_protocols: Vec::new(),
             redirect_limit: 10,
             user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36".to_string(),
-			disable_certificate_validation: false,
 			#[cfg(feature = "full")]
 			pem_files: Vec::new(),
         }
@@ -350,7 +348,7 @@ impl EpoxyClient {
 			client,
 			redirect_limit: options.redirect_limit,
 			user_agent: options.user_agent,
-			certs_tampered: options.disable_certificate_validation || !options.pem_files.is_empty(),
+			certs_tampered: !options.pem_files.is_empty(),
 		})
 	}
 

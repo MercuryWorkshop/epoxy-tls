@@ -87,18 +87,9 @@ impl StreamProvider {
 			}
 		}
 
-		let client_config = if options.disable_certificate_validation {
-			ClientConfig::builder()
-				.dangerous()
-				.with_custom_certificate_verifier(Arc::new(NoCertificateVerification(
-					default_provider(),
-				)))
-				.with_no_client_auth()
-		} else {
-			ClientConfig::builder()
-				.with_root_certificates(certstore)
-				.with_no_client_auth()
-		};
+		let client_config = ClientConfig::builder()
+			.with_root_certificates(certstore)
+			.with_no_client_auth();
 		let client_config = Arc::new(client_config);
 
 		Ok(Self {
