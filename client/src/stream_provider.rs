@@ -1,7 +1,13 @@
-use std::{io::ErrorKind, pin::Pin, sync::Arc, task::Poll};
+use std::{
+	io::{BufReader, ErrorKind},
+	pin::Pin,
+	sync::Arc,
+	task::Poll,
+};
 
+use cfg_if::cfg_if;
 use futures_rustls::{
-	rustls::{ClientConfig, RootCertStore},
+	rustls::{crypto::ring::default_provider, ClientConfig, RootCertStore},
 	TlsConnector,
 };
 use futures_util::{
@@ -10,7 +16,6 @@ use futures_util::{
 	AsyncRead, AsyncWrite, Future,
 };
 use hyper_util_wasm::client::legacy::connect::{ConnectSvc, Connected, Connection};
-use lazy_static::lazy_static;
 use pin_project_lite::pin_project;
 use wasm_bindgen_futures::spawn_local;
 use webpki_roots::TLS_SERVER_ROOTS;
@@ -20,18 +25,11 @@ use wisp_mux::{
 	ClientMux, MuxStreamAsyncRW, MuxStreamIo, StreamType,
 };
 
-use crate::{console_log, utils::IgnoreCloseNotify, EpoxyClientOptions, EpoxyError};
-
-lazy_static! {
-	static ref CLIENT_CONFIG: Arc<ClientConfig> = {
-		let certstore = RootCertStore::from_iter(TLS_SERVER_ROOTS.iter().cloned());
-		Arc::new(
-			ClientConfig::builder()
-				.with_root_certificates(certstore)
-				.with_no_client_auth(),
-		)
-	};
-}
+use crate::{
+	console_log,
+	utils::{IgnoreCloseNotify, NoCertificateVerification},
+	EpoxyClientOptions, EpoxyError,
+};
 
 pub type ProviderUnencryptedStream = MuxStreamIo;
 pub type ProviderUnencryptedAsyncRW = MuxStreamAsyncRW;
@@ -62,6 +60,8 @@ pub struct StreamProvider {
 	udp_extension: bool,
 
 	current_client: Arc<Mutex<Option<ClientMux>>>,
+
+	client_config: Arc<ClientConfig>,
 }
 
 impl StreamProvider {
@@ -69,11 +69,44 @@ impl StreamProvider {
 		wisp_generator: ProviderWispTransportGenerator,
 		options: &EpoxyClientOptions,
 	) -> Result<Self, EpoxyError> {
+		cfg_if! {
+			if #[cfg(feature = "full")] {
+				let pems: Result<Result<Vec<_>, webpki::Error>, std::io::Error> = options
+					.pem_files
+					.iter()
+					.flat_map(|x| {
+						rustls_pemfile::certs(&mut BufReader::new(x.as_bytes()))
+							.map(|x| x.map(|x| webpki::anchor_from_trusted_cert(&x).map(|x| x.to_owned())))
+							.collect::<Vec<_>>()
+					})
+					.collect();
+				let pems = pems.map_err(EpoxyError::Pemfile)??;
+				let certstore = RootCertStore::from_iter(pems.into_iter().chain(TLS_SERVER_ROOTS.iter().cloned()));
+			} else {
+				let certstore = RootCertStore::from_iter(TLS_SERVER_ROOTS.iter().cloned());
+			}
+		}
+
+		let client_config = if options.disable_certificate_validation {
+			ClientConfig::builder()
+				.dangerous()
+				.with_custom_certificate_verifier(Arc::new(NoCertificateVerification(
+					default_provider(),
+				)))
+				.with_no_client_auth()
+		} else {
+			ClientConfig::builder()
+				.with_root_certificates(certstore)
+				.with_no_client_auth()
+		};
+		let client_config = Arc::new(client_config);
+
 		Ok(Self {
 			wisp_generator,
 			current_client: Arc::new(Mutex::new(None)),
 			wisp_v2: options.wisp_v2,
 			udp_extension: options.udp_extension_required,
+			client_config,
 		})
 	}
 
@@ -149,7 +182,7 @@ impl StreamProvider {
 		let stream = self
 			.get_asyncread(StreamType::Tcp, host.clone(), port)
 			.await?;
-		let connector = TlsConnector::from(CLIENT_CONFIG.clone());
+		let connector = TlsConnector::from(self.client_config.clone());
 		let ret = connector
 			.connect(host.try_into()?, stream)
 			.into_fallible()

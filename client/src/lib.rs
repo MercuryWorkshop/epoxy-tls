@@ -73,6 +73,12 @@ pub enum EpoxyError {
 	#[cfg(feature = "full")]
 	#[error("Fastwebsockets: {0:?} ({0})")]
 	FastWebSockets(#[from] fastwebsockets::WebSocketError),
+	#[cfg(feature = "full")]
+	#[error("Pemfile: {0:?} ({0})")]
+	Pemfile(std::io::Error),
+	#[cfg(feature = "full")]
+	#[error("Webpki: {0:?} ({0})")]
+	Webpki(#[from] webpki::Error),
 
 	#[error("Custom wisp transport: {0}")]
 	WispTransport(String),
@@ -188,6 +194,10 @@ pub struct EpoxyClientOptions {
 	pub redirect_limit: usize,
 	#[wasm_bindgen(getter_with_clone)]
 	pub user_agent: String,
+	pub disable_certificate_validation: bool,
+	#[cfg(feature = "full")]
+	#[wasm_bindgen(getter_with_clone)]
+	pub pem_files: Vec<String>,
 }
 
 #[wasm_bindgen]
@@ -206,6 +216,9 @@ impl Default for EpoxyClientOptions {
             websocket_protocols: Vec::new(),
             redirect_limit: 10,
             user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36".to_string(),
+			disable_certificate_validation: false,
+			#[cfg(feature = "full")]
+			pem_files: Vec::new(),
         }
 	}
 }
@@ -241,6 +254,8 @@ impl EpoxyHandlers {
 pub struct EpoxyClient {
 	stream_provider: Arc<StreamProvider>,
 	client: Client<StreamProviderService, HttpBody>,
+
+	certs_tampered: bool,
 
 	pub redirect_limit: usize,
 	#[wasm_bindgen(getter_with_clone)]
@@ -335,6 +350,7 @@ impl EpoxyClient {
 			client,
 			redirect_limit: options.redirect_limit,
 			user_agent: options.user_agent,
+			certs_tampered: options.disable_certificate_validation || !options.pem_files.is_empty(),
 		})
 	}
 
@@ -566,9 +582,16 @@ impl EpoxyClient {
 			}
 		}
 
-		let (response, response_uri, redirected) = self
+		let (mut response, response_uri, redirected) = self
 			.send_req(request_builder.body(HttpBody::new(body))?, request_redirect)
 			.await?;
+
+		if self.certs_tampered {
+			response.headers_mut().insert(
+				HeaderName::from_static("X-Epoxy-CertsTampered"),
+				HeaderValue::from_static("true"),
+			);
+		}
 
 		let response_headers: Array = response
 			.headers()

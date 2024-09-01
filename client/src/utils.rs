@@ -6,12 +6,21 @@ use std::{
 
 use async_trait::async_trait;
 use bytes::{buf::UninitSlice, BufMut, Bytes, BytesMut};
-use futures_rustls::TlsStream;
+use futures_rustls::{
+	rustls::{
+		self,
+		client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+		crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider},
+		DigitallySignedStruct,
+	},
+	TlsStream,
+};
 use futures_util::{ready, AsyncRead, AsyncWrite, Future, Stream, StreamExt, TryStreamExt};
 use http::{HeaderValue, Uri};
 use hyper::{body::Body, rt::Executor};
 use js_sys::{Array, ArrayBuffer, JsString, Object, Uint8Array};
 use pin_project_lite::pin_project;
+use rustls_pki_types::{CertificateDer, ServerName, UnixTime};
 use send_wrapper::SendWrapper;
 use wasm_bindgen::{prelude::*, JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -285,9 +294,7 @@ impl AsyncWrite for IgnoreCloseNotify {
 		cx: &mut Context<'_>,
 		buf: &[u8],
 	) -> Poll<std::io::Result<usize>> {
-		self.project()
-			.inner
-			.poll_write(cx, buf)
+		self.project().inner.poll_write(cx, buf)
 	}
 
 	fn poll_write_vectored(
@@ -295,9 +302,7 @@ impl AsyncWrite for IgnoreCloseNotify {
 		cx: &mut Context<'_>,
 		bufs: &[std::io::IoSlice<'_>],
 	) -> Poll<std::io::Result<usize>> {
-		self.project()
-			.inner
-			.poll_write_vectored(cx, bufs)
+		self.project().inner.poll_write_vectored(cx, bufs)
 	}
 
 	fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
@@ -306,6 +311,60 @@ impl AsyncWrite for IgnoreCloseNotify {
 
 	fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
 		self.project().inner.poll_close(cx)
+	}
+}
+
+#[derive(Debug)]
+pub(crate) struct NoCertificateVerification(pub CryptoProvider);
+
+impl NoCertificateVerification {
+	pub fn new(provider: CryptoProvider) -> Self {
+		Self(provider)
+	}
+}
+
+impl ServerCertVerifier for NoCertificateVerification {
+	fn verify_server_cert(
+		&self,
+		_end_entity: &CertificateDer<'_>,
+		_intermediates: &[CertificateDer<'_>],
+		_server_name: &ServerName<'_>,
+		_ocsp: &[u8],
+		_now: UnixTime,
+	) -> Result<ServerCertVerified, rustls::Error> {
+		Ok(rustls::client::danger::ServerCertVerified::assertion())
+	}
+
+	fn verify_tls12_signature(
+		&self,
+		message: &[u8],
+		cert: &CertificateDer<'_>,
+		dss: &DigitallySignedStruct,
+	) -> Result<HandshakeSignatureValid, rustls::Error> {
+		verify_tls12_signature(
+			message,
+			cert,
+			dss,
+			&self.0.signature_verification_algorithms,
+		)
+	}
+
+	fn verify_tls13_signature(
+		&self,
+		message: &[u8],
+		cert: &CertificateDer<'_>,
+		dss: &DigitallySignedStruct,
+	) -> Result<HandshakeSignatureValid, rustls::Error> {
+		verify_tls13_signature(
+			message,
+			cert,
+			dss,
+			&self.0.signature_verification_algorithms,
+		)
+	}
+
+	fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+		self.0.signature_verification_algorithms.supported_schemes()
 	}
 }
 
