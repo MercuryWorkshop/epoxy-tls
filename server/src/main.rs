@@ -7,8 +7,9 @@ use config::{validate_config_cache, Cli, Config};
 use dashmap::DashMap;
 use handle::{handle_wisp, handle_wsproxy};
 use lazy_static::lazy_static;
-use listener::{ServerListener, ServerRouteResult, ServerStreamExt};
+use listener::ServerListener;
 use log::{error, info};
+use route::ServerRouteResult;
 use tokio::signal::unix::{signal, SignalKind};
 use uuid::Uuid;
 use wisp_mux::{ConnectPacket, StreamType};
@@ -16,6 +17,7 @@ use wisp_mux::{ConnectPacket, StreamType};
 mod config;
 mod handle;
 mod listener;
+mod route;
 mod stream;
 
 type Client = (DashMap<Uuid, (ConnectPacket, ConnectPacket)>, bool);
@@ -177,7 +179,7 @@ async fn main() -> anyhow::Result<()> {
 	loop {
 		let (stream, id) = listener.accept().await?;
 		tokio::spawn(async move {
-			let res = stream.route(move |stream| handle_stream(stream, id)).await;
+			let res = route::route(stream, move |stream| handle_stream(stream, id)).await;
 
 			if let Err(e) = res {
 				error!("error while routing client: {:?}", e);

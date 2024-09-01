@@ -18,7 +18,7 @@ use wisp_mux::{
 };
 
 use crate::{
-	listener::WispResult,
+	route::WispResult,
 	stream::{ClientStream, ResolvedPacket},
 	CLIENTS, CONFIG,
 };
@@ -51,7 +51,7 @@ async fn copy_write_fast(muxtx: MuxStreamWrite, tcprx: OwnedReadHalf) -> anyhow:
 
 		let len = buf.len();
 		if len == 0 {
-			return Ok(())
+			return Ok(());
 		}
 
 		muxtx.write(&buf).await?;
@@ -261,7 +261,7 @@ pub async fn handle_wisp(stream: WispResult, id: String) -> anyhow::Result<()> {
 	let _ = mux.close().await;
 	event.notify(usize::MAX);
 
-	while set.join_next().await.is_some() {};
+	while set.join_next().await.is_some() {}
 
 	debug!("wisp client id {:?} disconnected", id);
 
