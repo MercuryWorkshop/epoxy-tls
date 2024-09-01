@@ -348,7 +348,10 @@ impl EpoxyClient {
 			client,
 			redirect_limit: options.redirect_limit,
 			user_agent: options.user_agent,
+			#[cfg(feature = "full")]
 			certs_tampered: !options.pem_files.is_empty(),
+			#[cfg(not(feature = "full"))]
+			certs_tampered: false,
 		})
 	}
 

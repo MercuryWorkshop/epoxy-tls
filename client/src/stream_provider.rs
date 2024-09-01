@@ -1,5 +1,5 @@
 use std::{
-	io::{BufReader, ErrorKind},
+	io::{ErrorKind},
 	pin::Pin,
 	sync::Arc,
 	task::Poll,
@@ -7,7 +7,7 @@ use std::{
 
 use cfg_if::cfg_if;
 use futures_rustls::{
-	rustls::{crypto::ring::default_provider, ClientConfig, RootCertStore},
+	rustls::{ClientConfig, RootCertStore},
 	TlsConnector,
 };
 use futures_util::{
@@ -25,11 +25,7 @@ use wisp_mux::{
 	ClientMux, MuxStreamAsyncRW, MuxStreamIo, StreamType,
 };
 
-use crate::{
-	console_log,
-	utils::{IgnoreCloseNotify, NoCertificateVerification},
-	EpoxyClientOptions, EpoxyError,
-};
+use crate::{console_log, utils::IgnoreCloseNotify, EpoxyClientOptions, EpoxyError};
 
 pub type ProviderUnencryptedStream = MuxStreamIo;
 pub type ProviderUnencryptedAsyncRW = MuxStreamAsyncRW;
@@ -75,7 +71,7 @@ impl StreamProvider {
 					.pem_files
 					.iter()
 					.flat_map(|x| {
-						rustls_pemfile::certs(&mut BufReader::new(x.as_bytes()))
+						rustls_pemfile::certs(&mut std::io::BufReader::new(x.as_bytes()))
 							.map(|x| x.map(|x| webpki::anchor_from_trusted_cert(&x).map(|x| x.to_owned())))
 							.collect::<Vec<_>>()
 					})
