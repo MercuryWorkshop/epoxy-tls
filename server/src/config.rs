@@ -339,6 +339,8 @@ impl Config {
 			ConfigFormat::Json => serde_json::to_string_pretty(self)?,
 			#[cfg(feature = "yaml")]
 			ConfigFormat::Yaml => serde_yaml::to_string(self)?,
+			#[cfg(not(any(feature = "toml", feature = "json", feature = "yaml")))]
+			ConfigFormat::None => String::new(),
 		})
 	}
 
@@ -350,6 +352,8 @@ impl Config {
 			ConfigFormat::Json => serde_json::from_str(&string)?,
 			#[cfg(feature = "yaml")]
 			ConfigFormat::Yaml => serde_yaml::from_str(&string)?,
+			#[cfg(not(any(feature = "toml", feature = "json", feature = "yaml")))]
+			ConfigFormat::None => { let _ = string; Self::default() },
 		})
 	}
 }
@@ -362,19 +366,22 @@ pub enum ConfigFormat {
 	Json,
 	#[cfg(feature = "yaml")]
 	Yaml,
+	#[cfg(not(any(feature = "toml", feature = "json", feature = "yaml")))]
+	None,
 }
 
 impl Default for ConfigFormat {
 	fn default() -> Self {
 		cfg_if! {
 			if #[cfg(feature = "toml")] {
-				return Self::Toml;
+				Self::Toml
 			} else if #[cfg(feature = "json")] {
-				return Self::Json;
+				Self::Json
 			} else if #[cfg(feature = "yaml")] {
-				return Self::Yaml;
+				Self::Yaml
 			} else {
-				compile_error!("no config format feature enabled - build will fail!");
+				compile_error!("no config format feature enabled!");
+				Self::None
 			}
 		}
 	}
