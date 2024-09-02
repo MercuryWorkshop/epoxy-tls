@@ -20,9 +20,9 @@ hyper-util = { version = "0.1.7", features = ["tokio"] }
 lazy_static = "1.5.0"
 libc = { version = "0.2.158", optional = true }
 log = { version = "0.4.22", features = ["serde", "std"] }
+nix = { version = "0.29.0", features = ["term"] }
 pty-process = { version = "0.4.0", features = ["async", "tokio"], optional = true }
 regex = "1.10.6"
-rustix = { version = "0.38.34", optional = true }
 serde = { version = "1.0.208", features = ["derive"] }
 serde_json = { version = "1.0.125", optional = true }
 serde_yaml = { version = "0.9.34", optional = true }
@@ -42,4 +42,4 @@ json = ["dep:serde_json"]
 yaml = ["dep:serde_yaml"]
 toml = ["dep:toml"]
 
-twisp = ["dep:pty-process", "dep:libc", "dep:rustix", "dep:async-trait", "dep:shell-words"]
+twisp = ["dep:pty-process", "dep:libc", "dep:async-trait", "dep:shell-words"]

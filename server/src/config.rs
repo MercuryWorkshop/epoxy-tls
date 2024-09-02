@@ -20,6 +20,9 @@ pub enum SocketType {
 	Tcp,
 	/// Unix socket listener.
 	Unix,
+	/// File "socket" "listener".
+	/// "Accepts" a "connection" immediately.
+	File,
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]
@@ -47,6 +50,8 @@ pub struct ServerConfig {
 	pub resolve_ipv6: bool,
 	/// Whether or not to enable TCP nodelay on client TCP streams.
 	pub tcp_nodelay: bool,
+	/// Whether or not to set "raw mode" for the file.
+	pub file_raw_mode: bool,
 
 	/// Whether or not to show what upstreams each client is connected to in stats. This can
 	/// heavily increase the size of the stats.
@@ -206,6 +211,7 @@ impl Default for ServerConfig {
 			transport: SocketTransport::default(),
 			resolve_ipv6: false,
 			tcp_nodelay: false,
+			file_raw_mode: false,
 
 			verbose_stats: true,
 			stats_endpoint: "/stats".to_string(),

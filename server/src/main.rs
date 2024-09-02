@@ -175,7 +175,7 @@ async fn main() -> anyhow::Result<()> {
 		}
 	});
 
-	let listener = ServerListener::new().await?;
+	let mut listener = ServerListener::new().await?;
 	loop {
 		let (stream, id) = listener.accept().await?;
 		tokio::spawn(async move {
