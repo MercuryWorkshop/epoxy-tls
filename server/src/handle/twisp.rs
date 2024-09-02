@@ -103,7 +103,7 @@ fn set_term_size(fd: RawFd, size: Size) -> anyhow::Result<()> {
 	let size = libc::winsize::from(size);
 	let ret = unsafe { libc::ioctl(fd, libc::TIOCSWINSZ, std::ptr::addr_of!(size)) };
 	if ret == -1 {
-		Err(rustix::io::Errno::from_raw_os_error(
+		Err(nix::errno::Errno::from_raw(
 			std::io::Error::last_os_error().raw_os_error().unwrap_or(0),
 		)
 		.into())

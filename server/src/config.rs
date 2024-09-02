@@ -1,5 +1,6 @@
 use std::{collections::HashMap, ops::RangeInclusive, path::PathBuf};
 
+use cfg_if::cfg_if;
 use clap::{Parser, ValueEnum};
 use lazy_static::lazy_static;
 use log::LevelFilter;
@@ -353,15 +354,30 @@ impl Config {
 	}
 }
 
-#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Default, ValueEnum)]
+#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, ValueEnum)]
 pub enum ConfigFormat {
 	#[cfg(feature = "toml")]
-	#[default]
 	Toml,
 	#[cfg(feature = "json")]
 	Json,
 	#[cfg(feature = "yaml")]
 	Yaml,
+}
+
+impl Default for ConfigFormat {
+	fn default() -> Self {
+		cfg_if! {
+			if #[cfg(feature = "toml")] {
+				return Self::Toml;
+			} else if #[cfg(feature = "json")] {
+				return Self::Json;
+			} else if #[cfg(feature = "yaml")] {
+				return Self::Yaml;
+			} else {
+				compile_error!("no config format feature enabled - build will fail!");
+			}
+		}
+	}
 }
 
 /// Performant server implementation of the Wisp protocol in Rust, made for epoxy.
