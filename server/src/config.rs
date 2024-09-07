@@ -353,7 +353,10 @@ impl Config {
 			#[cfg(feature = "yaml")]
 			ConfigFormat::Yaml => serde_yaml::from_str(&string)?,
 			#[cfg(not(any(feature = "toml", feature = "json", feature = "yaml")))]
-			ConfigFormat::None => { let _ = string; Self::default() },
+			ConfigFormat::None => {
+				let _ = string;
+				Self::default()
+			}
 		})
 	}
 }
