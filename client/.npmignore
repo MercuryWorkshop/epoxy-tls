@@ -1,7 +1,9 @@
-build.sh
-Cargo.toml
-serve.py
 src
+Cargo.toml
 .cargo
+
 index.html
 demo.js
+serve.py
+build.sh
+publish.sh
