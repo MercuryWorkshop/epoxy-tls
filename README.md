@@ -2,7 +2,7 @@
 Epoxy is an encrypted proxy for browser javascript. It allows you to make requests that bypass CORS without compromising security, by running SSL/TLS inside webassembly.
 
 ## Using the client
-Epoxy must be served with the [security headers needed for `SharedArrayBuffer`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer#security_requirements). Here is a simple usage example:
+Here is a simple usage example:
 ```javascript
 import epoxy from "./epoxy-module-bundled.js";
 
@@ -37,7 +37,7 @@ In the `client` directory:
 bash build.sh
 ```
 
-To host a local server with the required headers:
+To host a local server: 
 ```
-python3 serve.py
+python3 -m http.server
 ```

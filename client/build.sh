@@ -12,7 +12,7 @@ else
 	CARGOFLAGS=""
 fi
 
-RUSTFLAGS='-C target-feature=+atomics,+bulk-memory -Zlocation-detail=none' cargo build --target wasm32-unknown-unknown -Z build-std=panic_abort,std -Z build-std-features=panic_immediate_abort,optimize_for_size --release $CARGOFLAGS "$@"
+RUSTFLAGS='-Zlocation-detail=none' cargo build --target wasm32-unknown-unknown -Z build-std=panic_abort,std -Z build-std-features=panic_immediate_abort,optimize_for_size --release $CARGOFLAGS "$@"
 echo "[epx] cargo finished"
 wasm-bindgen --target web --out-dir out/ ../target/wasm32-unknown-unknown/release/epoxy_client.wasm
 echo "[epx] wasm-bindgen finished"
@@ -27,7 +27,7 @@ if [ "${RELEASE:-0}" = "1" ]; then
 	mv out/epoxy_client_bg.wasm out/epoxy_client_unoptimized.wasm
 	(
 		G="--generate-global-effects"
-		time wasm-opt $WASMOPTFLAGS --enable-threads --enable-bulk-memory \
+		time wasm-opt $WASMOPTFLAGS \
 			out/epoxy_client_unoptimized.wasm -o out/epoxy_client_bg.wasm \
 			--converge \
 			$G --type-unfinalizing $G --type-ssa $G -O4 $G --flatten $G --rereloop $G -O4 $G -O4 $G --type-merging $G --type-finalizing $G -O4 \
