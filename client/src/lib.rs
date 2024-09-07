@@ -71,14 +71,14 @@ pub enum EpoxyError {
 	#[error("HTTP ToStr: {0:?} ({0})")]
 	ToStr(#[from] http::header::ToStrError),
 	#[cfg(feature = "full")]
-	#[error("Fastwebsockets: {0:?} ({0})")]
-	FastWebSockets(#[from] fastwebsockets::WebSocketError),
-	#[cfg(feature = "full")]
 	#[error("Pemfile: {0:?} ({0})")]
 	Pemfile(std::io::Error),
 	#[cfg(feature = "full")]
 	#[error("Webpki: {0:?} ({0})")]
 	Webpki(#[from] webpki::Error),
+
+	#[error("Wisp WebSocket failed to connect")]
+	WebSocketConnectFailed,
 
 	#[error("Custom wisp transport: {0}")]
 	WispTransport(String),
@@ -88,6 +88,22 @@ pub enum EpoxyError {
 	InvalidWispTransportPacket,
 	#[error("Wisp transport already closed")]
 	WispTransportClosed,
+
+	#[cfg(feature = "full")]
+	#[error("Fastwebsockets: {0:?} ({0})")]
+	FastWebSockets(#[from] fastwebsockets::WebSocketError),
+	#[cfg(feature = "full")]
+	#[error("Invalid websocket response status code: {0} != {1}")]
+	WsInvalidStatusCode(u16, u16),
+	#[cfg(feature = "full")]
+	#[error("Invalid websocket upgrade header: {0:?} != \"websocket\"")]
+	WsInvalidUpgradeHeader(String),
+	#[cfg(feature = "full")]
+	#[error("Invalid websocket connection header: {0:?} != \"Upgrade\"")]
+	WsInvalidConnectionHeader(String),
+	#[cfg(feature = "full")]
+	#[error("Invalid websocket payload, only String/ArrayBuffer accepted")]
+	WsInvalidPayload,
 
 	#[error("Invalid URL scheme")]
 	InvalidUrlScheme,
@@ -99,22 +115,8 @@ pub enum EpoxyError {
 	InvalidRequestBody,
 	#[error("Invalid request")]
 	InvalidRequest,
-	#[error("Invalid websocket response status code")]
-	WsInvalidStatusCode,
-	#[error("Invalid websocket upgrade header")]
-	WsInvalidUpgradeHeader,
-	#[error("Invalid websocket connection header")]
-	WsInvalidConnectionHeader,
-	#[error("Invalid websocket payload")]
-	WsInvalidPayload,
 	#[error("Invalid payload")]
 	InvalidPayload,
-
-	#[error("Invalid certificate store")]
-	InvalidCertStore,
-	#[error("WebSocket failed to connect")]
-	WebSocketConnectFailed,
-
 	#[error("Failed to construct response headers object")]
 	ResponseHeadersFromEntriesFailed,
 	#[error("Failed to construct response object")]
@@ -184,7 +186,6 @@ enum EpoxyCompression {
 	Brotli,
 	Gzip,
 }
-
 
 // ugly hack. switch to serde-wasm-bindgen or a knockoff
 cfg_if! {
