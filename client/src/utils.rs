@@ -312,7 +312,7 @@ pub fn is_null_body(code: u16) -> bool {
 export function object_get(obj, k) { 
 	try {
 		return obj[k]
-	} catch {
+	} catch(x) {
 		return undefined
 	}
 };
