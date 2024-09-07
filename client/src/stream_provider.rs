@@ -1,9 +1,4 @@
-use std::{
-	io::{ErrorKind},
-	pin::Pin,
-	sync::Arc,
-	task::Poll,
-};
+use std::{io::ErrorKind, pin::Pin, sync::Arc, task::Poll};
 
 use cfg_if::cfg_if;
 use futures_rustls::{

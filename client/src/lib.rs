@@ -23,7 +23,9 @@ use send_wrapper::SendWrapper;
 use stream_provider::{StreamProvider, StreamProviderService};
 use thiserror::Error;
 use utils::{
-	asyncread_to_readablestream_stream, convert_body, entries_of_object, from_entries, is_null_body, is_redirect, object_get, object_set, object_truthy, IncomingBody, UriExt, WasmExecutor, WispTransportRead, WispTransportWrite
+	asyncread_to_readablestream_stream, convert_body, entries_of_object, from_entries,
+	is_null_body, is_redirect, object_get, object_set, object_truthy, IncomingBody, UriExt,
+	WasmExecutor, WispTransportRead, WispTransportWrite,
 };
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
