@@ -23,9 +23,7 @@ use send_wrapper::SendWrapper;
 use stream_provider::{StreamProvider, StreamProviderService};
 use thiserror::Error;
 use utils::{
-	asyncread_to_readablestream_stream, convert_body, entries_of_object, is_null_body, is_redirect,
-	object_get, object_set, object_truthy, IncomingBody, UriExt, WasmExecutor, WispTransportRead,
-	WispTransportWrite,
+	asyncread_to_readablestream_stream, convert_body, entries_of_object, from_entries, is_null_body, is_redirect, object_get, object_set, object_truthy, IncomingBody, UriExt, WasmExecutor, WispTransportRead, WispTransportWrite
 };
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
@@ -556,7 +554,7 @@ impl EpoxyClient {
 
 		let headers = object_truthy(object_get(&options, "headers")).and_then(|val| {
 			if web_sys::Headers::instanceof(&val) {
-				Some(entries_of_object(&Object::from_entries(&val).ok()?))
+				Some(entries_of_object(&from_entries(&val).ok()?))
 			} else if val.is_truthy() {
 				Some(entries_of_object(&Object::from(val)))
 			} else {
@@ -621,7 +619,7 @@ impl EpoxyClient {
 				))
 			})
 			.collect();
-		let response_headers = Object::from_entries(&response_headers)
+		let response_headers = from_entries(&response_headers)
 			.map_err(|_| EpoxyError::ResponseHeadersFromEntriesFailed)?;
 
 		let response_headers_raw = response.headers().clone();

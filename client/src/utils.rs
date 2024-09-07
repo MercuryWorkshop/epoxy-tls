@@ -339,6 +339,12 @@ export function ws_key() {
 	crypto.getRandomValues(key);
 	return btoa(Array.from(key).map(String.fromCharCode).join(''));
 }
+
+export function from_entries(entries){
+    var ret = {};
+    for(var i = 0; i < entries.length; i++) ret[entries[i][0]] = entries[i][1];
+    return ret;
+}
 "#)]
 extern "C" {
 	pub fn object_get(obj: &Object, key: &str) -> JsValue;
@@ -350,6 +356,9 @@ extern "C" {
 	fn entries_of_object_inner(obj: &Object) -> Vec<Array>;
 	pub fn define_property(obj: &Object, key: &str, val: JsValue);
 	pub fn ws_key() -> String;
+
+	#[wasm_bindgen(catch)]
+	pub fn from_entries(iterable: &JsValue) -> Result<Object, JsValue>;
 }
 
 pub async fn convert_body(val: JsValue) -> Result<(Uint8Array, Option<String>), JsValue> {

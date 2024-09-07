@@ -16,14 +16,14 @@ use hyper::{
 	body::Incoming,
 	upgrade::{self, Upgraded},
 };
-use js_sys::{ArrayBuffer, Function, Object, Uint8Array};
+use js_sys::{ArrayBuffer, Function, Uint8Array};
 use tokio::io::WriteHalf;
 use wasm_bindgen::{prelude::*, JsError, JsValue};
 use wasm_bindgen_futures::spawn_local;
 
 use crate::{
 	tokioio::TokioIo,
-	utils::{entries_of_object, ws_key},
+	utils::{entries_of_object, from_entries, ws_key},
 	EpoxyClient, EpoxyError, EpoxyHandlers, HttpBody,
 };
 
@@ -69,7 +69,7 @@ impl EpoxyWebSocket {
 			}
 
 			if web_sys::Headers::instanceof(&headers)
-				&& let Ok(entries) = Object::from_entries(&headers)
+				&& let Ok(entries) = from_entries(&headers)
 			{
 				for header in entries_of_object(&entries) {
 					request = request.header(&header[0], &header[1]);

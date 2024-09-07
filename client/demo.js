@@ -270,7 +270,7 @@ import initEpoxy, { EpoxyClient, EpoxyClientOptions, EpoxyHandlers, info as epox
 		console.time();
 		let resp = await epoxy_client.fetch("https://www.example.com/");
 		console.timeEnd();
-		console.log(resp, Object.fromEntries(resp.headers));
+		console.log(resp, resp.rawHeaders);
 		log(await resp.text());
 	}
 	log("done");
