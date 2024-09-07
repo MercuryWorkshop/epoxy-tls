@@ -201,6 +201,7 @@ cfg_if! {
 			pub user_agent: String,
 			#[wasm_bindgen(getter_with_clone)]
 			pub pem_files: Vec<String>,
+			pub disable_certificate_validation: bool,
 		}
 	} else {
 		#[wasm_bindgen]
@@ -212,6 +213,7 @@ cfg_if! {
 			pub redirect_limit: usize,
 			#[wasm_bindgen(getter_with_clone)]
 			pub user_agent: String,
+			pub disable_certificate_validation: bool,
 		}
 	}
 }
@@ -234,6 +236,7 @@ impl Default for EpoxyClientOptions {
             user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36".to_string(),
 			#[cfg(feature = "full")]
 			pem_files: Vec::new(),
+			disable_certificate_validation: false,
         }
 	}
 }
@@ -366,9 +369,9 @@ impl EpoxyClient {
 			redirect_limit: options.redirect_limit,
 			user_agent: options.user_agent,
 			#[cfg(feature = "full")]
-			certs_tampered: !options.pem_files.is_empty(),
+			certs_tampered: options.disable_certificate_validation || !options.pem_files.is_empty(),
 			#[cfg(not(feature = "full"))]
-			certs_tampered: false,
+			certs_tampered: options.disable_certificate_validation,
 		})
 	}
 
@@ -605,10 +608,9 @@ impl EpoxyClient {
 			.await?;
 
 		if self.certs_tampered {
-			response.headers_mut().insert(
-				HeaderName::from_static("X-Epoxy-CertsTampered"),
-				HeaderValue::from_static("true"),
-			);
+			response
+				.headers_mut()
+				.insert("X-Epoxy-CertsTampered", HeaderValue::from_static("true"));
 		}
 
 		let response_headers: Array = response
@@ -688,11 +690,11 @@ impl EpoxyClient {
 			if jv.is_array() {
 				let arr = Array::from(&jv);
 				arr.push(&v);
-				object_set(&raw_headers, &k, arr.into());
+				object_set(&raw_headers, k, arr.into());
 			} else if jv.is_truthy() {
-				object_set(&raw_headers, &k, Array::of2(&jv, &v).into());
+				object_set(&raw_headers, k, Array::of2(&jv, &v).into());
 			} else {
-				object_set(&raw_headers, &k, v);
+				object_set(&raw_headers, k, v);
 			}
 		}
 		utils::define_property(&resp, "rawHeaders", raw_headers.into());
