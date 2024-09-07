@@ -96,6 +96,8 @@ pub enum WispError {
 	MuxMessageFailedToRecv,
 	/// Multiplexor task ended.
 	MuxTaskEnded,
+	/// Multiplexor task already started.
+	MuxTaskStarted,
 }
 
 impl From<std::str::Utf8Error> for WispError {
@@ -150,6 +152,7 @@ impl std::fmt::Display for WispError {
 			Self::MuxMessageFailedToSend => write!(f, "Failed to send multiplexor message"),
 			Self::MuxMessageFailedToRecv => write!(f, "Failed to receive multiplexor message"),
 			Self::MuxTaskEnded => write!(f, "Multiplexor task ended"),
+			Self::MuxTaskStarted => write!(f, "Multiplexor task already started"),
 		}
 	}
 }

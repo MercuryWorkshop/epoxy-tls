@@ -1,5 +1,8 @@
 use crate::{
-	inner::WsEvent, sink_unfold, ws::{Frame, LockedWebSocketWrite, Payload}, AtomicCloseReason, CloseReason, Packet, Role, StreamType, WispError
+	inner::WsEvent,
+	sink_unfold,
+	ws::{Frame, LockedWebSocketWrite, Payload},
+	AtomicCloseReason, CloseReason, Packet, Role, StreamType, WispError,
 };
 
 use bytes::{BufMut, Bytes, BytesMut};

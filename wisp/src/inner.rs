@@ -1,10 +1,7 @@
-use std::{
-	sync::{
-		atomic::{AtomicBool, AtomicU32, Ordering},
-		Arc,
-	},
+use std::sync::{
+	atomic::{AtomicBool, AtomicU32, Ordering},
+	Arc,
 };
-
 
 use crate::{
 	extensions::AnyProtocolExtension,
@@ -12,11 +9,11 @@ use crate::{
 	AtomicCloseReason, ClosePacket, CloseReason, ConnectPacket, MuxStream, Packet, PacketType,
 	Role, StreamType, WispError,
 };
-use nohash_hasher::IntMap;
 use bytes::{Bytes, BytesMut};
 use event_listener::Event;
 use flume as mpsc;
-use futures::{channel::oneshot, FutureExt};
+use futures::{channel::oneshot, select, FutureExt};
+use nohash_hasher::IntMap;
 
 pub(crate) enum WsEvent {
 	Close(Packet<'static>, oneshot::Sender<Result<(), WispError>>),
@@ -26,7 +23,7 @@ pub(crate) enum WsEvent {
 		u16,
 		oneshot::Sender<Result<MuxStream, WispError>>,
 	),
-	WispMessage(Frame<'static>, Option<Frame<'static>>),
+	WispMessage(Option<Packet<'static>>, Option<Frame<'static>>),
 	EndFut(Option<CloseReason>),
 }
 
@@ -43,12 +40,14 @@ struct MuxMapValue {
 }
 
 pub struct MuxInner<R: WebSocketRead + Send> {
-	rx: R,
+	// gets taken by the mux task
+	rx: Option<R>,
 	tx: LockedWebSocketWrite,
 	extensions: Vec<AnyProtocolExtension>,
 	role: Role,
 
-	fut_rx: mpsc::Receiver<WsEvent>,
+	// gets taken by the mux task
+	fut_rx: Option<mpsc::Receiver<WsEvent>>,
 	fut_tx: mpsc::Sender<WsEvent>,
 	fut_exited: Arc<AtomicBool>,
 
@@ -79,10 +78,10 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 
 		(
 			Self {
-				rx,
+				rx: Some(rx),
 				tx,
 
-				fut_rx,
+				fut_rx: Some(fut_rx),
 				fut_tx,
 				fut_exited: fut_exited.clone(),
 
@@ -115,10 +114,10 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 
 		(
 			Self {
-				rx,
+				rx: Some(rx),
 				tx,
 
-				fut_rx,
+				fut_rx: Some(fut_rx),
 				fut_tx,
 				fut_exited: fut_exited.clone(),
 
@@ -205,31 +204,52 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 		stream.flow_control_event.notify(usize::MAX);
 	}
 
-	async fn get_message(&mut self) -> Result<Option<WsEvent>, WispError> {
-		futures::select! {
-			x = self.fut_rx.recv_async().fuse() => Ok(x.ok()),
-			x = self.rx.wisp_read_split(&self.tx).fuse() => {
-				let (mut frame, optional_frame) = x?;
-				if frame.opcode == OpCode::Close {
-					return Ok(None);
-				}
+	async fn process_wisp_message(
+		&mut self,
+		rx: &mut R,
+		msg: Result<(Frame<'static>, Option<Frame<'static>>), WispError>,
+	) -> Result<Option<WsEvent>, WispError> {
+		let (mut frame, optional_frame) = msg?;
+		if frame.opcode == OpCode::Close {
+			return Ok(None);
+		}
 
-				if let Some(ref extra_frame) = optional_frame {
-					if frame.payload[0] != PacketType::Data(Payload::Bytes(BytesMut::new())).as_u8() {
-						let mut payload = BytesMut::from(frame.payload);
-						payload.extend_from_slice(&extra_frame.payload);
-						frame.payload = Payload::Bytes(payload);
-					}
-				}
-
-				Ok(Some(WsEvent::WispMessage(frame, optional_frame)))
+		if let Some(ref extra_frame) = optional_frame {
+			if frame.payload[0] != PacketType::Data(Payload::Bytes(BytesMut::new())).as_u8() {
+				let mut payload = BytesMut::from(frame.payload);
+				payload.extend_from_slice(&extra_frame.payload);
+				frame.payload = Payload::Bytes(payload);
 			}
 		}
+
+		let packet =
+			Packet::maybe_handle_extension(frame, &mut self.extensions, rx, &self.tx).await?;
+
+		Ok(Some(WsEvent::WispMessage(packet, optional_frame)))
 	}
 
 	async fn stream_loop(&mut self) -> Result<(), WispError> {
 		let mut next_free_stream_id: u32 = 1;
-		while let Some(msg) = self.get_message().await? {
+
+		let mut rx = self.rx.take().ok_or(WispError::MuxTaskStarted)?;
+		let tx = self.tx.clone();
+		let fut_rx = self.fut_rx.take().ok_or(WispError::MuxTaskStarted)?;
+
+		let mut recv_fut = fut_rx.recv_async().fuse();
+		let mut read_fut = rx.wisp_read_split(&tx).fuse();
+		while let Some(msg) = select! {
+			x = recv_fut => {
+				drop(recv_fut);
+				recv_fut = fut_rx.recv_async().fuse();
+				Ok(x.ok())
+			},
+			x = read_fut => {
+				drop(read_fut);
+				let ret = self.process_wisp_message(&mut rx, x).await;
+				read_fut = rx.wisp_read_split(&tx).fuse();
+				ret
+			}
+		}? {
 			match msg {
 				WsEvent::CreateStream(stream_type, host, port, channel) => {
 					let ret: Result<MuxStream, WispError> = async {
@@ -275,15 +295,8 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 					}
 					break;
 				}
-				WsEvent::WispMessage(frame, optional_frame) => {
-					if let Some(packet) = Packet::maybe_handle_extension(
-						frame,
-						&mut self.extensions,
-						&mut self.rx,
-						&mut self.tx,
-					)
-					.await?
-					{
+				WsEvent::WispMessage(packet, optional_frame) => {
+					if let Some(packet) = packet {
 						let should_break = match self.role {
 							Role::Server => {
 								self.server_handle_packet(packet, optional_frame).await?
