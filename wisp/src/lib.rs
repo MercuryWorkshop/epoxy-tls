@@ -224,7 +224,7 @@ pub struct ServerMux {
 	actor_tx: mpsc::Sender<WsEvent>,
 	muxstream_recv: mpsc::Receiver<(ConnectPacket, MuxStream)>,
 	tx: ws::LockedWebSocketWrite,
-	fut_exited: Arc<AtomicBool>,
+	actor_exited: Arc<AtomicBool>,
 }
 
 impl ServerMux {
@@ -267,7 +267,7 @@ impl ServerMux {
 
 		let supported_extension_ids = supported_extensions.iter().map(|x| x.get_id()).collect();
 
-		let (mux_inner, fut_exited, actor_tx, muxstream_recv) = MuxInner::new_server(
+		let (mux_result, muxstream_recv) = MuxInner::new_server(
 			AppendingWebSocketRead(extra_packet, rx),
 			tx.clone(),
 			supported_extensions,
@@ -277,26 +277,26 @@ impl ServerMux {
 		Ok(ServerMuxResult(
 			Self {
 				muxstream_recv,
-				actor_tx,
+				actor_tx: mux_result.actor_tx,
 				downgraded,
 				supported_extension_ids,
 				tx,
-				fut_exited: fut_exited.clone(),
+				actor_exited: mux_result.actor_exited,
 			},
-			mux_inner.into_future(),
+			mux_result.mux.into_future(),
 		))
 	}
 
 	/// Wait for a stream to be created.
 	pub async fn server_new_stream(&self) -> Option<(ConnectPacket, MuxStream)> {
-		if self.fut_exited.load(Ordering::Acquire) {
+		if self.actor_exited.load(Ordering::Acquire) {
 			return None;
 		}
 		self.muxstream_recv.recv_async().await.ok()
 	}
 
 	async fn close_internal(&self, reason: Option<CloseReason>) -> Result<(), WispError> {
-		if self.fut_exited.load(Ordering::Acquire) {
+		if self.actor_exited.load(Ordering::Acquire) {
 			return Err(WispError::MuxTaskEnded);
 		}
 		self.actor_tx
@@ -325,7 +325,7 @@ impl ServerMux {
 		MuxProtocolExtensionStream {
 			stream_id: 0,
 			tx: self.tx.clone(),
-			is_closed: self.fut_exited.clone(),
+			is_closed: self.actor_exited.clone(),
 		}
 	}
 }
@@ -401,7 +401,7 @@ pub struct ClientMux {
 	pub supported_extension_ids: Vec<u8>,
 	actor_tx: mpsc::Sender<WsEvent>,
 	tx: ws::LockedWebSocketWrite,
-	fut_exited: Arc<AtomicBool>,
+	actor_exited: Arc<AtomicBool>,
 }
 
 impl ClientMux {
@@ -450,7 +450,7 @@ impl ClientMux {
 
 			let supported_extension_ids = supported_extensions.iter().map(|x| x.get_id()).collect();
 
-			let (mux_inner, fut_exited, actor_tx) = MuxInner::new_client(
+			let mux_result = MuxInner::new_client(
 				AppendingWebSocketRead(extra_packet, rx),
 				tx.clone(),
 				supported_extensions,
@@ -459,13 +459,13 @@ impl ClientMux {
 
 			Ok(ClientMuxResult(
 				Self {
-					actor_tx,
+					actor_tx: mux_result.actor_tx,
 					downgraded,
 					supported_extension_ids,
 					tx,
-					fut_exited,
+					actor_exited: mux_result.actor_exited,
 				},
-				mux_inner.into_future(),
+				mux_result.mux.into_future(),
 			))
 		} else {
 			Err(WispError::InvalidPacketType)
@@ -479,7 +479,7 @@ impl ClientMux {
 		host: String,
 		port: u16,
 	) -> Result<MuxStream, WispError> {
-		if self.fut_exited.load(Ordering::Acquire) {
+		if self.actor_exited.load(Ordering::Acquire) {
 			return Err(WispError::MuxTaskEnded);
 		}
 		if stream_type == StreamType::Udp
@@ -501,7 +501,7 @@ impl ClientMux {
 	}
 
 	async fn close_internal(&self, reason: Option<CloseReason>) -> Result<(), WispError> {
-		if self.fut_exited.load(Ordering::Acquire) {
+		if self.actor_exited.load(Ordering::Acquire) {
 			return Err(WispError::MuxTaskEnded);
 		}
 		self.actor_tx
@@ -530,7 +530,7 @@ impl ClientMux {
 		MuxProtocolExtensionStream {
 			stream_id: 0,
 			tx: self.tx.clone(),
-			is_closed: self.fut_exited.clone(),
+			is_closed: self.actor_exited.clone(),
 		}
 	}
 }

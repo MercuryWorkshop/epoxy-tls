@@ -65,6 +65,10 @@ pub trait ProtocolExtension: std::fmt::Debug {
 	///
 	/// Used to decide whether to call the protocol extension's packet handler.
 	fn get_supported_packets(&self) -> &'static [u8];
+	/// Get stream types that should be treated as TCP.
+	///
+	/// Used to decide whether to handle congestion control for that stream type.
+	fn get_congestion_stream_types(&self) -> &'static [u8];
 
 	/// Encode self into Bytes.
 	fn encode(&self) -> Bytes;

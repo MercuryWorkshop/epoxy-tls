@@ -31,6 +31,7 @@ struct MuxMapValue {
 	stream: mpsc::Sender<Bytes>,
 	stream_type: StreamType,
 
+	should_flow_control: bool,
 	flow_control: Arc<AtomicU32>,
 	flow_control_event: Arc<Event>,
 
@@ -44,11 +45,12 @@ pub struct MuxInner<R: WebSocketRead + Send> {
 	rx: Option<R>,
 	tx: LockedWebSocketWrite,
 	extensions: Vec<AnyProtocolExtension>,
+	tcp_extensions: Vec<u8>,
 	role: Role,
 
 	// gets taken by the mux task
-	fut_rx: Option<mpsc::Receiver<WsEvent>>,
-	fut_tx: mpsc::Sender<WsEvent>,
+	actor_rx: Option<mpsc::Receiver<WsEvent>>,
+	actor_tx: mpsc::Sender<WsEvent>,
 	fut_exited: Arc<AtomicBool>,
 
 	stream_map: IntMap<u32, MuxMapValue>,
@@ -59,16 +61,29 @@ pub struct MuxInner<R: WebSocketRead + Send> {
 	server_tx: mpsc::Sender<(ConnectPacket, MuxStream)>,
 }
 
+pub struct MuxInnerResult<R: WebSocketRead + Send> {
+	pub mux: MuxInner<R>,
+	pub actor_exited: Arc<AtomicBool>,
+	pub actor_tx: mpsc::Sender<WsEvent>,
+}
+
 impl<R: WebSocketRead + Send> MuxInner<R> {
+	fn get_tcp_extensions(extensions: &[AnyProtocolExtension]) -> Vec<u8> {
+		extensions
+			.iter()
+			.flat_map(|x| x.get_congestion_stream_types())
+			.copied()
+			.chain(std::iter::once(StreamType::Tcp.into()))
+			.collect()
+	}
+
 	pub fn new_server(
 		rx: R,
 		tx: LockedWebSocketWrite,
 		extensions: Vec<AnyProtocolExtension>,
 		buffer_size: u32,
 	) -> (
-		Self,
-		Arc<AtomicBool>,
-		mpsc::Sender<WsEvent>,
+		MuxInnerResult<R>,
 		mpsc::Receiver<(ConnectPacket, MuxStream)>,
 	) {
 		let (fut_tx, fut_rx) = mpsc::bounded::<WsEvent>(256);
@@ -77,26 +92,29 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 		let fut_exited = Arc::new(AtomicBool::new(false));
 
 		(
-			Self {
-				rx: Some(rx),
-				tx,
+			MuxInnerResult {
+				mux: Self {
+					rx: Some(rx),
+					tx,
 
-				fut_rx: Some(fut_rx),
-				fut_tx,
-				fut_exited: fut_exited.clone(),
+					actor_rx: Some(fut_rx),
+					actor_tx: fut_tx,
+					fut_exited: fut_exited.clone(),
 
-				extensions,
-				buffer_size,
-				target_buffer_size: ((buffer_size as u64 * 90) / 100) as u32,
+					tcp_extensions: Self::get_tcp_extensions(&extensions),
+					extensions,
+					buffer_size,
+					target_buffer_size: ((buffer_size as u64 * 90) / 100) as u32,
 
-				role: Role::Server,
+					role: Role::Server,
 
-				stream_map: IntMap::default(),
+					stream_map: IntMap::default(),
 
-				server_tx,
+					server_tx,
+				},
+				actor_exited: fut_exited,
+				actor_tx: ret_fut_tx,
 			},
-			fut_exited,
-			ret_fut_tx,
 			server_rx,
 		)
 	}
@@ -106,21 +124,22 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 		tx: LockedWebSocketWrite,
 		extensions: Vec<AnyProtocolExtension>,
 		buffer_size: u32,
-	) -> (Self, Arc<AtomicBool>, mpsc::Sender<WsEvent>) {
+	) -> MuxInnerResult<R> {
 		let (fut_tx, fut_rx) = mpsc::bounded::<WsEvent>(256);
 		let (server_tx, _) = mpsc::unbounded::<(ConnectPacket, MuxStream)>();
 		let ret_fut_tx = fut_tx.clone();
 		let fut_exited = Arc::new(AtomicBool::new(false));
 
-		(
-			Self {
+		MuxInnerResult {
+			mux: Self {
 				rx: Some(rx),
 				tx,
 
-				fut_rx: Some(fut_rx),
-				fut_tx,
+				actor_rx: Some(fut_rx),
+				actor_tx: fut_tx,
 				fut_exited: fut_exited.clone(),
 
+				tcp_extensions: Self::get_tcp_extensions(&extensions),
 				extensions,
 				buffer_size,
 				target_buffer_size: 0,
@@ -131,9 +150,9 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 
 				server_tx,
 			},
-			fut_exited,
-			ret_fut_tx,
-		)
+			actor_exited: fut_exited,
+			actor_tx: ret_fut_tx,
+		}
 	}
 
 	pub async fn into_future(mut self) -> Result<(), WispError> {
@@ -157,6 +176,7 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 	) -> Result<(MuxMapValue, MuxStream), WispError> {
 		let (ch_tx, ch_rx) = mpsc::bounded(self.buffer_size as usize);
 
+		let should_flow_control = self.tcp_extensions.contains(&stream_type.into());
 		let flow_control_event: Arc<Event> = Event::new().into();
 		let flow_control: Arc<AtomicU32> = AtomicU32::new(self.buffer_size).into();
 
@@ -170,6 +190,7 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 				stream: ch_tx,
 				stream_type,
 
+				should_flow_control,
 				flow_control: flow_control.clone(),
 				flow_control_event: flow_control_event.clone(),
 
@@ -182,11 +203,12 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 				self.role,
 				stream_type,
 				ch_rx,
-				self.fut_tx.clone(),
+				self.actor_tx.clone(),
 				self.tx.clone(),
 				is_closed,
 				is_closed_event,
 				close_reason,
+				should_flow_control,
 				flow_control,
 				flow_control_event,
 				self.target_buffer_size,
@@ -233,7 +255,7 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 
 		let mut rx = self.rx.take().ok_or(WispError::MuxTaskStarted)?;
 		let tx = self.tx.clone();
-		let fut_rx = self.fut_rx.take().ok_or(WispError::MuxTaskStarted)?;
+		let fut_rx = self.actor_rx.take().ok_or(WispError::MuxTaskStarted)?;
 
 		let mut recv_fut = fut_rx.recv_async().fuse();
 		let mut read_fut = rx.wisp_read_split(&tx).fuse();
@@ -349,7 +371,7 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 				}
 			}
 			let _ = stream.stream.try_send(data.freeze());
-			if self.role == Role::Server && stream.stream_type == StreamType::Tcp {
+			if self.role == Role::Server && stream.should_flow_control {
 				stream.flow_control.store(
 					stream
 						.flow_control

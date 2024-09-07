@@ -40,6 +40,7 @@ pub struct MuxStreamRead {
 	is_closed_event: Arc<Event>,
 	close_reason: Arc<AtomicCloseReason>,
 
+	should_flow_control: bool,
 	flow_control: Arc<AtomicU32>,
 	flow_control_read: AtomicU32,
 	target_flow_control: u32,
@@ -55,7 +56,7 @@ impl MuxStreamRead {
 			x = self.rx.recv_async() => x.ok()?,
 			_ = self.is_closed_event.listen().fuse() => return None
 		};
-		if self.role == Role::Server && self.stream_type == StreamType::Tcp {
+		if self.role == Role::Server && self.should_flow_control {
 			let val = self.flow_control_read.fetch_add(1, Ordering::AcqRel) + 1;
 			if val > self.target_flow_control && !self.is_closed.load(Ordering::Acquire) {
 				self.tx
@@ -114,6 +115,7 @@ pub struct MuxStreamWrite {
 	close_reason: Arc<AtomicCloseReason>,
 
 	continue_recieved: Arc<Event>,
+	should_flow_control: bool,
 	flow_control: Arc<AtomicU32>,
 }
 
@@ -124,7 +126,7 @@ impl MuxStreamWrite {
 		body: Frame<'a>,
 	) -> Result<(), WispError> {
 		if self.role == Role::Client
-			&& self.stream_type == StreamType::Tcp
+			&& self.should_flow_control
 			&& self.flow_control.load(Ordering::Acquire) == 0
 		{
 			self.continue_recieved.listen().await;
@@ -278,6 +280,7 @@ impl MuxStream {
 		is_closed: Arc<AtomicBool>,
 		is_closed_event: Arc<Event>,
 		close_reason: Arc<AtomicCloseReason>,
+		should_flow_control: bool,
 		flow_control: Arc<AtomicU32>,
 		continue_recieved: Arc<Event>,
 		target_flow_control: u32,
@@ -293,6 +296,7 @@ impl MuxStream {
 				is_closed: is_closed.clone(),
 				is_closed_event: is_closed_event.clone(),
 				close_reason: close_reason.clone(),
+				should_flow_control,
 				flow_control: flow_control.clone(),
 				flow_control_read: AtomicU32::new(0),
 				target_flow_control,
@@ -305,6 +309,7 @@ impl MuxStream {
 				tx,
 				is_closed: is_closed.clone(),
 				close_reason: close_reason.clone(),
+				should_flow_control,
 				flow_control: flow_control.clone(),
 				continue_recieved: continue_recieved.clone(),
 			},

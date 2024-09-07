@@ -243,7 +243,10 @@ pub async fn handle_wisp(stream: WispResult, id: String) -> anyhow::Result<()> {
 	let mut set: JoinSet<()> = JoinSet::new();
 	let event: Arc<Event> = Event::new().into();
 
-	set.spawn(tokio::task::unconstrained(fut.map(|_| {})));
+	let mux_id = id.clone();
+	set.spawn(tokio::task::unconstrained(fut.map(move |x| {
+		trace!("wisp client id {:?} multiplexor result {:?}", mux_id, x)
+	})));
 
 	while let Some((connect, stream)) = mux.server_new_stream().await {
 		set.spawn(handle_stream(

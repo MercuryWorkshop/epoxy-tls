@@ -87,20 +87,15 @@ impl IncomingBody {
 impl Stream for IncomingBody {
 	type Item = std::io::Result<Bytes>;
 	fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-		let this = self.project();
-		let ret = this.incoming.poll_frame(cx);
-		match ret {
-			Poll::Ready(item) => Poll::<Option<Self::Item>>::Ready(match item {
-				Some(frame) => frame
-					.map(|x| {
-						x.into_data()
-							.map_err(|_| std::io::Error::other("not data frame"))
+		self.project().incoming.poll_frame(cx).map(|x| {
+			x.map(|x| {
+				x.map_err(std::io::Error::other).and_then(|x| {
+					x.into_data().map_err(|_| {
+						std::io::Error::other("trailer frame recieved; not implemented")
 					})
-					.ok(),
-				None => None,
-			}),
-			Poll::Pending => Poll::<Option<Self::Item>>::Pending,
-		}
+				})
+			})
+		})
 	}
 }
 

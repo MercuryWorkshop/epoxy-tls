@@ -39,6 +39,10 @@ impl ProtocolExtension for UdpProtocolExtension {
 		&[]
 	}
 
+	fn get_congestion_stream_types(&self) -> &'static [u8] {
+		&[]
+	}
+
 	fn encode(&self) -> Bytes {
 		Bytes::new()
 	}

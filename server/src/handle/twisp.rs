@@ -37,6 +37,10 @@ impl ProtocolExtension for TWispServerProtocolExtension {
 		&[0xF0]
 	}
 
+	fn get_congestion_stream_types(&self) -> &'static [u8] {
+		&[0x03]
+	}
+
 	fn encode(&self) -> Bytes {
 		Bytes::new()
 	}
