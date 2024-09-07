@@ -185,18 +185,34 @@ enum EpoxyCompression {
 	Gzip,
 }
 
-#[wasm_bindgen]
-pub struct EpoxyClientOptions {
-	pub wisp_v2: bool,
-	pub udp_extension_required: bool,
-	#[wasm_bindgen(getter_with_clone)]
-	pub websocket_protocols: Vec<String>,
-	pub redirect_limit: usize,
-	#[wasm_bindgen(getter_with_clone)]
-	pub user_agent: String,
-	#[cfg(feature = "full")]
-	#[wasm_bindgen(getter_with_clone)]
-	pub pem_files: Vec<String>,
+
+// ugly hack. switch to serde-wasm-bindgen or a knockoff
+cfg_if! {
+	if #[cfg(feature = "full")] {
+		#[wasm_bindgen]
+		pub struct EpoxyClientOptions {
+			pub wisp_v2: bool,
+			pub udp_extension_required: bool,
+			#[wasm_bindgen(getter_with_clone)]
+			pub websocket_protocols: Vec<String>,
+			pub redirect_limit: usize,
+			#[wasm_bindgen(getter_with_clone)]
+			pub user_agent: String,
+			#[wasm_bindgen(getter_with_clone)]
+			pub pem_files: Vec<String>,
+		}
+	} else {
+		#[wasm_bindgen]
+		pub struct EpoxyClientOptions {
+			pub wisp_v2: bool,
+			pub udp_extension_required: bool,
+			#[wasm_bindgen(getter_with_clone)]
+			pub websocket_protocols: Vec<String>,
+			pub redirect_limit: usize,
+			#[wasm_bindgen(getter_with_clone)]
+			pub user_agent: String,
+		}
+	}
 }
 
 #[wasm_bindgen]
