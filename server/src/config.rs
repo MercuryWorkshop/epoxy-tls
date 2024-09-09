@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::RangeInclusive, path::PathBuf};
+use std::{collections::HashMap, net::IpAddr, ops::RangeInclusive, path::PathBuf};
 
 use cfg_if::cfg_if;
 use clap::{Parser, ValueEnum};
@@ -11,7 +11,7 @@ use wisp_mux::extensions::{
 	ProtocolExtensionBuilder,
 };
 
-use crate::{CLI, CONFIG};
+use crate::{CLI, CONFIG, RESOLVER};
 
 #[derive(Serialize, Deserialize, Default, Debug)]
 #[serde(rename_all = "lowercase")]
@@ -114,6 +114,9 @@ pub struct StreamConfig {
 	#[cfg(feature = "twisp")]
 	pub allow_twisp: bool,
 
+	/// DNS servers to resolve with. Will default to system configuration.
+	pub dns_servers: Vec<IpAddr>,
+
 	/// Whether or not to allow connections to IP addresses.
 	pub allow_direct_ip: bool,
 	/// Whether or not to allow connections to loopback IP addresses.
@@ -200,8 +203,12 @@ lazy_static! {
 }
 
 pub fn validate_config_cache() {
+	// constructs regexes
 	let _ = CONFIG_CACHE.allowed_ports;
+	// constructs wisp config
 	CONFIG.wisp.to_opts().unwrap();
+	// constructs resolver
+	RESOLVER.clear_cache();
 }
 
 impl Default for ServerConfig {
@@ -273,6 +280,8 @@ impl Default for StreamConfig {
 			allow_wsproxy_udp: false,
 			#[cfg(feature = "twisp")]
 			allow_twisp: false,
+
+			dns_servers: Vec::new(),
 
 			allow_direct_ip: true,
 			allow_loopback: true,

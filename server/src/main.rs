@@ -6,6 +6,10 @@ use clap::Parser;
 use config::{validate_config_cache, Cli, Config};
 use dashmap::DashMap;
 use handle::{handle_wisp, handle_wsproxy};
+use hickory_resolver::{
+	config::{NameServerConfigGroup, ResolverConfig, ResolverOpts},
+	TokioAsyncResolver,
+};
 use lazy_static::lazy_static;
 use listener::ServerListener;
 use log::{error, info};
@@ -32,6 +36,22 @@ lazy_static! {
 		}
 	};
 	pub static ref CLIENTS: DashMap<String, Client> = DashMap::new();
+	pub static ref RESOLVER: TokioAsyncResolver = {
+		let (config, opts) = if CONFIG.stream.dns_servers.is_empty() {
+			hickory_resolver::system_conf::read_system_conf().unwrap()
+		} else {
+			(
+				ResolverConfig::from_parts(
+					None,
+					Vec::new(),
+					NameServerConfigGroup::from_ips_clear(&CONFIG.stream.dns_servers, 53, true),
+				),
+				ResolverOpts::default(),
+			)
+		};
+
+		TokioAsyncResolver::tokio(config, opts)
+	};
 }
 
 fn format_stream_type(stream_type: StreamType) -> &'static str {

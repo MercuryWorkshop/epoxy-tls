@@ -10,10 +10,10 @@ use fastwebsockets::{FragmentCollector, Frame, OpCode, Payload, WebSocketError};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use regex::RegexSet;
-use tokio::net::{lookup_host, TcpStream, UdpSocket};
+use tokio::net::{TcpStream, UdpSocket};
 use wisp_mux::{ConnectPacket, StreamType};
 
-use crate::CONFIG;
+use crate::{CONFIG, RESOLVER};
 
 fn match_addr(str: &str, allowed: &RegexSet, blocked: &RegexSet) -> bool {
 	blocked.is_match(str) && !allowed.is_match(str)
@@ -125,13 +125,15 @@ impl ClientStream {
 			return Ok(ResolvedPacket::Blocked);
 		}
 
-		let packet = lookup_host(packet.destination_hostname + ":0")
+		let packet = RESOLVER
+			.lookup_ip(packet.destination_hostname)
 			.await
 			.context("failed to resolve hostname")?
+			.iter()
 			.filter(|x| CONFIG.server.resolve_ipv6 || x.is_ipv4())
 			.map(|x| ConnectPacket {
 				stream_type: packet.stream_type,
-				destination_hostname: x.ip().to_string(),
+				destination_hostname: x.to_string(),
 				destination_port: packet.destination_port,
 			})
 			.next();
