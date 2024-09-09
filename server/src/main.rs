@@ -58,6 +58,8 @@ fn format_stream_type(stream_type: StreamType) -> &'static str {
 	match stream_type {
 		StreamType::Tcp => "tcp",
 		StreamType::Udp => "udp",
+		#[cfg(feature = "twisp")]
+		StreamType::Unknown(crate::handle::twisp::STREAM_TYPE) => "twisp",
 		StreamType::Unknown(_) => unreachable!(),
 	}
 }
@@ -191,7 +193,7 @@ async fn main() -> anyhow::Result<()> {
 	tokio::spawn(async {
 		let mut sig = signal(SignalKind::user_defined1()).unwrap();
 		while sig.recv().await.is_some() {
-			info!("{}", generate_stats().unwrap());
+			info!("Stats:\n{}", generate_stats().unwrap());
 		}
 	});
 
