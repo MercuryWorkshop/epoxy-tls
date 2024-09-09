@@ -7,6 +7,8 @@ homepage = "https://github.com/MercuryWorkshop/epoxy-tls/tree/multiplexed/wisp"
 repository = "https://github.com/MercuryWorkshop/epoxy-tls/tree/multiplexed/wisp"
 readme = "README.md"
 edition = "2021"
+keywords = ["websocket", "wisp", "multiplexor", "multiplexing", "stream"]
+categories = ["network-programming", "asynchronous", "web-programming::websocket", "wasm"]
 
 [dependencies]
 async-trait = "0.1.81"
