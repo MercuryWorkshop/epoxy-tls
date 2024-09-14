@@ -1,11 +1,14 @@
 //! Wisp protocol extensions.
-pub mod password;
-pub mod udp;
-pub mod motd;
 #[cfg(feature = "certificate")]
 pub mod cert;
+pub mod motd;
+pub mod password;
+pub mod udp;
 
-use std::ops::{Deref, DerefMut};
+use std::{
+	any::TypeId,
+	ops::{Deref, DerefMut},
+};
 
 use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -17,12 +20,17 @@ use crate::{
 
 /// Type-erased protocol extension that implements Clone.
 #[derive(Debug)]
-pub struct AnyProtocolExtension(Box<dyn ProtocolExtension + Sync + Send>);
+pub struct AnyProtocolExtension(Box<dyn ProtocolExtension>);
 
 impl AnyProtocolExtension {
 	/// Create a new type-erased protocol extension.
-	pub fn new<T: ProtocolExtension + Sync + Send + 'static>(extension: T) -> Self {
+	pub fn new<T: ProtocolExtension>(extension: T) -> Self {
 		Self(Box::new(extension))
+	}
+
+	/// Downcast the protocol extension.
+	pub fn downcast<T: ProtocolExtension>(self) -> Result<Box<T>, Self> {
+		self.0.__downcast().map_err(Self)
 	}
 }
 
@@ -61,7 +69,7 @@ impl From<AnyProtocolExtension> for Bytes {
 /// See [the
 /// docs](https://github.com/MercuryWorkshop/wisp-protocol/blob/v2/protocol.md#protocol-extensions).
 #[async_trait]
-pub trait ProtocolExtension: std::fmt::Debug {
+pub trait ProtocolExtension: std::fmt::Debug + Sync + Send + 'static {
 	/// Get the protocol extension ID.
 	fn get_id(&self) -> u8;
 	/// Get the protocol extension's supported packets.
@@ -95,6 +103,29 @@ pub trait ProtocolExtension: std::fmt::Debug {
 
 	/// Clone the protocol extension.
 	fn box_clone(&self) -> Box<dyn ProtocolExtension + Sync + Send>;
+
+	/// Do not override.
+	fn __internal_type_id(&self) -> TypeId {
+		TypeId::of::<Self>()
+	}
+}
+
+impl dyn ProtocolExtension {
+	fn __is<T: ProtocolExtension>(&self) -> bool {
+		let t = TypeId::of::<T>();
+		self.__internal_type_id() == t
+	}
+
+	fn __downcast<T: ProtocolExtension>(self: Box<Self>) -> Result<Box<T>, Box<Self>> {
+		if self.__is::<T>() {
+			unsafe {
+				let raw: *mut dyn ProtocolExtension = Box::into_raw(self);
+				Ok(Box::from_raw(raw as *mut T))
+			}
+		} else {
+			Err(self)
+		}
+	}
 }
 
 /// Trait to build a Wisp protocol extension from a payload.
@@ -105,8 +136,11 @@ pub trait ProtocolExtensionBuilder {
 	fn get_id(&self) -> u8;
 
 	/// Build a protocol extension from the extension's metadata.
-	fn build_from_bytes(&mut self, bytes: Bytes, role: Role)
-		-> Result<AnyProtocolExtension, WispError>;
+	fn build_from_bytes(
+		&mut self,
+		bytes: Bytes,
+		role: Role,
+	) -> Result<AnyProtocolExtension, WispError>;
 
 	/// Build a protocol extension to send to the other side.
 	fn build_to_extension(&mut self, role: Role) -> Result<AnyProtocolExtension, WispError>;

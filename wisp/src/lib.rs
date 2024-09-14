@@ -219,7 +219,7 @@ pub struct ServerMux {
 	/// If this variable is true you must assume no extensions are supported.
 	pub downgraded: bool,
 	/// Extensions that are supported by both sides.
-	pub supported_extension_ids: Vec<u8>,
+	pub supported_extensions: Vec<AnyProtocolExtension>,
 	actor_tx: mpsc::Sender<WsEvent>,
 	muxstream_recv: mpsc::Receiver<(ConnectPacket, MuxStream)>,
 	tx: ws::LockedWebSocketWrite,
@@ -255,12 +255,10 @@ impl ServerMux {
 				(Vec::new(), None, true)
 			};
 
-		let supported_extension_ids = supported_extensions.iter().map(|x| x.get_id()).collect();
-
 		let (mux_result, muxstream_recv) = MuxInner::new_server(
 			AppendingWebSocketRead(extra_packet, rx),
 			tx.clone(),
-			supported_extensions,
+			supported_extensions.clone(),
 			buffer_size,
 		);
 
@@ -269,7 +267,7 @@ impl ServerMux {
 				muxstream_recv,
 				actor_tx: mux_result.actor_tx,
 				downgraded,
-				supported_extension_ids,
+				supported_extensions,
 				tx,
 				actor_exited: mux_result.actor_exited,
 			},
@@ -348,7 +346,7 @@ where
 	) -> Result<(ServerMux, F), WispError> {
 		let mut unsupported_extensions = Vec::new();
 		for extension in extensions {
-			if !self.0.supported_extension_ids.contains(extension) {
+			if !self.0.supported_extensions.iter().any(|x| x.get_id() == *extension) {
 				unsupported_extensions.push(*extension);
 			}
 		}
@@ -377,7 +375,7 @@ pub struct ClientMux {
 	/// If this variable is true you must assume no extensions are supported.
 	pub downgraded: bool,
 	/// Extensions that are supported by both sides.
-	pub supported_extension_ids: Vec<u8>,
+	pub supported_extensions: Vec<AnyProtocolExtension>,
 	actor_tx: mpsc::Sender<WsEvent>,
 	tx: ws::LockedWebSocketWrite,
 	actor_exited: Arc<AtomicBool>,
@@ -418,12 +416,10 @@ impl ClientMux {
 					(Vec::new(), None, true)
 				};
 
-			let supported_extension_ids = supported_extensions.iter().map(|x| x.get_id()).collect();
-
 			let mux_result = MuxInner::new_client(
 				AppendingWebSocketRead(extra_packet, rx),
 				tx.clone(),
-				supported_extensions,
+				supported_extensions.clone(),
 				packet.buffer_remaining,
 			);
 
@@ -431,7 +427,7 @@ impl ClientMux {
 				Self {
 					actor_tx: mux_result.actor_tx,
 					downgraded,
-					supported_extension_ids,
+					supported_extensions,
 					tx,
 					actor_exited: mux_result.actor_exited,
 				},
@@ -454,9 +450,9 @@ impl ClientMux {
 		}
 		if stream_type == StreamType::Udp
 			&& !self
-				.supported_extension_ids
+				.supported_extensions
 				.iter()
-				.any(|x| *x == UdpProtocolExtension::ID)
+				.any(|x| x.get_id() == UdpProtocolExtension::ID)
 		{
 			return Err(WispError::ExtensionsNotSupported(vec![
 				UdpProtocolExtension::ID,
@@ -532,7 +528,7 @@ where
 	) -> Result<(ClientMux, F), WispError> {
 		let mut unsupported_extensions = Vec::new();
 		for extension in extensions {
-			if !self.0.supported_extension_ids.contains(extension) {
+			if !self.0.supported_extensions.iter().any(|x| x.get_id() == *extension) {
 				unsupported_extensions.push(*extension);
 			}
 		}

@@ -237,7 +237,7 @@ pub async fn handle_wisp(stream: WispResult, id: String) -> anyhow::Result<()> {
 
 	debug!(
 		"new wisp client id {:?} connected with extensions {:?}",
-		id, mux.supported_extension_ids
+		id, mux.supported_extensions.iter().map(|x| x.get_id()).collect::<Vec<_>>()
 	);
 
 	let mut set: JoinSet<()> = JoinSet::new();
