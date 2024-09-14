@@ -1,6 +1,7 @@
 //! Wisp protocol extensions.
 pub mod password;
 pub mod udp;
+pub mod motd;
 #[cfg(feature = "certificate")]
 pub mod cert;
 
