@@ -163,7 +163,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 			.await?
 			.with_no_required_extensions()
 	} else {
-		ClientMux::create(rx, tx, Some(extensions.as_slice()))
+		ClientMux::create(rx, tx, Some(extensions))
 			.await?
 			.with_required_extensions(extension_ids.as_slice())
 			.await?

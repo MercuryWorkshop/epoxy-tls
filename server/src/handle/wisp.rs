@@ -230,7 +230,7 @@ pub async fn handle_wisp(stream: WispResult, id: String) -> anyhow::Result<()> {
 		}
 	}
 
-	let (mux, fut) = ServerMux::create(read, write, buffer_size, extensions.as_deref())
+	let (mux, fut) = ServerMux::create(read, write, buffer_size, extensions)
 		.await
 		.context("failed to create server multiplexor")?
 		.with_no_required_extensions();

@@ -428,7 +428,7 @@ impl<'a> Packet<'a> {
 	pub(crate) fn maybe_parse_info(
 		frame: Frame<'a>,
 		role: Role,
-		extension_builders: &[Box<(dyn ProtocolExtensionBuilder + Send + Sync)>],
+		extension_builders: &mut [Box<(dyn ProtocolExtensionBuilder + Send + Sync)>],
 	) -> Result<Self, WispError> {
 		if !frame.finished {
 			return Err(WispError::WsFrameNotFinished);
@@ -502,7 +502,7 @@ impl<'a> Packet<'a> {
 	fn parse_info(
 		mut bytes: Payload<'a>,
 		role: Role,
-		extension_builders: &[Box<(dyn ProtocolExtensionBuilder + Send + Sync)>],
+		extension_builders: &mut [Box<(dyn ProtocolExtensionBuilder + Send + Sync)>],
 	) -> Result<Self, WispError> {
 		// packet type is already read by code that calls this
 		if bytes.remaining() < 4 + 2 {
@@ -530,10 +530,8 @@ impl<'a> Packet<'a> {
 			if bytes.remaining() < length {
 				return Err(WispError::PacketTooSmall);
 			}
-			if let Some(builder) = extension_builders.iter().find(|x| x.get_id() == id) {
-				if let Ok(extension) = builder.build_from_bytes(bytes.copy_to_bytes(length), role) {
-					extensions.push(extension)
-				}
+			if let Some(builder) = extension_builders.iter_mut().find(|x| x.get_id() == id) {
+				extensions.push(builder.build_from_bytes(bytes.copy_to_bytes(length), role)?)
 			} else {
 				bytes.advance(length)
 			}

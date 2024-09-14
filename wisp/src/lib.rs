@@ -1,4 +1,4 @@
-#![deny(missing_docs)]
+#![deny(missing_docs, clippy::todo)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 //! A library for easily creating [Wisp] clients and servers.
 //!
@@ -162,7 +162,7 @@ impl std::error::Error for WispError {}
 async fn maybe_wisp_v2<R>(
 	read: &mut R,
 	write: &LockedWebSocketWrite,
-	builders: &[Box<dyn ProtocolExtensionBuilder + Sync + Send>],
+	builders: &mut [Box<dyn ProtocolExtensionBuilder + Sync + Send>],
 ) -> Result<(Vec<AnyProtocolExtension>, Option<ws::Frame<'static>>, bool), WispError>
 where
 	R: ws::WebSocketRead + Send,
@@ -195,25 +195,24 @@ where
 	Ok((supported_extensions, extra_packet, downgraded))
 }
 
+async fn send_info_packet(
+	write: &LockedWebSocketWrite,
+	builders: &mut [Box<dyn ProtocolExtensionBuilder + Sync + Send>],
+) -> Result<(), WispError> {
+	write
+		.write_frame(
+			Packet::new_info(
+				builders
+					.iter_mut()
+					.map(|x| x.build_to_extension(Role::Server))
+					.collect::<Result<Vec<_>, _>>()?,
+			)
+			.into(),
+		)
+		.await
+}
+
 /// Server-side multiplexor.
-///
-/// # Example
-/// ```
-/// use wisp_mux::ServerMux;
-///
-/// let (mux, fut) = ServerMux::new(rx, tx, 128, Some([]));
-/// tokio::spawn(async move {
-///     if let Err(e) = fut.await {
-///         println!("error in multiplexor: {:?}", e);
-///     }
-/// });
-/// while let Some((packet, stream)) = mux.server_new_stream().await {
-///     tokio::spawn(async move {
-///         let url = format!("{}:{}", packet.destination_hostname, packet.destination_port);
-///         // do something with `url` and `packet.stream_type`
-///     });
-/// }
-/// ```
 pub struct ServerMux {
 	/// Whether the connection was downgraded to Wisp v1.
 	///
@@ -237,7 +236,7 @@ impl ServerMux {
 		mut rx: R,
 		tx: W,
 		buffer_size: u32,
-		extension_builders: Option<&[Box<dyn ProtocolExtensionBuilder + Send + Sync>]>,
+		extension_builders: Option<Vec<Box<dyn ProtocolExtensionBuilder + Send + Sync>>>,
 	) -> Result<ServerMuxResult<impl Future<Output = Result<(), WispError>> + Send>, WispError>
 	where
 		R: ws::WebSocketRead + Send,
@@ -249,18 +248,9 @@ impl ServerMux {
 			.await?;
 
 		let (supported_extensions, extra_packet, downgraded) =
-			if let Some(builders) = extension_builders {
-				tx.write_frame(
-					Packet::new_info(
-						builders
-							.iter()
-							.map(|x| x.build_to_extension(Role::Client))
-							.collect(),
-					)
-					.into(),
-				)
-				.await?;
-				maybe_wisp_v2(&mut rx, &tx, builders).await?
+			if let Some(mut builders) = extension_builders {
+				send_info_packet(&tx, &mut builders).await?;
+				maybe_wisp_v2(&mut rx, &tx, &mut builders).await?
 			} else {
 				(Vec::new(), None, true)
 			};
@@ -367,7 +357,9 @@ where
 		} else {
 			self.0.close_extension_incompat().await?;
 			self.1.await?;
-			Err(WispError::ExtensionsNotSupported(unsupported_extensions))
+			Err(WispError::ExtensionsNotSupported(
+				unsupported_extensions,
+			))
 		}
 	}
 
@@ -379,19 +371,6 @@ where
 }
 
 /// Client side multiplexor.
-///
-/// # Example
-/// ```
-/// use wisp_mux::{ClientMux, StreamType};
-///
-/// let (mux, fut) = ClientMux::new(rx, tx, Some([])).await?;
-/// tokio::spawn(async move {
-///     if let Err(e) = fut.await {
-///         println!("error in multiplexor: {:?}", e);
-///     }
-/// });
-/// let stream = mux.client_new_stream(StreamType::Tcp, "google.com", 80);
-/// ```
 pub struct ClientMux {
 	/// Whether the connection was downgraded to Wisp v1.
 	///
@@ -413,7 +392,7 @@ impl ClientMux {
 	pub async fn create<R, W>(
 		mut rx: R,
 		tx: W,
-		extension_builders: Option<&[Box<dyn ProtocolExtensionBuilder + Send + Sync>]>,
+		extension_builders: Option<Vec<Box<dyn ProtocolExtensionBuilder + Send + Sync>>>,
 	) -> Result<ClientMuxResult<impl Future<Output = Result<(), WispError>> + Send>, WispError>
 	where
 		R: ws::WebSocketRead + Send,
@@ -428,22 +407,13 @@ impl ClientMux {
 
 		if let PacketType::Continue(packet) = first_packet.packet_type {
 			let (supported_extensions, extra_packet, downgraded) =
-				if let Some(builders) = extension_builders {
-					let x = maybe_wisp_v2(&mut rx, &tx, builders).await?;
+				if let Some(mut builders) = extension_builders {
+					let res = maybe_wisp_v2(&mut rx, &tx, &mut builders).await?;
 					// if not downgraded
-					if !x.2 {
-						tx.write_frame(
-							Packet::new_info(
-								builders
-									.iter()
-									.map(|x| x.build_to_extension(Role::Client))
-									.collect(),
-							)
-							.into(),
-						)
-						.await?;
+					if !res.2 {
+						send_info_packet(&tx, &mut builders).await?;
 					}
-					x
+					res
 				} else {
 					(Vec::new(), None, true)
 				};

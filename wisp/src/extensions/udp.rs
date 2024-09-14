@@ -1,14 +1,5 @@
 //! UDP protocol extension.
 //!
-//! # Example
-//! ```
-//! let (mux, fut) = ServerMux::new(
-//!     rx,
-//!     tx,
-//!     128,
-//!     Some(&[Box::new(UdpProtocolExtensionBuilder)])
-//! );
-//! ```
 //! See [the docs](https://github.com/MercuryWorkshop/wisp-protocol/blob/v2/protocol.md#0x01---udp)
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -84,14 +75,14 @@ impl ProtocolExtensionBuilder for UdpProtocolExtensionBuilder {
 	}
 
 	fn build_from_bytes(
-		&self,
+		&mut self,
 		_: Bytes,
 		_: crate::Role,
 	) -> Result<AnyProtocolExtension, WispError> {
 		Ok(UdpProtocolExtension.into())
 	}
 
-	fn build_to_extension(&self, _: crate::Role) -> AnyProtocolExtension {
-		UdpProtocolExtension.into()
+	fn build_to_extension(&mut self, _: crate::Role) -> Result<AnyProtocolExtension, WispError> {
+		Ok(UdpProtocolExtension.into())
 	}
 }

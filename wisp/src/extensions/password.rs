@@ -2,33 +2,6 @@
 //!
 //! Passwords are sent in plain text!!
 //!
-//! # Example
-//! Server:
-//! ```
-//! let mut passwords = HashMap::new();
-//! passwords.insert("user1".to_string(), "pw".to_string());
-//! let (mux, fut) = ServerMux::new(
-//!     rx,
-//!     tx,
-//!     128,
-//!     Some(&[Box::new(PasswordProtocolExtensionBuilder::new_server(passwords))])
-//! );
-//! ```
-//!
-//! Client:
-//! ```
-//! let (mux, fut) = ClientMux::new(
-//!     rx,
-//!     tx,
-//!     128,
-//!     Some(&[
-//!          Box::new(PasswordProtocolExtensionBuilder::new_client(
-//!             "user1".to_string(),
-//!             "pw".to_string()
-//!         ))
-//!     ])
-//! );
-//! ```
 //! See [the docs](https://github.com/MercuryWorkshop/wisp-protocol/blob/v2/protocol.md#0x02---password-authentication)
 
 use std::{collections::HashMap, error::Error, fmt::Display, string::FromUtf8Error};
@@ -223,7 +196,7 @@ impl ProtocolExtensionBuilder for PasswordProtocolExtensionBuilder {
 	}
 
 	fn build_from_bytes(
-		&self,
+		&mut self,
 		mut payload: Bytes,
 		role: crate::Role,
 	) -> Result<AnyProtocolExtension, WispError> {
@@ -268,13 +241,13 @@ impl ProtocolExtensionBuilder for PasswordProtocolExtensionBuilder {
 		}
 	}
 
-	fn build_to_extension(&self, role: Role) -> AnyProtocolExtension {
-		match role {
+	fn build_to_extension(&mut self, role: Role) -> Result<AnyProtocolExtension, WispError> {
+		Ok(match role {
 			Role::Server => PasswordProtocolExtension::new_server(),
 			Role::Client => {
 				PasswordProtocolExtension::new_client(self.username.clone(), self.password.clone())
 			}
 		}
-		.into()
+		.into())
 	}
 }

@@ -1,6 +1,8 @@
 //! Wisp protocol extensions.
 pub mod password;
 pub mod udp;
+#[cfg(feature = "certificate")]
+pub mod cert;
 
 use std::ops::{Deref, DerefMut};
 
@@ -102,9 +104,9 @@ pub trait ProtocolExtensionBuilder {
 	fn get_id(&self) -> u8;
 
 	/// Build a protocol extension from the extension's metadata.
-	fn build_from_bytes(&self, bytes: Bytes, role: Role)
+	fn build_from_bytes(&mut self, bytes: Bytes, role: Role)
 		-> Result<AnyProtocolExtension, WispError>;
 
 	/// Build a protocol extension to send to the other side.
-	fn build_to_extension(&self, role: Role) -> AnyProtocolExtension;
+	fn build_to_extension(&mut self, role: Role) -> Result<AnyProtocolExtension, WispError>;
 }

@@ -109,7 +109,7 @@ impl StreamProvider {
 		let extensions_vec: Vec<Box<dyn ProtocolExtensionBuilder + Send + Sync>> =
 			vec![Box::new(UdpProtocolExtensionBuilder)];
 		let extensions = if self.wisp_v2 {
-			Some(extensions_vec.as_slice())
+			Some(extensions_vec)
 		} else {
 			None
 		};
