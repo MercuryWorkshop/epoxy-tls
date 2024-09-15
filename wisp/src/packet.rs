@@ -60,7 +60,7 @@ mod close {
 		/// Unexpected stream closure due to a network error.
 		Unexpected = 0x03,
 		/// Incompatible extensions. Only used during the handshake.
-		IncompatibleExtensions = 0x04,
+		ExtensionsIncompatible = 0x04,
 		/// Stream creation failed due to invalid information.
 		ServerStreamInvalidInfo = 0x41,
 		/// Stream creation failed due to an unreachable destination host.
@@ -77,6 +77,10 @@ mod close {
 		ServerStreamThrottled = 0x49,
 		/// The client has encountered an unexpected error.
 		ClientUnexpected = 0x81,
+		/// Authentication failed due to invalid username/password.
+		ExtensionsPasswordAuthFailed = 0xc0,
+		/// Authentication failed due to invalid signature.
+		ExtensionsCertAuthFailed = 0xc1,
 	}
 
 	impl TryFrom<u8> for CloseReason {
@@ -87,7 +91,7 @@ mod close {
 				0x01 => Ok(R::Unknown),
 				0x02 => Ok(R::Voluntary),
 				0x03 => Ok(R::Unexpected),
-				0x04 => Ok(R::IncompatibleExtensions),
+				0x04 => Ok(R::ExtensionsIncompatible),
 				0x41 => Ok(R::ServerStreamInvalidInfo),
 				0x42 => Ok(R::ServerStreamUnreachable),
 				0x43 => Ok(R::ServerStreamConnectionTimedOut),
@@ -111,7 +115,7 @@ mod close {
 					C::Unknown => "Unknown close reason",
 					C::Voluntary => "Voluntarily closed",
 					C::Unexpected => "Unexpectedly closed",
-					C::IncompatibleExtensions => "Incompatible protocol extensions",
+					C::ExtensionsIncompatible => "Incompatible protocol extensions",
 					C::ServerStreamInvalidInfo =>
 						"Stream creation failed due to invalid information",
 					C::ServerStreamUnreachable =>
@@ -124,6 +128,8 @@ mod close {
 					C::ServerStreamBlockedAddress => "Destination address is blocked",
 					C::ServerStreamThrottled => "Throttled",
 					C::ClientUnexpected => "Client encountered unexpected error",
+					C::ExtensionsPasswordAuthFailed => "Invalid username/password",
+					C::ExtensionsCertAuthFailed => "Invalid signature",
 				}
 			)
 		}

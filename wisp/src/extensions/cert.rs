@@ -20,10 +20,6 @@ use super::{AnyProtocolExtension, ProtocolExtension, ProtocolExtensionBuilder};
 /// Certificate authentication protocol extension error.
 #[derive(Debug)]
 pub enum CertAuthError {
-	/// Invalid or unsupported certificate type
-	InvalidCertType,
-	/// Invalid signature
-	InvalidSignature,
 	/// ED25519 error
 	Ed25519(ed25519::Error),
 	/// Getrandom error
@@ -33,8 +29,6 @@ pub enum CertAuthError {
 impl std::fmt::Display for CertAuthError {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
-			Self::InvalidCertType => write!(f, "Invalid or unsupported certificate type"),
-			Self::InvalidSignature => write!(f, "Invalid signature"),
 			Self::Ed25519(x) => write!(f, "ED25519: {:?}", x),
 			Self::Getrandom(x) => write!(f, "getrandom: {:?}", x),
 		}
@@ -78,6 +72,17 @@ pub struct VerifyKey {
 	pub verifier: Arc<dyn Verifier<Signature>>,
 }
 
+impl VerifyKey {
+	/// Create a new ED25519 verification key.
+	pub fn new_ed25519(verifier: Arc<dyn Verifier<Signature>>, hash: [u8; 64]) -> Self {
+		Self {
+			cert_type: SupportedCertificateTypes::Ed25519,
+			hash,
+			verifier,
+		}
+	}
+}
+
 /// Signing key.
 #[derive(Clone)]
 pub struct SigningKey {
@@ -87,6 +92,16 @@ pub struct SigningKey {
 	pub hash: [u8; 64],
 	/// Signer.
 	pub signer: Arc<dyn Signer<Signature>>,
+}
+impl SigningKey {
+	/// Create a new ED25519 signing key.
+	pub fn new_ed25519(signer: Arc<dyn Signer<Signature>>, hash: [u8; 64]) -> Self {
+		Self {
+			cert_type: SupportedCertificateTypes::Ed25519,
+			hash,
+			signer,
+		}
+	}
 }
 
 /// Certificate authentication protocol extension.
@@ -241,7 +256,7 @@ impl ProtocolExtensionBuilder for CertAuthProtocolExtensionBuilder {
 			} => {
 				// validate and parse response
 				let cert_type = SupportedCertificateTypes::from_bits(bytes.get_u8())
-					.ok_or(CertAuthError::InvalidCertType)?;
+					.ok_or(WispError::CertAuthExtensionSigInvalid)?;
 				let hash = bytes.split_to(64);
 				let sig = Signature::from_slice(&bytes).map_err(CertAuthError::from)?;
 				let is_valid = verifiers
@@ -252,15 +267,15 @@ impl ProtocolExtensionBuilder for CertAuthProtocolExtensionBuilder {
 				if is_valid {
 					Ok(CertAuthProtocolExtension::ServerVerified.into())
 				} else {
-					Err(CertAuthError::InvalidSignature.into())
+					Err(WispError::CertAuthExtensionSigInvalid)
 				}
 			}
 			Self::ClientBeforeChallenge { signer } => {
 				// sign challenge
 				let cert_types = SupportedCertificateTypes::from_bits(bytes.get_u8())
-					.ok_or(CertAuthError::InvalidCertType)?;
+					.ok_or(WispError::CertAuthExtensionSigInvalid)?;
 				if !cert_types.iter().any(|x| x == signer.cert_type) {
-					return Err(CertAuthError::InvalidCertType.into());
+					return Err(WispError::CertAuthExtensionSigInvalid);
 				}
 
 				let signed: Bytes = signer
