@@ -1,4 +1,5 @@
 #![feature(ip)]
+#![deny(clippy::todo)]
 
 use std::{fmt::Write, fs::read_to_string};
 
@@ -59,7 +60,7 @@ fn format_stream_type(stream_type: StreamType) -> &'static str {
 		StreamType::Tcp => "tcp",
 		StreamType::Udp => "udp",
 		#[cfg(feature = "twisp")]
-		StreamType::Unknown(crate::handle::twisp::STREAM_TYPE) => "twisp",
+		StreamType::Unknown(crate::handle::wisp::twisp::STREAM_TYPE) => "twisp",
 		StreamType::Unknown(_) => unreachable!(),
 	}
 }
@@ -183,7 +184,7 @@ async fn main() -> anyhow::Result<()> {
 		.parse_default_env()
 		.init();
 
-	validate_config_cache();
+	validate_config_cache().await;
 
 	info!(
 		"listening on {:?} with socket type {:?} and socket transport {:?}",

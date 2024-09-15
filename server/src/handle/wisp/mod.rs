@@ -1,3 +1,7 @@
+#[cfg(feature = "twisp")]
+pub mod twisp;
+pub mod utils;
+
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -64,7 +68,7 @@ async fn handle_stream(
 	muxstream: MuxStream,
 	id: String,
 	event: Arc<Event>,
-	#[cfg(feature = "twisp")] twisp_map: super::twisp::TwispMap,
+	#[cfg(feature = "twisp")] twisp_map: twisp::TwispMap,
 ) {
 	let requested_stream = connect.clone();
 
@@ -175,7 +179,7 @@ async fn handle_stream(
 				let id = muxstream.stream_id;
 				let (mut rx, mut tx) = muxstream.into_io().into_asyncrw().into_split();
 
-				match super::twisp::handle_twisp(id, &mut rx, &mut tx, twisp_map.clone(), pty, cmd)
+				match twisp::handle_twisp(id, &mut rx, &mut tx, twisp_map.clone(), pty, cmd)
 					.await
 				{
 					Ok(()) => {
@@ -213,12 +217,12 @@ pub async fn handle_wisp(stream: WispResult, id: String) -> anyhow::Result<()> {
 	let (read, write) = stream;
 	cfg_if! {
 		if #[cfg(feature = "twisp")] {
-			let twisp_map = super::twisp::new_map();
-			let (extensions, buffer_size) = CONFIG.wisp.to_opts()?;
+			let twisp_map = twisp::new_map();
+			let (extensions, required_extensions, buffer_size) = CONFIG.wisp.to_opts().await?;
 
 			let extensions = match extensions {
 				Some(mut exts) => {
-					exts.push(super::twisp::new_ext(twisp_map.clone()));
+					exts.push(twisp::new_ext(twisp_map.clone()));
 					Some(exts)
 				},
 				None => {
@@ -226,18 +230,23 @@ pub async fn handle_wisp(stream: WispResult, id: String) -> anyhow::Result<()> {
 				}
 			};
 		} else {
-			let (extensions, buffer_size) = CONFIG.wisp.to_opts()?;
+			let (extensions, required_extensions, buffer_size) = CONFIG.wisp.to_opts().await?;
 		}
 	}
 
 	let (mux, fut) = ServerMux::create(read, write, buffer_size, extensions)
 		.await
 		.context("failed to create server multiplexor")?
-		.with_no_required_extensions();
+		.with_required_extensions(&required_extensions)
+		.await?;
 
 	debug!(
 		"new wisp client id {:?} connected with extensions {:?}",
-		id, mux.supported_extensions.iter().map(|x| x.get_id()).collect::<Vec<_>>()
+		id,
+		mux.supported_extensions
+			.iter()
+			.map(|x| x.get_id())
+			.collect::<Vec<_>>()
 	);
 
 	let mut set: JoinSet<()> = JoinSet::new();

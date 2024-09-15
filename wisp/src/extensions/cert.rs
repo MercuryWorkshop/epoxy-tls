@@ -69,12 +69,12 @@ pub struct VerifyKey {
 	/// SHA-512 hash of the public key.
 	pub hash: [u8; 64],
 	/// Verifier.
-	pub verifier: Arc<dyn Verifier<Signature>>,
+	pub verifier: Arc<dyn Verifier<Signature> + Sync + Send>,
 }
 
 impl VerifyKey {
 	/// Create a new ED25519 verification key.
-	pub fn new_ed25519(verifier: Arc<dyn Verifier<Signature>>, hash: [u8; 64]) -> Self {
+	pub fn new_ed25519(verifier: Arc<dyn Verifier<Signature> + Sync + Send>, hash: [u8; 64]) -> Self {
 		Self {
 			cert_type: SupportedCertificateTypes::Ed25519,
 			hash,
@@ -91,11 +91,11 @@ pub struct SigningKey {
 	/// SHA-512 hash of the public key.
 	pub hash: [u8; 64],
 	/// Signer.
-	pub signer: Arc<dyn Signer<Signature>>,
+	pub signer: Arc<dyn Signer<Signature> + Sync + Send>,
 }
 impl SigningKey {
 	/// Create a new ED25519 signing key.
-	pub fn new_ed25519(signer: Arc<dyn Signer<Signature>>, hash: [u8; 64]) -> Self {
+	pub fn new_ed25519(signer: Arc<dyn Signer<Signature> + Sync + Send>, hash: [u8; 64]) -> Self {
 		Self {
 			cert_type: SupportedCertificateTypes::Ed25519,
 			hash,
@@ -232,6 +232,18 @@ pub enum CertAuthProtocolExtensionBuilder {
 		/// Signature of challenge recieved from the server.
 		signature: Bytes,
 	},
+}
+
+impl CertAuthProtocolExtensionBuilder {
+	/// Create a new server variant of the certificate authentication protocol extension.
+	pub fn new_server(verifiers: Vec<VerifyKey>) -> Self {
+		Self::ServerBeforeChallenge { verifiers }
+	}
+
+	/// Create a new client variant of the certificate authentication protocol extension.
+	pub fn new_client(signer: SigningKey) -> Self {
+		Self::ClientBeforeChallenge { signer }
+	}
 }
 
 #[async_trait]

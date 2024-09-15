@@ -7,11 +7,14 @@ use log::LevelFilter;
 use regex::RegexSet;
 use serde::{Deserialize, Serialize};
 use wisp_mux::extensions::{
-	password::PasswordProtocolExtensionBuilder, udp::UdpProtocolExtensionBuilder,
+	cert::CertAuthProtocolExtensionBuilder,
+	motd::MotdProtocolExtensionBuilder,
+	password::{PasswordProtocolExtension, PasswordProtocolExtensionBuilder},
+	udp::UdpProtocolExtensionBuilder,
 	ProtocolExtensionBuilder,
 };
 
-use crate::{CLI, CONFIG, RESOLVER};
+use crate::{handle::wisp::utils::get_certificates_from_paths, CLI, CONFIG, RESOLVER};
 
 #[derive(Serialize, Deserialize, Default, Debug)]
 #[serde(rename_all = "lowercase")]
@@ -75,13 +78,22 @@ pub struct ServerConfig {
 	pub log_level: LevelFilter,
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ProtocolExtension {
 	/// Wisp draft version 2 UDP protocol extension.
 	Udp,
-	/// Wisp draft version 2 password protocol extension.
+	/// Wisp draft version 2 MOTD protocol extension.
+	Motd,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProtocolExtensionAuth {
+	/// Wisp draft version 2 password authentication protocol extension.
 	Password,
+	/// Wisp draft version 2 certificate authentication protocol extension.
+	Certificate,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -96,8 +108,16 @@ pub struct WispConfig {
 	pub wisp_v2: bool,
 	/// Wisp draft version 2 extensions advertised.
 	pub extensions: Vec<ProtocolExtension>,
-	/// Wisp draft version 2 password extension username/passwords.
+	/// Wisp draft version 2 authentication extension advertised.
+	pub auth_extension: Option<ProtocolExtensionAuth>,
+
+	/// Wisp draft version 2 password authentication extension username/passwords.
 	pub password_extension_users: HashMap<String, String>,
+	/// Wisp draft version 2 certificate authentication extension public ed25519 keys.
+	pub certificate_extension_keys: Vec<PathBuf>,
+
+	/// Wisp draft version 2 MOTD extension message.
+	pub motd_extension: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -202,11 +222,11 @@ lazy_static! {
 	};
 }
 
-pub fn validate_config_cache() {
+pub async fn validate_config_cache() {
 	// constructs regexes
 	let _ = CONFIG_CACHE.allowed_ports;
 	// constructs wisp config
-	CONFIG.wisp.to_opts().unwrap();
+	CONFIG.wisp.to_opts().await.unwrap();
 	// constructs resolver
 	RESOLVER.clear_cache();
 }
@@ -244,29 +264,53 @@ impl Default for WispConfig {
 
 			wisp_v2: false,
 			extensions: vec![ProtocolExtension::Udp],
+			auth_extension: None,
+
 			password_extension_users: HashMap::new(),
+			certificate_extension_keys: Vec::new(),
+
+			motd_extension: String::new(),
 		}
 	}
 }
 
 impl WispConfig {
-	pub fn to_opts(&self) -> anyhow::Result<(Option<Vec<AnyProtocolExtensionBuilder>>, u32)> {
+	pub async fn to_opts(
+		&self,
+	) -> anyhow::Result<(Option<Vec<AnyProtocolExtensionBuilder>>, Vec<u8>, u32)> {
 		if self.wisp_v2 {
 			let mut extensions: Vec<AnyProtocolExtensionBuilder> = Vec::new();
+			let mut required_extensions: Vec<u8> = Vec::new();
 
 			if self.extensions.contains(&ProtocolExtension::Udp) {
 				extensions.push(Box::new(UdpProtocolExtensionBuilder));
 			}
 
-			if self.extensions.contains(&ProtocolExtension::Password) {
-				extensions.push(Box::new(PasswordProtocolExtensionBuilder::new_server(
-					self.password_extension_users.clone(),
+			if self.extensions.contains(&ProtocolExtension::Motd) {
+				extensions.push(Box::new(MotdProtocolExtensionBuilder::Server(
+					self.motd_extension.clone(),
 				)));
 			}
 
-			Ok((Some(extensions), self.buffer_size))
+			match self.auth_extension {
+				Some(ProtocolExtensionAuth::Password) => {
+					extensions.push(Box::new(PasswordProtocolExtensionBuilder::new_server(
+						self.password_extension_users.clone(),
+					)));
+					required_extensions.push(PasswordProtocolExtension::ID);
+				}
+				Some(ProtocolExtensionAuth::Certificate) => {
+					extensions.push(Box::new(CertAuthProtocolExtensionBuilder::new_server(
+						get_certificates_from_paths(self.certificate_extension_keys.clone())
+							.await?,
+					)));
+				}
+				None => {}
+			}
+
+			Ok((Some(extensions), required_extensions, self.buffer_size))
 		} else {
-			Ok((None, self.buffer_size))
+			Ok((None, Vec::new(), self.buffer_size))
 		}
 	}
 }
@@ -370,7 +414,7 @@ impl Config {
 	}
 }
 
-#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, ValueEnum)]
+#[derive(Clone, Copy, Eq, PartialEq, ValueEnum)]
 pub enum ConfigFormat {
 	#[cfg(feature = "toml")]
 	Toml,

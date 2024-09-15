@@ -91,15 +91,15 @@ impl ProtocolExtensionBuilder for TWispServerProtocolExtensionBuilder {
 	}
 
 	fn build_from_bytes(
-		&self,
+		&mut self,
 		_: Bytes,
 		_: wisp_mux::Role,
 	) -> std::result::Result<AnyProtocolExtension, WispError> {
 		Ok(TWispServerProtocolExtension(self.0.clone()).into())
 	}
 
-	fn build_to_extension(&self, _: wisp_mux::Role) -> AnyProtocolExtension {
-		TWispServerProtocolExtension(self.0.clone()).into()
+	fn build_to_extension(&mut self, _: wisp_mux::Role) -> Result<AnyProtocolExtension, WispError> {
+		Ok(TWispServerProtocolExtension(self.0.clone()).into())
 	}
 }
 
