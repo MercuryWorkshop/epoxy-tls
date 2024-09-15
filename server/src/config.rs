@@ -22,8 +22,12 @@ pub enum SocketType {
 	/// TCP socket listener.
 	#[default]
 	Tcp,
+	/// TCP socket listener with TLS.
+	TlsTcp,
 	/// Unix socket listener.
 	Unix,
+	/// Unix socket listener with TLS.
+	TlsUnix,
 	/// File "socket" "listener".
 	/// "Accepts" a "connection" immediately.
 	File,
@@ -56,6 +60,8 @@ pub struct ServerConfig {
 	pub tcp_nodelay: bool,
 	/// Whether or not to set "raw mode" for the file.
 	pub file_raw_mode: bool,
+	/// Keypair (public, private) in PEM format for TLS.
+	pub tls_keypair: Option<[PathBuf; 2]>,
 
 	/// Whether or not to show what upstreams each client is connected to in stats. This can
 	/// heavily increase the size of the stats.
@@ -113,7 +119,7 @@ pub struct WispConfig {
 
 	/// Wisp draft version 2 password authentication extension username/passwords.
 	pub password_extension_users: HashMap<String, String>,
-	/// Wisp draft version 2 certificate authentication extension public ed25519 keys.
+	/// Wisp draft version 2 certificate authentication extension public ed25519 pem keys.
 	pub certificate_extension_keys: Vec<PathBuf>,
 
 	/// Wisp draft version 2 MOTD extension message.
@@ -123,7 +129,7 @@ pub struct WispConfig {
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct StreamConfig {
-	/// Whether or not to enable TCP nodelay on proxied streams.
+	/// Whether or not to enable TCP nodelay.
 	pub tcp_nodelay: bool,
 
 	/// Whether or not to allow Wisp clients to create UDP streams.
@@ -240,6 +246,7 @@ impl Default for ServerConfig {
 			resolve_ipv6: false,
 			tcp_nodelay: false,
 			file_raw_mode: false,
+			tls_keypair: None,
 
 			verbose_stats: true,
 			stats_endpoint: "/stats".to_string(),

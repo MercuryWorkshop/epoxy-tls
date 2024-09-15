@@ -3,20 +3,33 @@ use std::{os::fd::AsFd, path::PathBuf, pin::Pin};
 use anyhow::Context;
 use tokio::{
 	fs::{remove_file, try_exists, File},
-	io::{AsyncBufRead, AsyncRead, AsyncWrite},
+	io::{AsyncBufRead, AsyncRead, AsyncWrite, ReadHalf, WriteHalf},
 	net::{tcp, unix, TcpListener, TcpStream, UnixListener, UnixStream},
+};
+use tokio_native_tls::{
+	native_tls::{self, Identity},
+	TlsAcceptor, TlsStream,
 };
 use uuid::Uuid;
 
 use crate::{config::SocketType, CONFIG};
 
-pub enum Trio<A, B, C> {
+pub enum Quintet<A, B, C, D, E> {
 	One(A),
 	Two(B),
 	Three(C),
+	Four(D),
+	Five(E),
 }
 
-impl<A: AsyncRead + Unpin, B: AsyncRead + Unpin, C: AsyncRead + Unpin> AsyncRead for Trio<A, B, C> {
+impl<
+		A: AsyncRead + Unpin,
+		B: AsyncRead + Unpin,
+		C: AsyncRead + Unpin,
+		D: AsyncRead + Unpin,
+		E: AsyncRead + Unpin,
+	> AsyncRead for Quintet<A, B, C, D, E>
+{
 	fn poll_read(
 		self: std::pin::Pin<&mut Self>,
 		cx: &mut std::task::Context<'_>,
@@ -26,12 +39,19 @@ impl<A: AsyncRead + Unpin, B: AsyncRead + Unpin, C: AsyncRead + Unpin> AsyncRead
 			Self::One(x) => Pin::new(x).poll_read(cx, buf),
 			Self::Two(x) => Pin::new(x).poll_read(cx, buf),
 			Self::Three(x) => Pin::new(x).poll_read(cx, buf),
+			Self::Four(x) => Pin::new(x).poll_read(cx, buf),
+			Self::Five(x) => Pin::new(x).poll_read(cx, buf),
 		}
 	}
 }
 
-impl<A: AsyncBufRead + Unpin, B: AsyncBufRead + Unpin, C: AsyncBufRead + Unpin> AsyncBufRead
-	for Trio<A, B, C>
+impl<
+		A: AsyncBufRead + Unpin,
+		B: AsyncBufRead + Unpin,
+		C: AsyncBufRead + Unpin,
+		D: AsyncBufRead + Unpin,
+		E: AsyncBufRead + Unpin,
+	> AsyncBufRead for Quintet<A, B, C, D, E>
 {
 	fn poll_fill_buf(
 		self: Pin<&mut Self>,
@@ -41,6 +61,8 @@ impl<A: AsyncBufRead + Unpin, B: AsyncBufRead + Unpin, C: AsyncBufRead + Unpin> 
 			Self::One(x) => Pin::new(x).poll_fill_buf(cx),
 			Self::Two(x) => Pin::new(x).poll_fill_buf(cx),
 			Self::Three(x) => Pin::new(x).poll_fill_buf(cx),
+			Self::Four(x) => Pin::new(x).poll_fill_buf(cx),
+			Self::Five(x) => Pin::new(x).poll_fill_buf(cx),
 		}
 	}
 
@@ -49,12 +71,19 @@ impl<A: AsyncBufRead + Unpin, B: AsyncBufRead + Unpin, C: AsyncBufRead + Unpin> 
 			Self::One(x) => Pin::new(x).consume(amt),
 			Self::Two(x) => Pin::new(x).consume(amt),
 			Self::Three(x) => Pin::new(x).consume(amt),
+			Self::Four(x) => Pin::new(x).consume(amt),
+			Self::Five(x) => Pin::new(x).consume(amt),
 		}
 	}
 }
 
-impl<A: AsyncWrite + Unpin, B: AsyncWrite + Unpin, C: AsyncWrite + Unpin> AsyncWrite
-	for Trio<A, B, C>
+impl<
+		A: AsyncWrite + Unpin,
+		B: AsyncWrite + Unpin,
+		C: AsyncWrite + Unpin,
+		D: AsyncWrite + Unpin,
+		E: AsyncWrite + Unpin,
+	> AsyncWrite for Quintet<A, B, C, D, E>
 {
 	fn poll_write(
 		self: Pin<&mut Self>,
@@ -65,6 +94,8 @@ impl<A: AsyncWrite + Unpin, B: AsyncWrite + Unpin, C: AsyncWrite + Unpin> AsyncW
 			Self::One(x) => Pin::new(x).poll_write(cx, buf),
 			Self::Two(x) => Pin::new(x).poll_write(cx, buf),
 			Self::Three(x) => Pin::new(x).poll_write(cx, buf),
+			Self::Four(x) => Pin::new(x).poll_write(cx, buf),
+			Self::Five(x) => Pin::new(x).poll_write(cx, buf),
 		}
 	}
 
@@ -73,6 +104,8 @@ impl<A: AsyncWrite + Unpin, B: AsyncWrite + Unpin, C: AsyncWrite + Unpin> AsyncW
 			Self::One(x) => x.is_write_vectored(),
 			Self::Two(x) => x.is_write_vectored(),
 			Self::Three(x) => x.is_write_vectored(),
+			Self::Four(x) => x.is_write_vectored(),
+			Self::Five(x) => x.is_write_vectored(),
 		}
 	}
 
@@ -85,6 +118,8 @@ impl<A: AsyncWrite + Unpin, B: AsyncWrite + Unpin, C: AsyncWrite + Unpin> AsyncW
 			Self::One(x) => Pin::new(x).poll_write_vectored(cx, bufs),
 			Self::Two(x) => Pin::new(x).poll_write_vectored(cx, bufs),
 			Self::Three(x) => Pin::new(x).poll_write_vectored(cx, bufs),
+			Self::Four(x) => Pin::new(x).poll_write_vectored(cx, bufs),
+			Self::Five(x) => Pin::new(x).poll_write_vectored(cx, bufs),
 		}
 	}
 
@@ -96,6 +131,8 @@ impl<A: AsyncWrite + Unpin, B: AsyncWrite + Unpin, C: AsyncWrite + Unpin> AsyncW
 			Self::One(x) => Pin::new(x).poll_flush(cx),
 			Self::Two(x) => Pin::new(x).poll_flush(cx),
 			Self::Three(x) => Pin::new(x).poll_flush(cx),
+			Self::Four(x) => Pin::new(x).poll_flush(cx),
+			Self::Five(x) => Pin::new(x).poll_flush(cx),
 		}
 	}
 
@@ -107,6 +144,8 @@ impl<A: AsyncWrite + Unpin, B: AsyncWrite + Unpin, C: AsyncWrite + Unpin> AsyncW
 			Self::One(x) => Pin::new(x).poll_shutdown(cx),
 			Self::Two(x) => Pin::new(x).poll_shutdown(cx),
 			Self::Three(x) => Pin::new(x).poll_shutdown(cx),
+			Self::Four(x) => Pin::new(x).poll_shutdown(cx),
+			Self::Five(x) => Pin::new(x).poll_shutdown(cx),
 		}
 	}
 }
@@ -182,9 +221,22 @@ impl<A: Unpin, B: AsyncWrite + Unpin> AsyncWrite for Duplex<A, B> {
 	}
 }
 
-pub type ServerStream = Trio<TcpStream, UnixStream, Duplex<File, File>>;
-pub type ServerStreamRead = Trio<tcp::OwnedReadHalf, unix::OwnedReadHalf, File>;
-pub type ServerStreamWrite = Trio<tcp::OwnedWriteHalf, unix::OwnedWriteHalf, File>;
+pub type ServerStream =
+	Quintet<TcpStream, TlsStream<TcpStream>, UnixStream, TlsStream<UnixStream>, Duplex<File, File>>;
+pub type ServerStreamRead = Quintet<
+	tcp::OwnedReadHalf,
+	ReadHalf<TlsStream<TcpStream>>,
+	unix::OwnedReadHalf,
+	ReadHalf<TlsStream<UnixStream>>,
+	File,
+>;
+pub type ServerStreamWrite = Quintet<
+	tcp::OwnedWriteHalf,
+	WriteHalf<TlsStream<TcpStream>>,
+	unix::OwnedWriteHalf,
+	WriteHalf<TlsStream<UnixStream>>,
+	File,
+>;
 
 pub trait ServerStreamExt {
 	fn split(self) -> (ServerStreamRead, ServerStreamWrite);
@@ -195,15 +247,23 @@ impl ServerStreamExt for ServerStream {
 		match self {
 			Self::One(x) => {
 				let (r, w) = x.into_split();
-				(Trio::One(r), Trio::One(w))
+				(Quintet::One(r), Quintet::One(w))
 			}
 			Self::Two(x) => {
-				let (r, w) = x.into_split();
-				(Trio::Two(r), Trio::Two(w))
+				let (r, w) = tokio::io::split(x);
+				(Quintet::Two(r), Quintet::Two(w))
 			}
 			Self::Three(x) => {
 				let (r, w) = x.into_split();
-				(Trio::Three(r), Trio::Three(w))
+				(Quintet::Three(r), Quintet::Three(w))
+			}
+			Self::Four(x) => {
+				let (r, w) = tokio::io::split(x);
+				(Quintet::Four(r), Quintet::Four(w))
+			}
+			Self::Five(x) => {
+				let (r, w) = x.into_split();
+				(Quintet::Five(r), Quintet::Five(w))
 			}
 		}
 	}
@@ -211,27 +271,54 @@ impl ServerStreamExt for ServerStream {
 
 pub enum ServerListener {
 	Tcp(TcpListener),
+	TlsTcp(TcpListener, TlsAcceptor),
 	Unix(UnixListener),
+	TlsUnix(UnixListener, TlsAcceptor),
 	File(Option<PathBuf>),
 }
 
 impl ServerListener {
+	async fn bind_tcp() -> anyhow::Result<TcpListener> {
+		TcpListener::bind(&CONFIG.server.bind)
+			.await
+			.with_context(|| format!("failed to bind to tcp address `{}`", CONFIG.server.bind))
+	}
+
+	async fn bind_unix() -> anyhow::Result<UnixListener> {
+		if try_exists(&CONFIG.server.bind).await? {
+			remove_file(&CONFIG.server.bind).await?;
+		}
+		UnixListener::bind(&CONFIG.server.bind)
+			.with_context(|| format!("failed to bind to unix socket at `{}`", CONFIG.server.bind))
+	}
+
+	async fn create_tls() -> anyhow::Result<TlsAcceptor> {
+		let tls_keypair = CONFIG
+			.server
+			.tls_keypair
+			.as_ref()
+			.context("no tls keypair provided")?;
+
+		let public = tokio::fs::read(&tls_keypair[0])
+			.await
+			.context("failed to read public key")?;
+		let private = tokio::fs::read(&tls_keypair[1])
+			.await
+			.context("failed to read private key")?;
+
+		let identity =
+			Identity::from_pkcs8(&public, &private).context("failed to create tls identity")?;
+
+		Ok(TlsAcceptor::from(native_tls::TlsAcceptor::new(identity)?))
+	}
+
 	pub async fn new() -> anyhow::Result<Self> {
 		Ok(match CONFIG.server.socket {
-			SocketType::Tcp => Self::Tcp(
-				TcpListener::bind(&CONFIG.server.bind)
-					.await
-					.with_context(|| {
-						format!("failed to bind to tcp address `{}`", CONFIG.server.bind)
-					})?,
-			),
-			SocketType::Unix => {
-				if try_exists(&CONFIG.server.bind).await? {
-					remove_file(&CONFIG.server.bind).await?;
-				}
-				Self::Unix(UnixListener::bind(&CONFIG.server.bind).with_context(|| {
-					format!("failed to bind to unix socket at `{}`", CONFIG.server.bind)
-				})?)
+			SocketType::Tcp => Self::Tcp(Self::bind_tcp().await?),
+			SocketType::TlsTcp => Self::TlsTcp(Self::bind_tcp().await?, Self::create_tls().await?),
+			SocketType::Unix => Self::Unix(Self::bind_unix().await?),
+			SocketType::TlsUnix => {
+				Self::TlsUnix(Self::bind_unix().await?, Self::create_tls().await?)
 			}
 			SocketType::File => {
 				Self::File(Some(PathBuf::try_from(&CONFIG.server.bind).with_context(
@@ -241,33 +328,54 @@ impl ServerListener {
 		})
 	}
 
+	async fn accept_tcp(listener: &mut TcpListener) -> anyhow::Result<(TcpStream, String)> {
+		let (stream, addr) = listener
+			.accept()
+			.await
+			.context("failed to accept tcp connection")?;
+		if CONFIG.server.tcp_nodelay {
+			stream
+				.set_nodelay(true)
+				.context("failed to set tcp nodelay")?;
+		}
+		Ok((stream, addr.to_string()))
+	}
+
+	async fn accept_unix(listener: &mut UnixListener) -> anyhow::Result<(UnixStream, String)> {
+		let (stream, addr) = listener
+			.accept()
+			.await
+			.context("failed to accept unix socket connection")?;
+
+		Ok((
+			stream,
+			addr.as_pathname()
+				.and_then(|x| x.to_str())
+				.map(ToString::to_string)
+				.unwrap_or_else(|| Uuid::new_v4().to_string() + "-unix_socket"),
+		))
+	}
+
 	pub async fn accept(&mut self) -> anyhow::Result<(ServerStream, String)> {
 		match self {
 			Self::Tcp(x) => {
-				let (stream, addr) = x
-					.accept()
-					.await
-					.context("failed to accept tcp connection")?;
-				if CONFIG.server.tcp_nodelay {
-					stream
-						.set_nodelay(true)
-						.context("failed to set tcp nodelay")?;
-				}
-				Ok((Trio::One(stream), addr.to_string()))
+				let (x, y) = Self::accept_tcp(x).await?;
+				Ok((Quintet::One(x), y))
 			}
-			Self::Unix(x) => x
-				.accept()
-				.await
-				.map(|(x, y)| {
-					(
-						Trio::Two(x),
-						y.as_pathname()
-							.and_then(|x| x.to_str())
-							.map(ToString::to_string)
-							.unwrap_or_else(|| Uuid::new_v4().to_string() + "-unix_socket"),
-					)
-				})
-				.context("failed to accept unix socket connection"),
+			Self::TlsTcp(tcp, tls) => {
+				let (x, y) = Self::accept_tcp(tcp).await?;
+				let x = tls.accept(x).await?;
+				Ok((Quintet::Two(x), y))
+			}
+			Self::Unix(x) => {
+				let (x, y) = Self::accept_unix(x).await?;
+				Ok((Quintet::Three(x), y))
+			}
+			Self::TlsUnix(unix, tls) => {
+				let (x, y) = Self::accept_unix(unix).await?;
+				let x = tls.accept(x).await?;
+				Ok((Quintet::Four(x), y))
+			}
 			Self::File(path) => {
 				if let Some(path) = path.take() {
 					let rx = File::options()
@@ -311,7 +419,7 @@ impl ServerListener {
 					}
 
 					Ok((
-						Trio::Three(Duplex::new(rx, tx)),
+						Quintet::Five(Duplex::new(rx, tx)),
 						path.to_string_lossy().to_string(),
 					))
 				} else {
