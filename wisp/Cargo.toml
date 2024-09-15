@@ -20,7 +20,6 @@ event-listener = "5.3.1"
 fastwebsockets = { version = "0.8.0", features = ["unstable-split"], optional = true }
 flume = "0.11.0"
 futures = "0.3.30"
-futures-timer = "3.0.3"
 getrandom = { version = "0.2.15", features = ["std"], optional = true }
 nohash-hasher = "0.2.0"
 pin-project-lite = "0.2.14"
@@ -30,7 +29,7 @@ tokio = { version = "1.39.3", optional = true, default-features = false }
 default = ["generic_stream", "certificate"]
 fastwebsockets = ["dep:fastwebsockets", "dep:tokio"]
 generic_stream = []
-wasm = ["futures-timer/wasm-bindgen", "getrandom/js"]
+wasm = ["getrandom/js"]
 certificate = ["dep:ed25519", "dep:bitflags", "dep:getrandom"]
 
 [package.metadata.docs.rs]
