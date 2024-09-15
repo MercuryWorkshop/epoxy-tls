@@ -32,6 +32,16 @@ impl AnyProtocolExtension {
 	pub fn downcast<T: ProtocolExtension>(self) -> Result<Box<T>, Self> {
 		self.0.__downcast().map_err(Self)
 	}
+
+	/// Downcast the protocol extension.
+	pub fn downcast_ref<T: ProtocolExtension>(&self) -> Option<&T> {
+		self.0.__downcast_ref()
+	}
+
+	/// Downcast the protocol extension.
+	pub fn downcast_mut<T: ProtocolExtension>(&mut self) -> Option<&mut T> {
+		self.0.__downcast_mut()
+	}
 }
 
 impl Deref for AnyProtocolExtension {
@@ -124,6 +134,22 @@ impl dyn ProtocolExtension {
 			}
 		} else {
 			Err(self)
+		}
+	}
+
+	fn __downcast_ref<T: ProtocolExtension>(&self) -> Option<&T> {
+		if self.__is::<T>() {
+			unsafe { Some(&*(self as *const dyn ProtocolExtension as *const T)) }
+		} else {
+			None
+		}
+	}
+
+	fn __downcast_mut<T: ProtocolExtension>(&mut self) -> Option<&mut T> {
+		if self.__is::<T>() {
+			unsafe { Some(&mut *(self as *mut dyn ProtocolExtension as *mut T)) }
+		} else {
+			None
 		}
 	}
 }

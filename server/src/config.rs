@@ -7,7 +7,7 @@ use log::LevelFilter;
 use regex::RegexSet;
 use serde::{Deserialize, Serialize};
 use wisp_mux::extensions::{
-	cert::CertAuthProtocolExtensionBuilder,
+	cert::{CertAuthProtocolExtension, CertAuthProtocolExtensionBuilder},
 	motd::MotdProtocolExtensionBuilder,
 	password::{PasswordProtocolExtension, PasswordProtocolExtensionBuilder},
 	udp::UdpProtocolExtensionBuilder,
@@ -304,6 +304,7 @@ impl WispConfig {
 						get_certificates_from_paths(self.certificate_extension_keys.clone())
 							.await?,
 					)));
+					required_extensions.push(CertAuthProtocolExtension::ID);
 				}
 				None => {}
 			}

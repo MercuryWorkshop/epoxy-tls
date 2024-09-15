@@ -179,9 +179,7 @@ async fn handle_stream(
 				let id = muxstream.stream_id;
 				let (mut rx, mut tx) = muxstream.into_io().into_asyncrw().into_split();
 
-				match twisp::handle_twisp(id, &mut rx, &mut tx, twisp_map.clone(), pty, cmd)
-					.await
-				{
+				match twisp::handle_twisp(id, &mut rx, &mut tx, twisp_map.clone(), pty, cmd).await {
 					Ok(()) => {
 						let _ = closer.close(CloseReason::Voluntary).await;
 					}

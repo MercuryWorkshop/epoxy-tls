@@ -74,7 +74,10 @@ pub struct VerifyKey {
 
 impl VerifyKey {
 	/// Create a new ED25519 verification key.
-	pub fn new_ed25519(verifier: Arc<dyn Verifier<Signature> + Sync + Send>, hash: [u8; 64]) -> Self {
+	pub fn new_ed25519(
+		verifier: Arc<dyn Verifier<Signature> + Sync + Send>,
+		hash: [u8; 64],
+	) -> Self {
 		Self {
 			cert_type: SupportedCertificateTypes::Ed25519,
 			hash,
@@ -314,9 +317,9 @@ impl ProtocolExtensionBuilder for CertAuthProtocolExtensionBuilder {
 	fn build_to_extension(&mut self, _: Role) -> Result<AnyProtocolExtension, WispError> {
 		match self {
 			Self::ServerBeforeChallenge { verifiers } => {
-				let mut challenge = BytesMut::with_capacity(64);
+				let mut challenge = [0u8; 64];
 				getrandom::getrandom(&mut challenge).map_err(CertAuthError::from)?;
-				let challenge = challenge.freeze();
+				let challenge = Bytes::from(challenge.to_vec());
 
 				*self = Self::ServerAfterChallenge {
 					verifiers: verifiers.to_vec(),
