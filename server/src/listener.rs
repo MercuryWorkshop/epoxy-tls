@@ -1,15 +1,19 @@
-use std::{os::fd::AsFd, path::PathBuf, pin::Pin};
+use std::{
+	io::{BufReader, Cursor},
+	os::fd::AsFd,
+	path::PathBuf,
+	pin::Pin,
+	sync::Arc,
+};
 
 use anyhow::Context;
+use rustls_pemfile::{certs, private_key};
 use tokio::{
 	fs::{remove_file, try_exists, File},
 	io::{AsyncBufRead, AsyncRead, AsyncWrite, ReadHalf, WriteHalf},
 	net::{tcp, unix, TcpListener, TcpStream, UnixListener, UnixStream},
 };
-use tokio_native_tls::{
-	native_tls::{self, Identity},
-	TlsAcceptor, TlsStream,
-};
+use tokio_rustls::{rustls, server::TlsStream, TlsAcceptor};
 use uuid::Uuid;
 
 use crate::{config::SocketType, CONFIG};
@@ -299,17 +303,31 @@ impl ServerListener {
 			.as_ref()
 			.context("no tls keypair provided")?;
 
-		let public = tokio::fs::read(&tls_keypair[0])
-			.await
-			.context("failed to read public key")?;
-		let private = tokio::fs::read(&tls_keypair[1])
-			.await
-			.context("failed to read private key")?;
+		let mut public = BufReader::new(Cursor::new(
+			tokio::fs::read(&tls_keypair[0])
+				.await
+				.context("failed to read public key")?,
+		));
+		let public = certs(&mut public)
+			.collect::<Result<Vec<_>, _>>()
+			.context("failed to parse public key")?;
+		let mut private = BufReader::new(Cursor::new(
+			tokio::fs::read(&tls_keypair[1])
+				.await
+				.context("failed to read private key")?,
+		));
+		let private = private_key(&mut private)
+			.context("failed to parse private key")?
+			.context("no private key found")?;
 
-		let identity =
-			Identity::from_pkcs8(&public, &private).context("failed to create tls identity")?;
+		let cfg = Arc::new(
+			rustls::ServerConfig::builder()
+				.with_no_client_auth()
+				.with_single_cert(public, private)
+				.context("failed to create server config")?,
+		);
 
-		Ok(TlsAcceptor::from(native_tls::TlsAcceptor::new(identity)?))
+		Ok(TlsAcceptor::from(cfg))
 	}
 
 	pub async fn new() -> anyhow::Result<Self> {
