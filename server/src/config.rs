@@ -98,18 +98,18 @@ pub struct ServerConfig {
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ProtocolExtension {
-	/// Wisp draft version 2 UDP protocol extension.
+	/// Wisp version 2 UDP protocol extension.
 	Udp,
-	/// Wisp draft version 2 MOTD protocol extension.
+	/// Wisp version 2 MOTD protocol extension.
 	Motd,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ProtocolExtensionAuth {
-	/// Wisp draft version 2 password authentication protocol extension.
+	/// Wisp version 2 password authentication protocol extension.
 	Password,
-	/// Wisp draft version 2 certificate authentication protocol extension.
+	/// Wisp version 2 certificate authentication protocol extension.
 	Certificate,
 }
 
@@ -121,19 +121,19 @@ pub struct WispConfig {
 	/// Buffer size advertised to the client.
 	pub buffer_size: u32,
 
-	/// Whether or not to use Wisp draft version 2.
+	/// Whether or not to use Wisp version 2.
 	pub wisp_v2: bool,
-	/// Wisp draft version 2 extensions advertised.
+	/// Wisp version 2 extensions advertised.
 	pub extensions: Vec<ProtocolExtension>,
-	/// Wisp draft version 2 authentication extension advertised.
+	/// Wisp version 2 authentication extension advertised.
 	pub auth_extension: Option<ProtocolExtensionAuth>,
 
-	/// Wisp draft version 2 password authentication extension username/passwords.
+	/// Wisp version 2 password authentication extension username/passwords.
 	pub password_extension_users: HashMap<String, String>,
-	/// Wisp draft version 2 certificate authentication extension public ed25519 pem keys.
+	/// Wisp version 2 certificate authentication extension public ed25519 pem keys.
 	pub certificate_extension_keys: Vec<PathBuf>,
 
-	/// Wisp draft version 2 MOTD extension message.
+	/// Wisp version 2 MOTD extension message.
 	pub motd_extension: String,
 }
 
@@ -280,7 +280,7 @@ impl Default for WispConfig {
 			buffer_size: 128,
 			allow_wsproxy: true,
 
-			wisp_v2: false,
+			wisp_v2: true,
 			extensions: vec![ProtocolExtension::Udp, ProtocolExtension::Motd],
 			auth_extension: None,
 
