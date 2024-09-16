@@ -16,6 +16,17 @@ use wisp_mux::extensions::{
 
 use crate::{handle::wisp::utils::get_certificates_from_paths, CLI, CONFIG, RESOLVER};
 
+const VERSION_STRING: &str = concat!(
+	"git ",
+	env!("VERGEN_GIT_SHA"),
+	", dirty ",
+	env!("VERGEN_GIT_DIRTY"),
+	" compiled with rustc ",
+	env!("VERGEN_RUSTC_SEMVER"),
+	" on ",
+	env!("VERGEN_RUSTC_HOST_TRIPLE")
+);
+
 #[derive(Serialize, Deserialize, Default, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum SocketType {
@@ -270,13 +281,13 @@ impl Default for WispConfig {
 			allow_wsproxy: true,
 
 			wisp_v2: false,
-			extensions: vec![ProtocolExtension::Udp],
+			extensions: vec![ProtocolExtension::Udp, ProtocolExtension::Motd],
 			auth_extension: None,
 
 			password_extension_users: HashMap::new(),
 			certificate_extension_keys: Vec::new(),
 
-			motd_extension: String::new(),
+			motd_extension: format!("epoxy_server ({})", VERSION_STRING),
 		}
 	}
 }
@@ -453,7 +464,7 @@ impl Default for ConfigFormat {
 
 /// Performant server implementation of the Wisp protocol in Rust, made for epoxy.
 #[derive(Parser)]
-#[command(version = clap::crate_version!())]
+#[command(version = VERSION_STRING)]
 pub struct Cli {
 	/// Config file to use.
 	pub config: Option<PathBuf>,

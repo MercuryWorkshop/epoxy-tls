@@ -47,3 +47,6 @@ yaml = ["dep:serde_yaml"]
 toml = ["dep:toml"]
 
 twisp = ["dep:pty-process", "dep:libc", "dep:async-trait", "dep:shell-words"]
+
+[build-dependencies]
+vergen-git2 = { version = "1.0.0", features = ["rustc"] }
