@@ -6,12 +6,15 @@ use lazy_static::lazy_static;
 use log::LevelFilter;
 use regex::RegexSet;
 use serde::{Deserialize, Serialize};
-use wisp_mux::extensions::{
-	cert::{CertAuthProtocolExtension, CertAuthProtocolExtensionBuilder},
-	motd::MotdProtocolExtensionBuilder,
-	password::{PasswordProtocolExtension, PasswordProtocolExtensionBuilder},
-	udp::UdpProtocolExtensionBuilder,
-	ProtocolExtensionBuilder,
+use wisp_mux::{
+	extensions::{
+		cert::{CertAuthProtocolExtension, CertAuthProtocolExtensionBuilder},
+		motd::MotdProtocolExtensionBuilder,
+		password::{PasswordProtocolExtension, PasswordProtocolExtensionBuilder},
+		udp::UdpProtocolExtensionBuilder,
+		AnyProtocolExtensionBuilder,
+	},
+	WispV2Extensions,
 };
 
 use crate::{handle::wisp::utils::get_certificates_from_paths, CLI, CONFIG, RESOLVER};
@@ -195,8 +198,6 @@ pub struct Config {
 	pub stream: StreamConfig,
 }
 
-type AnyProtocolExtensionBuilder = Box<dyn ProtocolExtensionBuilder + Sync + Send>;
-
 struct ConfigCache {
 	pub blocked_ports: Vec<RangeInclusive<u16>>,
 	pub allowed_ports: Vec<RangeInclusive<u16>>,
@@ -293,41 +294,49 @@ impl Default for WispConfig {
 }
 
 impl WispConfig {
-	pub async fn to_opts(
-		&self,
-	) -> anyhow::Result<(Option<Vec<AnyProtocolExtensionBuilder>>, Vec<u8>, u32)> {
+	pub async fn to_opts(&self) -> anyhow::Result<(Option<WispV2Extensions>, Vec<u8>, u32)> {
 		if self.wisp_v2 {
 			let mut extensions: Vec<AnyProtocolExtensionBuilder> = Vec::new();
 			let mut required_extensions: Vec<u8> = Vec::new();
 
 			if self.extensions.contains(&ProtocolExtension::Udp) {
-				extensions.push(Box::new(UdpProtocolExtensionBuilder));
+				extensions.push(AnyProtocolExtensionBuilder::new(
+					UdpProtocolExtensionBuilder,
+				));
 			}
 
 			if self.extensions.contains(&ProtocolExtension::Motd) {
-				extensions.push(Box::new(MotdProtocolExtensionBuilder::Server(
-					self.motd_extension.clone(),
-				)));
+				extensions.push(AnyProtocolExtensionBuilder::new(
+					MotdProtocolExtensionBuilder::Server(self.motd_extension.clone()),
+				));
 			}
 
 			match self.auth_extension {
 				Some(ProtocolExtensionAuth::Password) => {
-					extensions.push(Box::new(PasswordProtocolExtensionBuilder::new_server(
-						self.password_extension_users.clone(),
-					)));
+					extensions.push(AnyProtocolExtensionBuilder::new(
+						PasswordProtocolExtensionBuilder::new_server(
+							self.password_extension_users.clone(),
+						),
+					));
 					required_extensions.push(PasswordProtocolExtension::ID);
 				}
 				Some(ProtocolExtensionAuth::Certificate) => {
-					extensions.push(Box::new(CertAuthProtocolExtensionBuilder::new_server(
-						get_certificates_from_paths(self.certificate_extension_keys.clone())
-							.await?,
-					)));
+					extensions.push(AnyProtocolExtensionBuilder::new(
+						CertAuthProtocolExtensionBuilder::new_server(
+							get_certificates_from_paths(self.certificate_extension_keys.clone())
+								.await?,
+						),
+					));
 					required_extensions.push(CertAuthProtocolExtension::ID);
 				}
 				None => {}
 			}
 
-			Ok((Some(extensions), required_extensions, self.buffer_size))
+			Ok((
+				Some(WispV2Extensions::new(extensions)),
+				required_extensions,
+				self.buffer_size,
+			))
 		} else {
 			Ok((None, Vec::new(), self.buffer_size))
 		}

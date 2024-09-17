@@ -1,5 +1,5 @@
 use crate::{
-	extensions::{AnyProtocolExtension, ProtocolExtensionBuilder},
+	extensions::{AnyProtocolExtension, AnyProtocolExtensionBuilder},
 	ws::{self, Frame, LockedWebSocketWrite, OpCode, Payload, WebSocketRead},
 	Role, WispError, WISP_VERSION,
 };
@@ -431,10 +431,57 @@ impl<'a> Packet<'a> {
 		})
 	}
 
+	fn parse_info(
+		mut bytes: Payload<'a>,
+		role: Role,
+		extension_builders: &mut [AnyProtocolExtensionBuilder],
+	) -> Result<Self, WispError> {
+		// packet type is already read by code that calls this
+		if bytes.remaining() < 4 + 2 {
+			return Err(WispError::PacketTooSmall);
+		}
+		if bytes.get_u32_le() != 0 {
+			return Err(WispError::InvalidStreamId);
+		}
+
+		let version = WispVersion {
+			major: bytes.get_u8(),
+			minor: bytes.get_u8(),
+		};
+
+		if version.major != WISP_VERSION.major {
+			return Err(WispError::IncompatibleProtocolVersion);
+		}
+
+		let mut extensions = Vec::new();
+
+		while bytes.remaining() > 4 {
+			// We have some extensions
+			let id = bytes.get_u8();
+			let length = usize::try_from(bytes.get_u32_le())?;
+			if bytes.remaining() < length {
+				return Err(WispError::PacketTooSmall);
+			}
+			if let Some(builder) = extension_builders.iter_mut().find(|x| x.get_id() == id) {
+				extensions.push(builder.build_from_bytes(bytes.copy_to_bytes(length), role)?)
+			} else {
+				bytes.advance(length)
+			}
+		}
+
+		Ok(Self {
+			stream_id: 0,
+			packet_type: PacketType::Info(InfoPacket {
+				version,
+				extensions,
+			}),
+		})
+	}
+
 	pub(crate) fn maybe_parse_info(
 		frame: Frame<'a>,
 		role: Role,
-		extension_builders: &mut [Box<(dyn ProtocolExtensionBuilder + Send + Sync)>],
+		extension_builders: &mut [AnyProtocolExtensionBuilder],
 	) -> Result<Self, WispError> {
 		if !frame.finished {
 			return Err(WispError::WsFrameNotFinished);
@@ -503,53 +550,6 @@ impl<'a> Packet<'a> {
 				}
 			}
 		}
-	}
-
-	fn parse_info(
-		mut bytes: Payload<'a>,
-		role: Role,
-		extension_builders: &mut [Box<(dyn ProtocolExtensionBuilder + Send + Sync)>],
-	) -> Result<Self, WispError> {
-		// packet type is already read by code that calls this
-		if bytes.remaining() < 4 + 2 {
-			return Err(WispError::PacketTooSmall);
-		}
-		if bytes.get_u32_le() != 0 {
-			return Err(WispError::InvalidStreamId);
-		}
-
-		let version = WispVersion {
-			major: bytes.get_u8(),
-			minor: bytes.get_u8(),
-		};
-
-		if version.major != WISP_VERSION.major {
-			return Err(WispError::IncompatibleProtocolVersion);
-		}
-
-		let mut extensions = Vec::new();
-
-		while bytes.remaining() > 4 {
-			// We have some extensions
-			let id = bytes.get_u8();
-			let length = usize::try_from(bytes.get_u32_le())?;
-			if bytes.remaining() < length {
-				return Err(WispError::PacketTooSmall);
-			}
-			if let Some(builder) = extension_builders.iter_mut().find(|x| x.get_id() == id) {
-				extensions.push(builder.build_from_bytes(bytes.copy_to_bytes(length), role)?)
-			} else {
-				bytes.advance(length)
-			}
-		}
-
-		Ok(Self {
-			stream_id: 0,
-			packet_type: PacketType::Info(InfoPacket {
-				version,
-				extensions,
-			}),
-		})
 	}
 }
 

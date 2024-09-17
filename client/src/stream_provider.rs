@@ -15,9 +15,9 @@ use pin_project_lite::pin_project;
 use wasm_bindgen_futures::spawn_local;
 use webpki_roots::TLS_SERVER_ROOTS;
 use wisp_mux::{
-	extensions::{udp::UdpProtocolExtensionBuilder, ProtocolExtensionBuilder},
+	extensions::{udp::UdpProtocolExtensionBuilder, AnyProtocolExtensionBuilder},
 	ws::{WebSocketRead, WebSocketWrite},
-	ClientMux, MuxStreamAsyncRW, MuxStreamIo, StreamType,
+	ClientMux, MuxStreamAsyncRW, MuxStreamIo, StreamType, WispV2Extensions,
 };
 
 use crate::{
@@ -106,10 +106,12 @@ impl StreamProvider {
 		&self,
 		mut locked: MutexGuard<'_, Option<ClientMux>>,
 	) -> Result<(), EpoxyError> {
-		let extensions_vec: Vec<Box<dyn ProtocolExtensionBuilder + Send + Sync>> =
-			vec![Box::new(UdpProtocolExtensionBuilder)];
+		let extensions_vec: Vec<AnyProtocolExtensionBuilder> =
+			vec![AnyProtocolExtensionBuilder::new(
+				UdpProtocolExtensionBuilder,
+			)];
 		let extensions = if self.wisp_v2 {
-			Some(extensions_vec)
+			Some(WispV2Extensions::new(extensions_vec))
 		} else {
 			None
 		};

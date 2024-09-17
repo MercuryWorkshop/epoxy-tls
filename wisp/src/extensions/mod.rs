@@ -155,7 +155,7 @@ impl dyn ProtocolExtension {
 }
 
 /// Trait to build a Wisp protocol extension from a payload.
-pub trait ProtocolExtensionBuilder {
+pub trait ProtocolExtensionBuilder: Sync + Send + 'static {
 	/// Get the protocol extension ID.
 	///
 	/// Used to decide whether this builder should be used.
@@ -170,4 +170,81 @@ pub trait ProtocolExtensionBuilder {
 
 	/// Build a protocol extension to send to the other side.
 	fn build_to_extension(&mut self, role: Role) -> Result<AnyProtocolExtension, WispError>;
+
+	/// Do not override.
+	fn __internal_type_id(&self) -> TypeId {
+		TypeId::of::<Self>()
+	}
+}
+
+impl dyn ProtocolExtensionBuilder {
+	fn __is<T: ProtocolExtensionBuilder>(&self) -> bool {
+		let t = TypeId::of::<T>();
+		self.__internal_type_id() == t
+	}
+
+	fn __downcast<T: ProtocolExtensionBuilder>(self: Box<Self>) -> Result<Box<T>, Box<Self>> {
+		if self.__is::<T>() {
+			unsafe {
+				let raw: *mut dyn ProtocolExtensionBuilder = Box::into_raw(self);
+				Ok(Box::from_raw(raw as *mut T))
+			}
+		} else {
+			Err(self)
+		}
+	}
+
+	fn __downcast_ref<T: ProtocolExtensionBuilder>(&self) -> Option<&T> {
+		if self.__is::<T>() {
+			unsafe { Some(&*(self as *const dyn ProtocolExtensionBuilder as *const T)) }
+		} else {
+			None
+		}
+	}
+
+	fn __downcast_mut<T: ProtocolExtensionBuilder>(&mut self) -> Option<&mut T> {
+		if self.__is::<T>() {
+			unsafe { Some(&mut *(self as *mut dyn ProtocolExtensionBuilder as *mut T)) }
+		} else {
+			None
+		}
+	}
+}
+
+/// Type-erased protocol extension builder.
+pub struct AnyProtocolExtensionBuilder(Box<dyn ProtocolExtensionBuilder>);
+
+impl AnyProtocolExtensionBuilder {
+	/// Create a new type-erased protocol extension builder.
+	pub fn new<T: ProtocolExtensionBuilder>(extension: T) -> Self {
+		Self(Box::new(extension))
+	}
+
+	/// Downcast the protocol extension builder.
+	pub fn downcast<T: ProtocolExtensionBuilder>(self) -> Result<Box<T>, Self> {
+		self.0.__downcast().map_err(Self)
+	}
+
+	/// Downcast the protocol extension builder.
+	pub fn downcast_ref<T: ProtocolExtensionBuilder>(&self) -> Option<&T> {
+		self.0.__downcast_ref()
+	}
+
+	/// Downcast the protocol extension builder.
+	pub fn downcast_mut<T: ProtocolExtensionBuilder>(&mut self) -> Option<&mut T> {
+		self.0.__downcast_mut()
+	}
+}
+
+impl Deref for AnyProtocolExtensionBuilder {
+	type Target = dyn ProtocolExtensionBuilder;
+	fn deref(&self) -> &Self::Target {
+		self.0.deref()
+	}
+}
+
+impl DerefMut for AnyProtocolExtensionBuilder {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		self.0.deref_mut()
+	}
 }
