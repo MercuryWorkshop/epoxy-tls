@@ -200,13 +200,18 @@ async fn main() -> anyhow::Result<()> {
 
 	let mut listener = ServerListener::new().await?;
 	loop {
-		let (stream, id) = listener.accept().await?;
-		tokio::spawn(async move {
-			let res = route::route(stream, move |stream| handle_stream(stream, id)).await;
+		let ret = listener.accept().await;
+		match ret {
+			Ok((stream, id)) => {
+				tokio::spawn(async move {
+					let res = route::route(stream, move |stream| handle_stream(stream, id)).await;
 
-			if let Err(e) = res {
-				error!("error while routing client: {:?}", e);
+					if let Err(e) = res {
+						error!("error while routing client: {:?}", e);
+					}
+				});
 			}
-		});
+			Err(e) => error!("error while accepting client: {:?}", e),
+		}
 	}
 }

@@ -262,7 +262,7 @@ impl Default for ServerConfig {
 
 			verbose_stats: true,
 			stats_endpoint: "/stats".to_string(),
-			enable_stats_endpoint: true,
+			enable_stats_endpoint: false,
 
 			non_ws_response: ":3".to_string(),
 

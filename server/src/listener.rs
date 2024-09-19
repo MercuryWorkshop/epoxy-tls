@@ -338,11 +338,7 @@ impl ServerListener {
 			SocketType::TlsUnix => {
 				Self::TlsUnix(Self::bind_unix().await?, Self::create_tls().await?)
 			}
-			SocketType::File => {
-				Self::File(Some(PathBuf::try_from(&CONFIG.server.bind).with_context(
-					|| format!("failed to parse path `{}` for file", CONFIG.server.bind),
-				)?))
-			}
+			SocketType::File => Self::File(Some(CONFIG.server.bind.clone().into())),
 		})
 	}
 
