@@ -487,7 +487,7 @@ impl<'a> Packet<'a> {
 			return Err(WispError::WsFrameNotFinished);
 		}
 		if frame.opcode != OpCode::Binary {
-			return Err(WispError::WsFrameInvalidType);
+			return Err(WispError::WsFrameInvalidType(frame.opcode));
 		}
 		let mut bytes = frame.payload;
 		if bytes.remaining() < 1 {
@@ -511,7 +511,7 @@ impl<'a> Packet<'a> {
 			return Err(WispError::WsFrameNotFinished);
 		}
 		if frame.opcode != OpCode::Binary {
-			return Err(WispError::WsFrameInvalidType);
+			return Err(WispError::WsFrameInvalidType(frame.opcode));
 		}
 		let mut bytes = frame.payload;
 		if bytes.remaining() < 5 {
@@ -587,7 +587,7 @@ impl<'a> TryFrom<ws::Frame<'a>> for Packet<'a> {
 			return Err(Self::Error::WsFrameNotFinished);
 		}
 		if frame.opcode != ws::OpCode::Binary {
-			return Err(Self::Error::WsFrameInvalidType);
+			return Err(Self::Error::WsFrameInvalidType(frame.opcode));
 		}
 		Packet::try_from(frame.payload)
 	}

@@ -126,10 +126,9 @@ impl ClientStream {
 		}
 
 		let packet = RESOLVER
-			.lookup_ip(packet.destination_hostname)
+			.resolve(packet.destination_hostname)
 			.await
 			.context("failed to resolve hostname")?
-			.iter()
 			.filter(|x| CONFIG.server.resolve_ipv6 || x.is_ipv4())
 			.map(|x| ConnectPacket {
 				stream_type: packet.stream_type,

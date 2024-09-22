@@ -74,6 +74,7 @@ pub struct ServerConfig {
 	pub tcp_nodelay: bool,
 	/// Whether or not to set "raw mode" for the file.
 	pub file_raw_mode: bool,
+	#[serde(skip_serializing_if = "Option::is_none")]
 	/// Keypair (public, private) in PEM format for TLS.
 	pub tls_keypair: Option<[PathBuf; 2]>,
 
@@ -82,12 +83,15 @@ pub struct ServerConfig {
 	pub verbose_stats: bool,
 	/// Whether or not to respond to stats requests over HTTP.
 	pub enable_stats_endpoint: bool,
+	#[serde(skip_serializing_if = "String::is_empty")]
 	/// Path of stats HTTP endpoint.
 	pub stats_endpoint: String,
 
+	#[serde(skip_serializing_if = "String::is_empty")]
 	/// String sent to a request that is not a websocket upgrade request.
 	pub non_ws_response: String,
 
+	#[serde(skip_serializing_if = "String::is_empty")]
 	/// Prefix of Wisp server. Do NOT add a trailing slash here.
 	pub prefix: String,
 
@@ -126,13 +130,17 @@ pub struct WispConfig {
 
 	/// Whether or not to use Wisp version 2.
 	pub wisp_v2: bool,
+	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Wisp version 2 extensions advertised.
 	pub extensions: Vec<ProtocolExtension>,
+	#[serde(skip_serializing_if = "Option::is_none")]
 	/// Wisp version 2 authentication extension advertised.
 	pub auth_extension: Option<ProtocolExtensionAuth>,
 
+	#[serde(skip_serializing_if = "HashMap::is_empty")]
 	/// Wisp version 2 password authentication extension username/passwords.
 	pub password_extension_users: HashMap<String, String>,
+	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Wisp version 2 certificate authentication extension public ed25519 pem keys.
 	pub certificate_extension_keys: Vec<PathBuf>,
 
@@ -154,6 +162,7 @@ pub struct StreamConfig {
 	#[cfg(feature = "twisp")]
 	pub allow_twisp: bool,
 
+	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// DNS servers to resolve with. Will default to system configuration.
 	pub dns_servers: Vec<IpAddr>,
 
@@ -169,23 +178,31 @@ pub struct StreamConfig {
 	/// Whether or not to allow connections to non-globally-routable IP addresses.
 	pub allow_non_global: bool,
 
+	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Regex whitelist of hosts for TCP connections.
 	pub allow_tcp_hosts: Vec<String>,
+	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Regex blacklist of hosts for TCP connections.
 	pub block_tcp_hosts: Vec<String>,
 
+	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Regex whitelist of hosts for UDP connections.
 	pub allow_udp_hosts: Vec<String>,
+	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Regex blacklist of hosts for UDP connections.
 	pub block_udp_hosts: Vec<String>,
 
+	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Regex whitelist of hosts.
 	pub allow_hosts: Vec<String>,
+	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Regex blacklist of hosts.
 	pub block_hosts: Vec<String>,
 
+	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Range whitelist of ports. Format is `[lower_bound, upper_bound]`.
 	pub allow_ports: Vec<Vec<u16>>,
+	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Range blacklist of ports. Format is `[lower_bound, upper_bound]`.
 	pub block_ports: Vec<Vec<u16>>,
 }

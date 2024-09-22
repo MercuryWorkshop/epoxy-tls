@@ -70,7 +70,7 @@ pub enum WispError {
 	StreamAlreadyClosed,
 
 	/// The websocket frame received had an invalid type.
-	WsFrameInvalidType,
+	WsFrameInvalidType(ws::OpCode),
 	/// The websocket frame received was not finished.
 	WsFrameNotFinished,
 	/// Error specific to the websocket implementation.
@@ -133,7 +133,7 @@ impl std::fmt::Display for WispError {
 			Self::MaxStreamCountReached => write!(f, "Maximum stream count reached"),
 			Self::IncompatibleProtocolVersion => write!(f, "Incompatible Wisp protocol version"),
 			Self::StreamAlreadyClosed => write!(f, "Stream already closed"),
-			Self::WsFrameInvalidType => write!(f, "Invalid websocket frame type"),
+			Self::WsFrameInvalidType(ty) => write!(f, "Invalid websocket frame type: {:?}", ty),
 			Self::WsFrameNotFinished => write!(f, "Unfinished websocket frame"),
 			Self::WsImplError(err) => write!(f, "Websocket implementation error: {}", err),
 			Self::WsImplSocketClosed => {

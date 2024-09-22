@@ -1,7 +1,7 @@
 #![feature(ip)]
 #![deny(clippy::todo)]
 
-use std::{fmt::Write, fs::read_to_string};
+use std::{fmt::Write, fs::read_to_string, net::IpAddr};
 
 use clap::Parser;
 use config::{validate_config_cache, Cli, Config};
@@ -27,6 +27,29 @@ mod stream;
 
 type Client = (DashMap<Uuid, (ConnectPacket, ConnectPacket)>, bool);
 
+pub enum Resolver {
+	Hickory(TokioAsyncResolver),
+	System,
+}
+
+impl Resolver {
+	pub async fn resolve(&self, host: String) -> anyhow::Result<Box<dyn Iterator<Item = IpAddr>>> {
+		match self {
+			Self::Hickory(resolver) => Ok(Box::new(resolver.lookup_ip(host).await?.into_iter())),
+			Self::System => Ok(Box::new(
+				tokio::net::lookup_host(host + ":0").await?.map(|x| x.ip()),
+			)),
+		}
+	}
+
+	pub fn clear_cache(&self) {
+		match self {
+			Self::Hickory(resolver) => resolver.clear_cache(),
+			Self::System => {}
+		}
+	}
+}
+
 lazy_static! {
 	pub static ref CLI: Cli = Cli::parse();
 	pub static ref CONFIG: Config = {
@@ -37,21 +60,19 @@ lazy_static! {
 		}
 	};
 	pub static ref CLIENTS: DashMap<String, Client> = DashMap::new();
-	pub static ref RESOLVER: TokioAsyncResolver = {
-		let (config, opts) = if CONFIG.stream.dns_servers.is_empty() {
-			hickory_resolver::system_conf::read_system_conf().unwrap()
+	pub static ref RESOLVER: Resolver = {
+		if CONFIG.stream.dns_servers.is_empty() {
+			Resolver::System
 		} else {
-			(
+			Resolver::Hickory(TokioAsyncResolver::tokio(
 				ResolverConfig::from_parts(
 					None,
 					Vec::new(),
 					NameServerConfigGroup::from_ips_clear(&CONFIG.stream.dns_servers, 53, true),
 				),
 				ResolverOpts::default(),
-			)
-		};
-
-		TokioAsyncResolver::tokio(config, opts)
+			))
+		}
 	};
 }
 
