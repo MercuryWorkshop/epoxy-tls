@@ -111,6 +111,7 @@ pub async fn route(
 						ws_upgrade(req, |fut, wsproxy, udp, path| async move {
 							let mut ws = fut.await.context("failed to await upgrade future")?;
 							ws.set_max_message_size(CONFIG.server.max_message_size);
+							ws.set_auto_pong(false);
 
 							if wsproxy {
 								let ws = WebSocketStreamWrapper(FragmentCollector::new(ws));

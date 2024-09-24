@@ -27,6 +27,7 @@ pub(crate) enum WsEvent {
 	SendPong(Payload<'static>),
 	WispMessage(Option<Packet<'static>>, Option<Frame<'static>>),
 	EndFut(Option<CloseReason>),
+	Noop
 }
 
 struct MuxMapValue {
@@ -238,6 +239,8 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 			return Ok(None);
 		} else if frame.opcode == OpCode::Ping {
 			return Ok(Some(WsEvent::SendPong(frame.payload)));
+		} else if frame.opcode == OpCode::Pong {
+			return Ok(Some(WsEvent::Noop));
 		}
 
 		if let Some(ref extra_frame) = optional_frame {
@@ -342,6 +345,7 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 						}
 					}
 				}
+				WsEvent::Noop => {}
 			}
 		}
 
