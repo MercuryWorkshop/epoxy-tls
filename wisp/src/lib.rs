@@ -21,7 +21,8 @@ pub use crate::{packet::*, stream::*};
 
 use extensions::{udp::UdpProtocolExtension, AnyProtocolExtension, AnyProtocolExtensionBuilder};
 use flume as mpsc;
-use futures::{channel::oneshot, Future};
+use futures::{channel::oneshot, select, Future, FutureExt};
+use futures_timer::Delay;
 use inner::{MuxInner, WsEvent};
 use std::{
 	ops::DerefMut,
@@ -30,6 +31,7 @@ use std::{
 		atomic::{AtomicBool, Ordering},
 		Arc,
 	},
+	time::Duration,
 };
 use ws::{AppendingWebSocketRead, LockedWebSocketWrite, Payload};
 
@@ -187,18 +189,21 @@ where
 	let mut downgraded = true;
 
 	let extension_ids: Vec<_> = builders.iter().map(|x| x.get_id()).collect();
-
-	let frame = read.wisp_read_frame(write).await?;
-	let packet = Packet::maybe_parse_info(frame, role, builders)?;
-	if let PacketType::Info(info) = packet.packet_type {
-		supported_extensions = info
-			.extensions
-			.into_iter()
-			.filter(|x| extension_ids.contains(&x.get_id()))
-			.collect();
-		downgraded = false;
-	} else {
-		extra_packet.replace(ws::Frame::from(packet).clone());
+	if let Some(frame) = select! {
+		x = read.wisp_read_frame(write).fuse() => Some(x?),
+		_ = Delay::new(Duration::from_secs(5)).fuse() => None
+	} {
+		let packet = Packet::maybe_parse_info(frame, role, builders)?;
+		if let PacketType::Info(info) = packet.packet_type {
+			supported_extensions = info
+				.extensions
+				.into_iter()
+				.filter(|x| extension_ids.contains(&x.get_id()))
+				.collect();
+			downgraded = false;
+		} else {
+			extra_packet.replace(ws::Frame::from(packet).clone());
+		}
 	}
 
 	for extension in supported_extensions.iter_mut() {
