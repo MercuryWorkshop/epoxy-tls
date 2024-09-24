@@ -23,6 +23,8 @@ pub(crate) enum WsEvent {
 		u16,
 		oneshot::Sender<Result<MuxStream, WispError>>,
 	),
+	SendPing(Payload<'static>, oneshot::Sender<Result<(), WispError>>),
+	SendPong(Payload<'static>),
 	WispMessage(Option<Packet<'static>>, Option<Frame<'static>>),
 	EndFut(Option<CloseReason>),
 }
@@ -234,6 +236,8 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 		let (mut frame, optional_frame) = msg?;
 		if frame.opcode == OpCode::Close {
 			return Ok(None);
+		} else if frame.opcode == OpCode::Ping {
+			return Ok(Some(WsEvent::SendPong(frame.payload)));
 		}
 
 		if let Some(ref extra_frame) = optional_frame {
@@ -307,6 +311,12 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 					} else {
 						let _ = channel.send(Err(WispError::InvalidStreamId));
 					}
+				}
+				WsEvent::SendPing(payload, channel) => {
+					let _ = channel.send(self.tx.write_frame(Frame::new(OpCode::Ping, payload, true)).await);
+				}
+				WsEvent::SendPong(payload) => {
+					self.tx.write_frame(Frame::new(OpCode::Pong, payload, true)).await?;
 				}
 				WsEvent::EndFut(x) => {
 					if let Some(reason) = x {

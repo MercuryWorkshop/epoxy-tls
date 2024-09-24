@@ -2,9 +2,10 @@
 pub mod twisp;
 pub mod utils;
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Context;
+use bytes::BytesMut;
 use cfg_if::cfg_if;
 use event_listener::Event;
 use futures_util::FutureExt;
@@ -13,12 +14,12 @@ use tokio::{
 	io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
 	net::tcp::{OwnedReadHalf, OwnedWriteHalf},
 	select,
-	task::JoinSet,
+	task::JoinSet, time::interval,
 };
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 use uuid::Uuid;
 use wisp_mux::{
-	CloseReason, ConnectPacket, MuxStream, MuxStreamAsyncRead, MuxStreamWrite, ServerMux,
+	ws::Payload, CloseReason, ConnectPacket, MuxStream, MuxStreamAsyncRead, MuxStreamWrite, ServerMux
 };
 
 use crate::{
@@ -237,6 +238,7 @@ pub async fn handle_wisp(stream: WispResult, id: String) -> anyhow::Result<()> {
 		.context("failed to create server multiplexor")?
 		.with_required_extensions(&required_extensions)
 		.await?;
+	let mux = Arc::new(mux);
 
 	debug!(
 		"new wisp client id {:?} connected with extensions {:?}",
@@ -254,6 +256,14 @@ pub async fn handle_wisp(stream: WispResult, id: String) -> anyhow::Result<()> {
 	set.spawn(tokio::task::unconstrained(fut.map(move |x| {
 		trace!("wisp client id {:?} multiplexor result {:?}", mux_id, x)
 	})));
+
+	let ping_mux = mux.clone();
+	set.spawn(async move {
+		let mut interval = interval(Duration::from_secs(30));
+		while ping_mux.send_ping(Payload::Bytes(BytesMut::new())).await.is_ok() {
+			interval.tick().await;
+		}
+	});
 
 	while let Some((connect, stream)) = mux.server_new_stream().await {
 		set.spawn(handle_stream(

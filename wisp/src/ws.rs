@@ -120,6 +120,15 @@ pub struct Frame<'a> {
 }
 
 impl<'a> Frame<'a> {
+	/// Create a new frame.
+	pub fn new(opcode: OpCode, payload: Payload<'a>, finished: bool) -> Self {
+		Self {
+			finished,
+			opcode,
+			payload,
+		}
+	}
+
 	/// Create a new text frame.
 	pub fn text(payload: Payload<'a>) -> Self {
 		Self {

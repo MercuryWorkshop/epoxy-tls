@@ -31,7 +31,7 @@ use std::{
 		Arc,
 	},
 };
-use ws::{AppendingWebSocketRead, LockedWebSocketWrite};
+use ws::{AppendingWebSocketRead, LockedWebSocketWrite, Payload};
 
 /// Wisp version supported by this crate.
 pub const WISP_VERSION: WispVersion = WispVersion { major: 2, minor: 0 };
@@ -363,6 +363,19 @@ impl ServerMux {
 		self.muxstream_recv.recv_async().await.ok()
 	}
 
+	/// Send a ping to the client.
+	pub async fn send_ping(&self, payload: Payload<'static>) -> Result<(), WispError> {
+		if self.actor_exited.load(Ordering::Acquire) {
+			return Err(WispError::MuxTaskEnded);
+		}
+		let (tx, rx) = oneshot::channel();
+		self.actor_tx
+			.send_async(WsEvent::SendPing(payload, tx))
+			.await
+			.map_err(|_| WispError::MuxMessageFailedToSend)?;
+		rx.await.map_err(|_| WispError::MuxMessageFailedToRecv)?
+	}
+
 	async fn close_internal(&self, reason: Option<CloseReason>) -> Result<(), WispError> {
 		if self.actor_exited.load(Ordering::Acquire) {
 			return Err(WispError::MuxTaskEnded);
@@ -549,6 +562,19 @@ impl ClientMux {
 		let (tx, rx) = oneshot::channel();
 		self.actor_tx
 			.send_async(WsEvent::CreateStream(stream_type, host, port, tx))
+			.await
+			.map_err(|_| WispError::MuxMessageFailedToSend)?;
+		rx.await.map_err(|_| WispError::MuxMessageFailedToRecv)?
+	}
+
+	/// Send a ping to the server.
+	pub async fn send_ping(&self, payload: Payload<'static>) -> Result<(), WispError> {
+		if self.actor_exited.load(Ordering::Acquire) {
+			return Err(WispError::MuxTaskEnded);
+		}
+		let (tx, rx) = oneshot::channel();
+		self.actor_tx
+			.send_async(WsEvent::SendPing(payload, tx))
 			.await
 			.map_err(|_| WispError::MuxMessageFailedToSend)?;
 		rx.await.map_err(|_| WispError::MuxMessageFailedToRecv)?
