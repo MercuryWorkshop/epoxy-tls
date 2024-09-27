@@ -477,12 +477,12 @@ impl Stream for MuxStreamIo {
 	}
 }
 
-impl Sink<&[u8]> for MuxStreamIo {
+impl Sink<BytesMut> for MuxStreamIo {
 	type Error = std::io::Error;
 	fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
 		self.project().tx.poll_ready(cx)
 	}
-	fn start_send(self: Pin<&mut Self>, item: &[u8]) -> Result<(), Self::Error> {
+	fn start_send(self: Pin<&mut Self>, item: BytesMut) -> Result<(), Self::Error> {
 		self.project().tx.start_send(item)
 	}
 	fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -731,7 +731,7 @@ impl AsyncWrite for MuxStreamAsyncWrite {
 		let mut this = self.as_mut().project();
 
 		ready!(this.tx.as_mut().poll_ready(cx))?;
-		match this.tx.as_mut().start_send(buf) {
+		match this.tx.as_mut().start_send(buf.into()) {
 			Ok(()) => {
 				let mut cx = Context::from_waker(noop_waker_ref());
 				let cx = &mut cx;
