@@ -1,7 +1,7 @@
 #![feature(ip)]
 #![deny(clippy::todo)]
 
-use std::{fmt::Write, fs::read_to_string, net::IpAddr};
+use std::{collections::HashMap, fs::read_to_string, net::IpAddr};
 
 use anyhow::Context;
 use clap::Parser;
@@ -16,6 +16,7 @@ use lazy_static::lazy_static;
 use listener::ServerListener;
 use log::{error, info};
 use route::{route_stats, ServerRouteResult};
+use serde::Serialize;
 use tokio::signal::unix::{signal, SignalKind};
 use uuid::Uuid;
 use wisp_mux::{ConnectPacket, StreamType};
@@ -93,92 +94,90 @@ fn format_stream_type(stream_type: StreamType) -> &'static str {
 	}
 }
 
-fn generate_stats() -> anyhow::Result<String> {
-	let mut out = String::new();
-	let len = CLIENTS.len();
+#[derive(Serialize)]
+struct MemoryStats {
+	active: f64,
+	allocated: f64,
+	mapped: f64,
+	metadata: f64,
+	resident: f64,
+	retained: f64,
+}
 
+#[derive(Serialize)]
+struct StreamStats {
+	stream_type: String,
+	requested: String,
+	resolved: String,
+}
+
+impl From<(ConnectPacket, ConnectPacket)> for StreamStats {
+	fn from(value: (ConnectPacket, ConnectPacket)) -> Self {
+		Self {
+			stream_type: format_stream_type(value.0.stream_type).to_string(),
+			requested: format!(
+				"{}:{}",
+				value.0.destination_hostname, value.0.destination_port
+			),
+			resolved: format!(
+				"{}:{}",
+				value.1.destination_hostname, value.1.destination_port
+			),
+		}
+	}
+}
+
+#[derive(Serialize)]
+struct ClientStats {
+	wsproxy: bool,
+	streams: HashMap<String, StreamStats>,
+}
+
+#[derive(Serialize)]
+struct ServerStats {
+	config: String,
+	clients: HashMap<String, ClientStats>,
+	memory: MemoryStats,
+}
+
+fn generate_stats() -> anyhow::Result<String> {
 	use tikv_jemalloc_ctl::stats::{active, allocated, mapped, metadata, resident, retained};
 	tikv_jemalloc_ctl::epoch::advance()?;
 
-	writeln!(&mut out, "Memory usage:")?;
-	writeln!(
-		&mut out,
-		"\tActive: {:?} MiB",
-		active::read()? as f64 / (1024 * 1024) as f64
-	)?;
-	writeln!(
-		&mut out,
-		"\tAllocated: {:?} MiB",
-		allocated::read()? as f64 / (1024 * 1024) as f64
-	)?;
-	writeln!(
-		&mut out,
-		"\tMapped: {:?} MiB",
-		mapped::read()? as f64 / (1024 * 1024) as f64
-	)?;
-	writeln!(
-		&mut out,
-		"\tMetadata: {:?} MiB",
-		metadata::read()? as f64 / (1024 * 1024) as f64
-	)?;
-	writeln!(
-		&mut out,
-		"\tResident: {:?} MiB",
-		resident::read()? as f64 / (1024 * 1024) as f64
-	)?;
-	writeln!(
-		&mut out,
-		"\tRetained: {:?} MiB",
-		retained::read()? as f64 / (1024 * 1024) as f64
-	)?;
+	let memory = MemoryStats {
+		active: active::read()? as f64 / (1024 * 1024) as f64,
+		allocated: allocated::read()? as f64 / (1024 * 1024) as f64,
+		mapped: mapped::read()? as f64 / (1024 * 1024) as f64,
+		metadata: metadata::read()? as f64 / (1024 * 1024) as f64,
+		resident: resident::read()? as f64 / (1024 * 1024) as f64,
+		retained: retained::read()? as f64 / (1024 * 1024) as f64,
+	};
 
-	writeln!(
-		&mut out,
-		"{} clients connected{}",
-		len,
-		if len != 0 { ":" } else { "" }
-	)?;
+	let clients = CLIENTS
+		.iter()
+		.map(|x| {
+			(
+				x.key().to_string(),
+				ClientStats {
+					wsproxy: x.value().1,
+					streams: x
+						.value()
+						.0
+						.iter()
+						.map(|x| (x.key().to_string(), StreamStats::from(x.value().clone())))
+						.collect(),
+				},
+			)
+		})
+		.collect();
 
-	for client in CLIENTS.iter() {
-		let len = client.value().0.len();
+	let stats = ServerStats {
+		config: CONFIG.ser()?,
+		clients,
+		memory,
+	};
 
-		writeln!(
-			&mut out,
-			"\tClient \"{}\"{}: {} streams connected{}",
-			client.key(),
-			if client.value().1 { " (wsproxy)" } else { "" },
-			len,
-			if len != 0 && CONFIG.server.verbose_stats {
-				":"
-			} else {
-				""
-			}
-		)?;
-
-		if CONFIG.server.verbose_stats {
-			for stream in client.value().0.iter() {
-				writeln!(
-					&mut out,
-					"\t\tStream \"{}\": {}",
-					stream.key(),
-					format_stream_type(stream.value().0.stream_type)
-				)?;
-				writeln!(
-					&mut out,
-					"\t\t\tRequested: {}:{}",
-					stream.value().0.destination_hostname,
-					stream.value().0.destination_port
-				)?;
-				writeln!(
-					&mut out,
-					"\t\t\tResolved: {}:{}",
-					stream.value().1.destination_hostname,
-					stream.value().1.destination_port
-				)?;
-			}
-		}
-	}
-	Ok(out)
+	Ok(serde_json::to_string_pretty(&stats)?)
 }
 
 fn handle_stream(stream: ServerRouteResult, id: String) {
@@ -230,24 +229,26 @@ async fn main() -> anyhow::Result<()> {
 		.await
 		.with_context(|| format!("failed to bind to address {}", CONFIG.server.bind.1))?;
 
-	if let Some(bind_addr) = CONFIG.server.stats_endpoint.get_bindaddr() {
-		info!("stats server listening on {:?}", bind_addr);
-		let mut stats_listener = ServerListener::new(&bind_addr).await.with_context(|| {
-			format!("failed to bind to address {} for stats server", bind_addr.1)
-		})?;
+	if CONFIG.server.enable_stats_endpoint {
+		if let Some(bind_addr) = CONFIG.server.stats_endpoint.get_bindaddr() {
+			info!("stats server listening on {:?}", bind_addr);
+			let mut stats_listener = ServerListener::new(&bind_addr).await.with_context(|| {
+				format!("failed to bind to address {} for stats server", bind_addr.1)
+			})?;
 
-		tokio::spawn(async move {
-			loop {
-				match stats_listener.accept().await {
-					Ok((stream, _)) => {
-						if let Err(e) = route_stats(stream).await {
-							error!("error while routing stats client: {:?}", e);
+			tokio::spawn(async move {
+				loop {
+					match stats_listener.accept().await {
+						Ok((stream, _)) => {
+							if let Err(e) = route_stats(stream).await {
+								error!("error while routing stats client: {:?}", e);
+							}
 						}
+						Err(e) => error!("error while accepting stats client: {:?}", e),
 					}
-					Err(e) => error!("error while accepting stats client: {:?}", e),
 				}
-			}
-		});
+			});
+		}
 	}
 
 	let stats_endpoint = CONFIG.server.stats_endpoint.get_endpoint();

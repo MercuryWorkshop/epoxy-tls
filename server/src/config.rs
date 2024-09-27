@@ -67,7 +67,7 @@ pub enum StatsEndpoint {
 	/// Stats on the same listener as the Wisp server.
 	SameServer(String),
 	/// Stats on this address and socket type.
-	SeparateServer((SocketType, String)),
+	SeparateServer(BindAddr),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -467,44 +467,32 @@ impl StreamConfig {
 impl Config {
 	pub fn ser(&self) -> anyhow::Result<String> {
 		Ok(match CLI.format {
+			ConfigFormat::Json => serde_json::to_string_pretty(self)?,
 			#[cfg(feature = "toml")]
 			ConfigFormat::Toml => toml::to_string_pretty(self)?,
-			#[cfg(feature = "json")]
-			ConfigFormat::Json => serde_json::to_string_pretty(self)?,
 			#[cfg(feature = "yaml")]
 			ConfigFormat::Yaml => serde_yaml::to_string(self)?,
-			#[cfg(not(any(feature = "toml", feature = "json", feature = "yaml")))]
-			ConfigFormat::None => String::new(),
 		})
 	}
 
 	pub fn de(string: String) -> anyhow::Result<Self> {
 		Ok(match CLI.format {
+			ConfigFormat::Json => serde_json::from_str(&string)?,
 			#[cfg(feature = "toml")]
 			ConfigFormat::Toml => toml::from_str(&string)?,
-			#[cfg(feature = "json")]
-			ConfigFormat::Json => serde_json::from_str(&string)?,
 			#[cfg(feature = "yaml")]
 			ConfigFormat::Yaml => serde_yaml::from_str(&string)?,
-			#[cfg(not(any(feature = "toml", feature = "json", feature = "yaml")))]
-			ConfigFormat::None => {
-				let _ = string;
-				Self::default()
-			}
 		})
 	}
 }
 
 #[derive(Clone, Copy, Eq, PartialEq, ValueEnum)]
 pub enum ConfigFormat {
+	Json,
 	#[cfg(feature = "toml")]
 	Toml,
-	#[cfg(feature = "json")]
-	Json,
 	#[cfg(feature = "yaml")]
 	Yaml,
-	#[cfg(not(any(feature = "toml", feature = "json", feature = "yaml")))]
-	None,
 }
 
 impl Default for ConfigFormat {
@@ -512,13 +500,10 @@ impl Default for ConfigFormat {
 		cfg_if! {
 			if #[cfg(feature = "toml")] {
 				Self::Toml
-			} else if #[cfg(feature = "json")] {
-				Self::Json
 			} else if #[cfg(feature = "yaml")] {
 				Self::Yaml
 			} else {
-				compile_error!("no config format feature enabled!");
-				Self::None
+				Self::Json
 			}
 		}
 	}
