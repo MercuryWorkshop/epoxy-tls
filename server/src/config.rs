@@ -59,6 +59,18 @@ pub enum SocketTransport {
 	LengthDelimitedLe,
 }
 
+#[derive(Serialize, Deserialize, Default, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum RuntimeFlavor {
+	/// Single-threaded tokio runtime.
+	SingleThread,
+	/// Multi-threaded tokio runtime.
+	#[default]
+	MultiThread,
+	/// Multi-threaded tokio runtime with an alternate work in progress scheduler.
+	MultiThreadAlt,
+}
+
 pub type BindAddr = (SocketType, String);
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -106,6 +118,8 @@ pub struct ServerConfig {
 
 	/// Server log level.
 	pub log_level: LevelFilter,
+	/// Runtime type.
+	pub runtime: RuntimeFlavor,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
@@ -324,6 +338,7 @@ impl Default for ServerConfig {
 			max_message_size: 64 * 1024,
 
 			log_level: LevelFilter::Info,
+			runtime: RuntimeFlavor::default(),
 		}
 	}
 }
