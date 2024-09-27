@@ -258,10 +258,14 @@ pub async fn handle_wisp(stream: WispResult, id: String) -> anyhow::Result<()> {
 	})));
 
 	let ping_mux = mux.clone();
+	let ping_event = event.clone();
 	set.spawn(async move {
 		let mut interval = interval(Duration::from_secs(30));
 		while ping_mux.send_ping(Payload::Bytes(BytesMut::new())).await.is_ok() {
-			interval.tick().await;
+			select! {
+				_ = interval.tick() => (),
+				_ = ping_event.listen() => break,
+			};
 		}
 	});
 
@@ -280,6 +284,8 @@ pub async fn handle_wisp(stream: WispResult, id: String) -> anyhow::Result<()> {
 
 	let _ = mux.close().await;
 	event.notify(usize::MAX);
+
+	trace!("waiting for tasks to close for wisp client id {:?}", id);
 
 	while set.join_next().await.is_some() {}
 
