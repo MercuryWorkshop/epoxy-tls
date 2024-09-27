@@ -1,3 +1,0 @@
-[server]
-enable_stats_endpoint = true
-stats_endpoint = ["tcp", "127.0.0.1:5000"]
