@@ -552,7 +552,7 @@ impl MuxStreamIoSink {
 	}
 }
 
-impl Sink<&[u8]> for MuxStreamIoSink {
+impl Sink<BytesMut> for MuxStreamIoSink {
 	type Error = std::io::Error;
 	fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
 		self.project()
@@ -560,10 +560,10 @@ impl Sink<&[u8]> for MuxStreamIoSink {
 			.poll_ready(cx)
 			.map_err(std::io::Error::other)
 	}
-	fn start_send(self: Pin<&mut Self>, item: &[u8]) -> Result<(), Self::Error> {
+	fn start_send(self: Pin<&mut Self>, item: BytesMut) -> Result<(), Self::Error> {
 		self.project()
 			.tx
-			.start_send(Payload::Bytes(BytesMut::from(item)))
+			.start_send(Payload::Bytes(item))
 			.map_err(std::io::Error::other)
 	}
 	fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
