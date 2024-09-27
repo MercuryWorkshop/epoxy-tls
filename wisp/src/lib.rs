@@ -263,6 +263,11 @@ impl WispV2Extensions {
 			closure: Box::new(closure),
 		}
 	}
+
+	/// Add a Wisp V2 extension builder to the settings struct.
+	pub fn add_extension(&mut self, extension: AnyProtocolExtensionBuilder) {
+		self.builders.push(extension);
+	}
 }
 
 /// Server-side multiplexor.

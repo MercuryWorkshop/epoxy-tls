@@ -221,7 +221,7 @@ pub async fn handle_wisp(stream: WispResult, id: String) -> anyhow::Result<()> {
 
 			let extensions = match extensions {
 				Some(mut exts) => {
-					exts.push(twisp::new_ext(twisp_map.clone()));
+					exts.add_extension(twisp::new_ext(twisp_map.clone()));
 					Some(exts)
 				},
 				None => {

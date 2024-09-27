@@ -10,7 +10,7 @@ use pty_process::{Pty, Size};
 use tokio::{io::copy, process::Child, select, sync::Mutex};
 use tokio_util::compat::{FuturesAsyncReadCompatExt, FuturesAsyncWriteCompatExt};
 use wisp_mux::{
-	extensions::{AnyProtocolExtension, ProtocolExtension, ProtocolExtensionBuilder},
+	extensions::{AnyProtocolExtension, ProtocolExtension, ProtocolExtensionBuilder, AnyProtocolExtensionBuilder},
 	ws::{LockedWebSocketWrite, WebSocketRead},
 	MuxStreamAsyncRead, MuxStreamAsyncWrite, WispError,
 };
@@ -120,8 +120,8 @@ pub fn new_map() -> TwispMap {
 	Arc::new(Mutex::new(HashMap::new()))
 }
 
-pub fn new_ext(map: TwispMap) -> Box<dyn ProtocolExtensionBuilder + Send + Sync> {
-	Box::new(TWispServerProtocolExtensionBuilder(map))
+pub fn new_ext(map: TwispMap) -> AnyProtocolExtensionBuilder {
+	AnyProtocolExtensionBuilder::new(TWispServerProtocolExtensionBuilder(map))
 }
 
 pub async fn handle_twisp(
