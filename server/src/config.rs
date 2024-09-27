@@ -30,7 +30,7 @@ const VERSION_STRING: &str = concat!(
 	env!("VERGEN_RUSTC_HOST_TRIPLE")
 );
 
-#[derive(Serialize, Deserialize, Default, Debug)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum SocketType {
 	/// TCP socket listener.
@@ -59,13 +59,22 @@ pub enum SocketTransport {
 	LengthDelimitedLe,
 }
 
+pub type BindAddr = (SocketType, String);
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub enum StatsEndpoint {
+	/// Stats on the same listener as the Wisp server.
+	SameServer(String),
+	/// Stats on this address and socket type.
+	SeparateServer((SocketType, String)),
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct ServerConfig {
-	/// Address to listen on.
-	pub bind: String,
-	/// Socket type to listen on.
-	pub socket: SocketType,
+	/// Address and socket type to listen on.
+	pub bind: BindAddr,
 	/// Transport to listen on.
 	pub transport: SocketTransport,
 	/// Whether or not to resolve and connect to IPV6 upstream addresses.
@@ -83,15 +92,12 @@ pub struct ServerConfig {
 	pub verbose_stats: bool,
 	/// Whether or not to respond to stats requests over HTTP.
 	pub enable_stats_endpoint: bool,
-	#[serde(skip_serializing_if = "String::is_empty")]
-	/// Path of stats HTTP endpoint.
-	pub stats_endpoint: String,
+	/// Where to listen for stats requests over HTTP.
+	pub stats_endpoint: StatsEndpoint,
 
-	#[serde(skip_serializing_if = "String::is_empty")]
 	/// String sent to a request that is not a websocket upgrade request.
 	pub non_ws_response: String,
 
-	#[serde(skip_serializing_if = "String::is_empty")]
 	/// Prefix of Wisp server. Do NOT add a trailing slash here.
 	pub prefix: String,
 
@@ -120,6 +126,14 @@ pub enum ProtocolExtensionAuth {
 	Certificate,
 }
 
+fn default_motd() -> String {
+	format!("epoxy_server ({})", VERSION_STRING)
+}
+
+fn is_default_motd(str: &String) -> bool {
+	*str == default_motd()
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct WispConfig {
@@ -144,6 +158,7 @@ pub struct WispConfig {
 	/// Wisp version 2 certificate authentication extension public ed25519 pem keys.
 	pub certificate_extension_keys: Vec<PathBuf>,
 
+	#[serde(skip_serializing_if = "is_default_motd")]
 	/// Wisp version 2 MOTD extension message.
 	pub motd_extension: String,
 }
@@ -266,11 +281,32 @@ pub async fn validate_config_cache() {
 	RESOLVER.clear_cache();
 }
 
+impl Default for StatsEndpoint {
+	fn default() -> Self {
+		Self::SameServer("/stats".to_string())
+	}
+}
+
+impl StatsEndpoint {
+	pub fn get_endpoint(&self) -> Option<String> {
+		match self {
+			Self::SameServer(x) => Some(x.clone()),
+			Self::SeparateServer(_) => None,
+		}
+	}
+
+	pub fn get_bindaddr(&self) -> Option<BindAddr> {
+		match self {
+			Self::SameServer(_) => None,
+			Self::SeparateServer(x) => Some(x.clone()),
+		}
+	}
+}
+
 impl Default for ServerConfig {
 	fn default() -> Self {
 		Self {
-			bind: "127.0.0.1:4000".to_string(),
-			socket: SocketType::default(),
+			bind: (SocketType::default(), "127.0.0.1:4000".to_string()),
 			transport: SocketTransport::default(),
 			resolve_ipv6: false,
 			tcp_nodelay: false,
@@ -278,8 +314,8 @@ impl Default for ServerConfig {
 			tls_keypair: None,
 
 			verbose_stats: true,
-			stats_endpoint: "/stats".to_string(),
 			enable_stats_endpoint: false,
+			stats_endpoint: StatsEndpoint::default(),
 
 			non_ws_response: ":3".to_string(),
 
@@ -305,7 +341,7 @@ impl Default for WispConfig {
 			password_extension_users: HashMap::new(),
 			certificate_extension_keys: Vec::new(),
 
-			motd_extension: format!("epoxy_server ({})", VERSION_STRING),
+			motd_extension: default_motd(),
 		}
 	}
 }

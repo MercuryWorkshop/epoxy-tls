@@ -16,7 +16,10 @@ use tokio::{
 use tokio_rustls::{rustls, server::TlsStream, TlsAcceptor};
 use uuid::Uuid;
 
-use crate::{config::SocketType, CONFIG};
+use crate::{
+	config::{BindAddr, SocketType},
+	CONFIG,
+};
 
 pub enum Quintet<A, B, C, D, E> {
 	One(A),
@@ -282,18 +285,18 @@ pub enum ServerListener {
 }
 
 impl ServerListener {
-	async fn bind_tcp() -> anyhow::Result<TcpListener> {
-		TcpListener::bind(&CONFIG.server.bind)
+	async fn bind_tcp(bind: &BindAddr) -> anyhow::Result<TcpListener> {
+		TcpListener::bind(&bind.1)
 			.await
-			.with_context(|| format!("failed to bind to tcp address `{}`", CONFIG.server.bind))
+			.with_context(|| format!("failed to bind to tcp address `{}`", bind.1))
 	}
 
-	async fn bind_unix() -> anyhow::Result<UnixListener> {
-		if try_exists(&CONFIG.server.bind).await? {
-			remove_file(&CONFIG.server.bind).await?;
+	async fn bind_unix(bind: &BindAddr) -> anyhow::Result<UnixListener> {
+		if try_exists(&bind.1).await? {
+			remove_file(&bind.1).await?;
 		}
-		UnixListener::bind(&CONFIG.server.bind)
-			.with_context(|| format!("failed to bind to unix socket at `{}`", CONFIG.server.bind))
+		UnixListener::bind(&bind.1)
+			.with_context(|| format!("failed to bind to unix socket at `{}`", bind.1))
 	}
 
 	async fn create_tls() -> anyhow::Result<TlsAcceptor> {
@@ -330,15 +333,17 @@ impl ServerListener {
 		Ok(TlsAcceptor::from(cfg))
 	}
 
-	pub async fn new() -> anyhow::Result<Self> {
-		Ok(match CONFIG.server.socket {
-			SocketType::Tcp => Self::Tcp(Self::bind_tcp().await?),
-			SocketType::TlsTcp => Self::TlsTcp(Self::bind_tcp().await?, Self::create_tls().await?),
-			SocketType::Unix => Self::Unix(Self::bind_unix().await?),
-			SocketType::TlsUnix => {
-				Self::TlsUnix(Self::bind_unix().await?, Self::create_tls().await?)
+	pub async fn new(bind: &BindAddr) -> anyhow::Result<Self> {
+		Ok(match bind.0 {
+			SocketType::Tcp => Self::Tcp(Self::bind_tcp(bind).await?),
+			SocketType::TlsTcp => {
+				Self::TlsTcp(Self::bind_tcp(bind).await?, Self::create_tls().await?)
 			}
-			SocketType::File => Self::File(Some(CONFIG.server.bind.clone().into())),
+			SocketType::Unix => Self::Unix(Self::bind_unix(bind).await?),
+			SocketType::TlsUnix => {
+				Self::TlsUnix(Self::bind_unix(bind).await?, Self::create_tls().await?)
+			}
+			SocketType::File => Self::File(Some(bind.1.clone().into())),
 		})
 	}
 

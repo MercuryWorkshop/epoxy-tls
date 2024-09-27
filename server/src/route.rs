@@ -33,36 +33,48 @@ fn non_ws_resp() -> Response<Body> {
 		.unwrap()
 }
 
-async fn ws_upgrade<T, R>(mut req: Request<Incoming>, callback: T) -> anyhow::Result<Response<Body>>
+fn send_stats() -> anyhow::Result<Response<Body>> {
+	match generate_stats() {
+		Ok(x) => {
+			debug!("sent server stats to http client");
+			Ok(Response::builder()
+				.status(StatusCode::OK)
+				.body(Body::new(x.into()))
+				.unwrap())
+		}
+		Err(x) => {
+			error!("failed to send stats to http client: {:?}", x);
+			Ok(Response::builder()
+				.status(StatusCode::INTERNAL_SERVER_ERROR)
+				.body(Body::new(x.to_string().into()))
+				.unwrap())
+		}
+	}
+}
+
+async fn ws_upgrade<T, R>(
+	mut req: Request<Incoming>,
+	stats_endpoint: Option<String>,
+	callback: T,
+) -> anyhow::Result<Response<Body>>
 where
 	T: FnOnce(UpgradeFut, bool, bool, String) -> R + Send + 'static,
 	R: Future<Output = anyhow::Result<()>> + Send,
 {
 	let is_upgrade = fastwebsockets::upgrade::is_upgrade_request(&req);
 
-	if !is_upgrade
-		&& CONFIG.server.enable_stats_endpoint
-		&& req.uri().path() == CONFIG.server.stats_endpoint
-	{
-		match generate_stats() {
-			Ok(x) => {
-				debug!("sent server stats to http client");
-				return Ok(Response::builder()
-					.status(StatusCode::OK)
-					.body(Body::new(x.into()))
-					.unwrap());
+	if !is_upgrade {
+		if let Some(stats_endpoint) = stats_endpoint {
+			if CONFIG.server.enable_stats_endpoint && req.uri().path() == stats_endpoint {
+				return send_stats();
+			} else {
+				debug!("sent non_ws_response to http client");
+				return Ok(non_ws_resp());
 			}
-			Err(x) => {
-				error!("failed to send stats to http client: {:?}", x);
-				return Ok(Response::builder()
-					.status(StatusCode::INTERNAL_SERVER_ERROR)
-					.body(Body::new(x.to_string().into()))
-					.unwrap());
-			}
+		} else {
+			debug!("sent non_ws_response to http client");
+			return Ok(non_ws_resp());
 		}
-	} else if !is_upgrade {
-		debug!("sent non_ws_response to http client");
-		return Ok(non_ws_resp());
 	}
 
 	let (resp, fut) = fastwebsockets::upgrade::upgrade(&mut req)?;
@@ -94,51 +106,63 @@ where
 	Ok(resp)
 }
 
+pub async fn route_stats(stream: ServerStream) -> anyhow::Result<()> {
+	let stream = TokioIo::new(stream);
+	Builder::new()
+		.serve_connection(stream, service_fn(move |_| async { send_stats() }))
+		.await?;
+	Ok(())
+}
+
 pub async fn route(
 	stream: ServerStream,
+	stats_endpoint: Option<String>,
 	callback: impl FnOnce(ServerRouteResult) + Clone + Send + 'static,
 ) -> anyhow::Result<()> {
 	match CONFIG.server.transport {
 		SocketTransport::WebSocket => {
 			let stream = TokioIo::new(stream);
 
-			let fut = Builder::new()
+			Builder::new()
 				.serve_connection(
 					stream,
 					service_fn(move |req| {
 						let callback = callback.clone();
 
-						ws_upgrade(req, |fut, wsproxy, udp, path| async move {
-							let mut ws = fut.await.context("failed to await upgrade future")?;
-							ws.set_max_message_size(CONFIG.server.max_message_size);
-							ws.set_auto_pong(false);
+						ws_upgrade(
+							req,
+							stats_endpoint.clone(),
+							|fut, wsproxy, udp, path| async move {
+								let mut ws = fut.await.context("failed to await upgrade future")?;
+								ws.set_max_message_size(CONFIG.server.max_message_size);
+								ws.set_auto_pong(false);
 
-							if wsproxy {
-								let ws = WebSocketStreamWrapper(FragmentCollector::new(ws));
-								(callback)(ServerRouteResult::WsProxy(ws, path, udp));
-							} else {
-								let (read, write) = ws.split(|x| {
-									let parts =
-										x.into_inner().downcast::<TokioIo<ServerStream>>().unwrap();
-									let (r, w) = parts.io.into_inner().split();
-									(Cursor::new(parts.read_buf).chain(r), w)
-								});
+								if wsproxy {
+									let ws = WebSocketStreamWrapper(FragmentCollector::new(ws));
+									(callback)(ServerRouteResult::WsProxy(ws, path, udp));
+								} else {
+									let (read, write) = ws.split(|x| {
+										let parts = x
+											.into_inner()
+											.downcast::<TokioIo<ServerStream>>()
+											.unwrap();
+										let (r, w) = parts.io.into_inner().split();
+										(Cursor::new(parts.read_buf).chain(r), w)
+									});
 
-								(callback)(ServerRouteResult::Wisp((
-									Box::new(read),
-									Box::new(write),
-								)))
-							}
+									(callback)(ServerRouteResult::Wisp((
+										Box::new(read),
+										Box::new(write),
+									)))
+								}
 
-							Ok(())
-						})
+								Ok(())
+							},
+						)
 					}),
 				)
-				.with_upgrades();
-
-			if let Err(e) = fut.await {
-				error!("error while serving client: {:?}", e);
-			}
+				.with_upgrades()
+				.await?;
 		}
 		SocketTransport::LengthDelimitedLe => {
 			let codec = LengthDelimitedCodec::builder()

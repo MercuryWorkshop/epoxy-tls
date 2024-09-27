@@ -6,7 +6,7 @@ use futures::{Sink, SinkExt, Stream, StreamExt};
 use std::error::Error;
 
 use crate::{
-	ws::{Frame, LockedWebSocketWrite, Payload, WebSocketRead, WebSocketWrite},
+	ws::{Frame, LockedWebSocketWrite, OpCode, Payload, WebSocketRead, WebSocketWrite},
 	WispError,
 };
 
@@ -72,10 +72,14 @@ impl<T: Sink<Bytes, Error = E> + Send + Unpin, E: Error + Sync + Send + 'static>
 	for GenericWebSocketWrite<T, E>
 {
 	async fn wisp_write_frame(&mut self, frame: Frame<'_>) -> Result<(), WispError> {
-		self.0
-			.send(BytesMut::from(frame.payload).freeze())
-			.await
-			.map_err(|x| WispError::WsImplError(Box::new(x)))
+		if frame.opcode == OpCode::Binary {
+			self.0
+				.send(BytesMut::from(frame.payload).freeze())
+				.await
+				.map_err(|x| WispError::WsImplError(Box::new(x)))
+		} else {
+			Ok(())
+		}
 	}
 
 	async fn wisp_close(&mut self) -> Result<(), WispError> {

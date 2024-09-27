@@ -3,6 +3,7 @@
 
 use std::{fmt::Write, fs::read_to_string, net::IpAddr};
 
+use anyhow::Context;
 use clap::Parser;
 use config::{validate_config_cache, Cli, Config};
 use dashmap::DashMap;
@@ -14,7 +15,7 @@ use hickory_resolver::{
 use lazy_static::lazy_static;
 use listener::ServerListener;
 use log::{error, info};
-use route::ServerRouteResult;
+use route::{route_stats, ServerRouteResult};
 use tokio::signal::unix::{signal, SignalKind};
 use uuid::Uuid;
 use wisp_mux::{ConnectPacket, StreamType};
@@ -54,7 +55,13 @@ lazy_static! {
 	pub static ref CLI: Cli = Cli::parse();
 	pub static ref CONFIG: Config = {
 		if let Some(path) = &CLI.config {
-			Config::de(read_to_string(path).unwrap()).unwrap()
+			Config::de(
+				read_to_string(path)
+					.context("failed to read config")
+					.unwrap(),
+			)
+			.context("failed to parse config")
+			.unwrap()
 		} else {
 			Config::default()
 		}
@@ -191,7 +198,7 @@ fn handle_stream(stream: ServerRouteResult, id: String) {
 }
 
 #[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+static JEMALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
@@ -208,8 +215,8 @@ async fn main() -> anyhow::Result<()> {
 	validate_config_cache().await;
 
 	info!(
-		"listening on {:?} with socket type {:?} and socket transport {:?}",
-		CONFIG.server.bind, CONFIG.server.socket, CONFIG.server.transport
+		"listening on {:?} with socket transport {:?}",
+		CONFIG.server.bind, CONFIG.server.transport
 	);
 
 	tokio::spawn(async {
@@ -219,13 +226,40 @@ async fn main() -> anyhow::Result<()> {
 		}
 	});
 
-	let mut listener = ServerListener::new().await?;
+	let mut listener = ServerListener::new(&CONFIG.server.bind)
+		.await
+		.with_context(|| format!("failed to bind to address {}", CONFIG.server.bind.1))?;
+
+	if let Some(bind_addr) = CONFIG.server.stats_endpoint.get_bindaddr() {
+		info!("stats server listening on {:?}", bind_addr);
+		let mut stats_listener = ServerListener::new(&bind_addr).await.with_context(|| {
+			format!("failed to bind to address {} for stats server", bind_addr.1)
+		})?;
+
+		tokio::spawn(async move {
+			loop {
+				match stats_listener.accept().await {
+					Ok((stream, _)) => {
+						if let Err(e) = route_stats(stream).await {
+							error!("error while routing stats client: {:?}", e);
+						}
+					}
+					Err(e) => error!("error while accepting stats client: {:?}", e),
+				}
+			}
+		});
+	}
+
+	let stats_endpoint = CONFIG.server.stats_endpoint.get_endpoint();
 	loop {
-		let ret = listener.accept().await;
-		match ret {
+		let stats_endpoint = stats_endpoint.clone();
+		match listener.accept().await {
 			Ok((stream, id)) => {
 				tokio::spawn(async move {
-					let res = route::route(stream, move |stream| handle_stream(stream, id)).await;
+					let res = route::route(stream, stats_endpoint, move |stream| {
+						handle_stream(stream, id)
+					})
+					.await;
 
 					if let Err(e) = res {
 						error!("error while routing client: {:?}", e);
