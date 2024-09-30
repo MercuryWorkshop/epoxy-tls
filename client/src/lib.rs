@@ -194,6 +194,7 @@ cfg_if! {
 		pub struct EpoxyClientOptions {
 			pub wisp_v2: bool,
 			pub udp_extension_required: bool,
+			pub title_case_headers: bool,
 			#[wasm_bindgen(getter_with_clone)]
 			pub websocket_protocols: Vec<String>,
 			pub redirect_limit: usize,
@@ -208,6 +209,7 @@ cfg_if! {
 		pub struct EpoxyClientOptions {
 			pub wisp_v2: bool,
 			pub udp_extension_required: bool,
+			pub title_case_headers: bool,
 			#[wasm_bindgen(getter_with_clone)]
 			pub websocket_protocols: Vec<String>,
 			pub redirect_limit: usize,
@@ -231,6 +233,7 @@ impl Default for EpoxyClientOptions {
 		Self {
             wisp_v2: false,
             udp_extension_required: false,
+			title_case_headers: false,
             websocket_protocols: Vec::new(),
             redirect_limit: 10,
             user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36".to_string(),
@@ -358,8 +361,7 @@ impl EpoxyClient {
 		let service = StreamProviderService(stream_provider.clone());
 		let client = Client::builder(WasmExecutor)
 			.http09_responses(true)
-			.http1_title_case_headers(true)
-			.http1_preserve_header_case(true)
+			.http1_title_case_headers(options.title_case_headers)
 			.http1_max_headers(200)
 			.build(service);
 
@@ -531,6 +533,7 @@ impl EpoxyClient {
 		url.scheme().ok_or(EpoxyError::InvalidUrlScheme)?;
 
 		let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
+		let port_str = url.port_u16().map(|x| format!(":{}", x)).unwrap_or_default();
 
 		let request_method = object_get(&options, "method")
 			.as_string()
@@ -584,11 +587,7 @@ impl EpoxyClient {
 		}
 		headers_map.insert("Connection", HeaderValue::from_static("keep-alive"));
 		headers_map.insert("User-Agent", HeaderValue::from_str(&self.user_agent)?);
-		headers_map.insert("Host", HeaderValue::from_str(host)?);
-
-		if body.is_empty() {
-			headers_map.insert("Content-Length", HeaderValue::from_static("0"));
-		}
+		headers_map.insert("Host", HeaderValue::from_str(&format!("{}{}", host, port_str))?);
 
 		if let Some(content_type) = body_content_type {
 			headers_map.insert("Content-Type", HeaderValue::from_str(&content_type)?);

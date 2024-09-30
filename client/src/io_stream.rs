@@ -152,7 +152,7 @@ impl EpoxyUdpStream {
 				.map_err(|_| EpoxyError::InvalidPayload)?
 				.0
 				.to_vec();
-			Ok(self.tx.lock().await.send(payload.as_ref()).await?)
+			Ok(self.tx.lock().await.send(BytesMut::from(payload.as_slice())).await?)
 		}
 		.await;
 
