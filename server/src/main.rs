@@ -10,11 +10,12 @@ use dashmap::DashMap;
 use handle::{handle_wisp, handle_wsproxy};
 use hickory_resolver::{
 	config::{NameServerConfigGroup, ResolverConfig, ResolverOpts},
+	system_conf::read_system_conf,
 	TokioAsyncResolver,
 };
 use lazy_static::lazy_static;
 use listener::ServerListener;
-use log::{error, info};
+use log::{error, info, warn};
 use route::{route_stats, ServerRouteResult};
 use serde::Serialize;
 use tokio::{
@@ -73,7 +74,12 @@ lazy_static! {
 	pub static ref CLIENTS: DashMap<String, Client> = DashMap::new();
 	pub static ref RESOLVER: Resolver = {
 		if CONFIG.stream.dns_servers.is_empty() {
-			Resolver::System
+			if let Ok((config, opts)) = read_system_conf() {
+				Resolver::Hickory(TokioAsyncResolver::tokio(config, opts))
+			} else {
+				warn!("unable to read system dns configuration. using system dns resolver with no caching");
+				Resolver::System
+			}
 		} else {
 			Resolver::Hickory(TokioAsyncResolver::tokio(
 				ResolverConfig::from_parts(
@@ -240,37 +246,48 @@ fn main() -> anyhow::Result<()> {
 			.await
 			.with_context(|| format!("failed to bind to address {}", CONFIG.server.bind.1))?;
 
-		if CONFIG.server.enable_stats_endpoint {
-			if let Some(bind_addr) = CONFIG.server.stats_endpoint.get_bindaddr() {
-				info!("stats server listening on {:?}", bind_addr);
-				let mut stats_listener =
-					ServerListener::new(&bind_addr).await.with_context(|| {
-						format!("failed to bind to address {} for stats server", bind_addr.1)
-					})?;
+		if let Some(bind_addr) = CONFIG
+			.server
+			.stats_endpoint
+			.as_ref()
+			.and_then(|x| x.get_bindaddr())
+		{
+			info!("stats server listening on {:?}", bind_addr);
+			let mut stats_listener = ServerListener::new(&bind_addr).await.with_context(|| {
+				format!("failed to bind to address {} for stats server", bind_addr.1)
+			})?;
 
-				tokio::spawn(async move {
-					loop {
-						match stats_listener.accept().await {
-							Ok((stream, _)) => {
-								if let Err(e) = route_stats(stream).await {
-									error!("error while routing stats client: {:?}", e);
-								}
+			tokio::spawn(async move {
+				loop {
+					match stats_listener.accept().await {
+						Ok((stream, _)) => {
+							if let Err(e) = route_stats(stream).await {
+								error!("error while routing stats client: {:?}", e);
 							}
-							Err(e) => error!("error while accepting stats client: {:?}", e),
 						}
+						Err(e) => error!("error while accepting stats client: {:?}", e),
 					}
-				});
-			}
+				}
+			});
 		}
 
-		let stats_endpoint = CONFIG.server.stats_endpoint.get_endpoint();
+		let stats_endpoint = CONFIG
+			.server
+			.stats_endpoint
+			.as_ref()
+			.and_then(|x| x.get_endpoint());
 		loop {
 			let stats_endpoint = stats_endpoint.clone();
 			match listener.accept().await {
-				Ok((stream, id)) => {
+				Ok((stream, client_id)) => {
 					tokio::spawn(async move {
-						let res = route::route(stream, stats_endpoint, move |stream| {
-							handle_stream(stream, id)
+						let res = route::route(stream, stats_endpoint, move |stream, maybe_ip| {
+							let client_id = if let Some(ip) = maybe_ip {
+								format!("{} ({})", client_id, ip)
+							} else {
+								client_id
+							};
+							handle_stream(stream, client_id)
 						})
 						.await;
 

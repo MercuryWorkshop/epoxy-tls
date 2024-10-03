@@ -93,23 +93,16 @@ pub struct ServerConfig {
 	pub tcp_nodelay: bool,
 	/// Whether or not to set "raw mode" for the file.
 	pub file_raw_mode: bool,
-	#[serde(skip_serializing_if = "Option::is_none")]
 	/// Keypair (public, private) in PEM format for TLS.
 	pub tls_keypair: Option<[PathBuf; 2]>,
 
-	/// Whether or not to show what upstreams each client is connected to in stats. This can
-	/// heavily increase the size of the stats.
-	pub verbose_stats: bool,
-	/// Whether or not to respond to stats requests over HTTP.
-	pub enable_stats_endpoint: bool,
 	/// Where to listen for stats requests over HTTP.
-	pub stats_endpoint: StatsEndpoint,
+	pub stats_endpoint: Option<StatsEndpoint>,
 
+	/// Whether or not to search for the x-real-ip or x-forwarded-for headers.
+	pub use_real_ip_headers: bool,
 	/// String sent to a request that is not a websocket upgrade request.
 	pub non_ws_response: String,
-
-	/// Prefix of Wisp server. Do NOT add a trailing slash here.
-	pub prefix: String,
 
 	/// Max WebSocket message size that can be recieved.
 	pub max_message_size: usize,
@@ -153,13 +146,13 @@ pub struct WispConfig {
 	pub allow_wsproxy: bool,
 	/// Buffer size advertised to the client.
 	pub buffer_size: u32,
+	/// Prefix of Wisp server. Do NOT add a trailing slash here.
+	pub prefix: String,
 
 	/// Whether or not to use Wisp version 2.
 	pub wisp_v2: bool,
-	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Wisp version 2 extensions advertised.
 	pub extensions: Vec<ProtocolExtension>,
-	#[serde(skip_serializing_if = "Option::is_none")]
 	/// Wisp version 2 authentication extension advertised.
 	pub auth_extension: Option<ProtocolExtensionAuth>,
 
@@ -189,7 +182,6 @@ pub struct StreamConfig {
 	#[cfg(feature = "twisp")]
 	pub allow_twisp: bool,
 
-	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// DNS servers to resolve with. Will default to system configuration.
 	pub dns_servers: Vec<IpAddr>,
 
@@ -205,31 +197,23 @@ pub struct StreamConfig {
 	/// Whether or not to allow connections to non-globally-routable IP addresses.
 	pub allow_non_global: bool,
 
-	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Regex whitelist of hosts for TCP connections.
 	pub allow_tcp_hosts: Vec<String>,
-	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Regex blacklist of hosts for TCP connections.
 	pub block_tcp_hosts: Vec<String>,
 
-	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Regex whitelist of hosts for UDP connections.
 	pub allow_udp_hosts: Vec<String>,
-	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Regex blacklist of hosts for UDP connections.
 	pub block_udp_hosts: Vec<String>,
 
-	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Regex whitelist of hosts.
 	pub allow_hosts: Vec<String>,
-	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Regex blacklist of hosts.
 	pub block_hosts: Vec<String>,
 
-	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Range whitelist of ports. Format is `[lower_bound, upper_bound]`.
 	pub allow_ports: Vec<Vec<u16>>,
-	#[serde(skip_serializing_if = "Vec::is_empty")]
 	/// Range blacklist of ports. Format is `[lower_bound, upper_bound]`.
 	pub block_ports: Vec<Vec<u16>>,
 }
@@ -287,16 +271,10 @@ lazy_static! {
 pub async fn validate_config_cache() {
 	// constructs regexes
 	let _ = CONFIG_CACHE.allowed_ports;
-	// constructs wisp config
+	// validates wisp config
 	CONFIG.wisp.to_opts().await.unwrap();
 	// constructs resolver
 	RESOLVER.clear_cache();
-}
-
-impl Default for StatsEndpoint {
-	fn default() -> Self {
-		Self::SameServer("/stats".to_string())
-	}
 }
 
 impl StatsEndpoint {
@@ -325,13 +303,10 @@ impl Default for ServerConfig {
 			file_raw_mode: false,
 			tls_keypair: None,
 
-			verbose_stats: true,
-			enable_stats_endpoint: false,
-			stats_endpoint: StatsEndpoint::default(),
+			stats_endpoint: None,
 
+			use_real_ip_headers: false,
 			non_ws_response: ":3".to_string(),
-
-			prefix: String::new(),
 
 			max_message_size: 64 * 1024,
 
@@ -346,6 +321,7 @@ impl Default for WispConfig {
 		Self {
 			buffer_size: 128,
 			allow_wsproxy: true,
+			prefix: String::new(),
 
 			wisp_v2: true,
 			extensions: vec![ProtocolExtension::Udp, ProtocolExtension::Motd],
