@@ -67,6 +67,9 @@ pub enum RuntimeFlavor {
 	/// Multi-threaded tokio runtime.
 	#[default]
 	MultiThread,
+	/// Alternate multi-threaded tokio runtime.
+	#[cfg(tokio_unstable)]
+	MultiThreadAlt,
 }
 
 pub type BindAddr = (SocketType, String);

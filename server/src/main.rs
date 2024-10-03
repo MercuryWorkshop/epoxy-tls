@@ -1,5 +1,6 @@
 #![feature(ip)]
 #![deny(clippy::todo)]
+#![allow(unexpected_cfgs)]
 
 use std::{fs::read_to_string, net::IpAddr};
 
@@ -112,6 +113,8 @@ fn main() -> anyhow::Result<()> {
 	let mut builder: runtime::Builder = match CONFIG.server.runtime {
 		RuntimeFlavor::SingleThread => runtime::Builder::new_current_thread(),
 		RuntimeFlavor::MultiThread => runtime::Builder::new_multi_thread(),
+		#[cfg(tokio_unstable)]
+		RuntimeFlavor::MultiThreadAlt => runtime::Builder::new_multi_thread_alt(),
 	};
 
 	builder.enable_all();
