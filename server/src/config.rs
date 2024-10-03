@@ -80,7 +80,7 @@ pub enum StatsEndpoint {
 	SeparateServer(BindAddr),
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ServerConfig {
 	/// Address and socket type to listen on.
@@ -113,7 +113,7 @@ pub struct ServerConfig {
 	pub runtime: RuntimeFlavor,
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ProtocolExtension {
 	/// Wisp version 2 UDP protocol extension.
@@ -122,7 +122,7 @@ pub enum ProtocolExtension {
 	Motd,
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ProtocolExtensionAuth {
 	/// Wisp version 2 password authentication protocol extension.
@@ -139,7 +139,7 @@ fn is_default_motd(str: &String) -> bool {
 	*str == default_motd()
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WispConfig {
 	/// Allow legacy wsproxy connections.
@@ -168,7 +168,7 @@ pub struct WispConfig {
 	pub motd_extension: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StreamConfig {
 	/// Whether or not to enable TCP nodelay.
@@ -218,7 +218,7 @@ pub struct StreamConfig {
 	pub block_ports: Vec<Vec<u16>>,
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Config {
 	pub server: ServerConfig,
@@ -226,6 +226,7 @@ pub struct Config {
 	pub stream: StreamConfig,
 }
 
+#[derive(Debug)]
 struct ConfigCache {
 	pub blocked_ports: Vec<RangeInclusive<u16>>,
 	pub allowed_ports: Vec<RangeInclusive<u16>>,
@@ -475,7 +476,7 @@ impl Config {
 	}
 }
 
-#[derive(Clone, Copy, Eq, PartialEq, ValueEnum)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum)]
 pub enum ConfigFormat {
 	Json,
 	#[cfg(feature = "toml")]
@@ -499,7 +500,7 @@ impl Default for ConfigFormat {
 }
 
 /// Performant server implementation of the Wisp protocol in Rust, made for epoxy.
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[command(version = VERSION_STRING)]
 pub struct Cli {
 	/// Config file to use.

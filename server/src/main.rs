@@ -1,7 +1,7 @@
 #![feature(ip)]
 #![deny(clippy::todo)]
 
-use std::{collections::HashMap, fs::read_to_string, net::IpAddr};
+use std::{fs::read_to_string, net::IpAddr};
 
 use anyhow::Context;
 use clap::Parser;
@@ -15,24 +15,26 @@ use hickory_resolver::{
 };
 use lazy_static::lazy_static;
 use listener::ServerListener;
-use log::{error, info, warn};
+use log::{error, info, trace, warn};
 use route::{route_stats, ServerRouteResult};
-use serde::Serialize;
+use stats::generate_stats;
 use tokio::{
 	runtime,
 	signal::unix::{signal, SignalKind},
 };
 use uuid::Uuid;
-use wisp_mux::{ConnectPacket, StreamType};
+use wisp_mux::ConnectPacket;
 
 mod config;
 mod handle;
 mod listener;
 mod route;
+mod stats;
 mod stream;
 
 type Client = (DashMap<Uuid, (ConnectPacket, ConnectPacket)>, bool);
 
+#[derive(Debug)]
 pub enum Resolver {
 	Hickory(TokioAsyncResolver),
 	System,
@@ -93,118 +95,6 @@ lazy_static! {
 	};
 }
 
-fn format_stream_type(stream_type: StreamType) -> &'static str {
-	match stream_type {
-		StreamType::Tcp => "tcp",
-		StreamType::Udp => "udp",
-		#[cfg(feature = "twisp")]
-		StreamType::Unknown(crate::handle::wisp::twisp::STREAM_TYPE) => "twisp",
-		StreamType::Unknown(_) => unreachable!(),
-	}
-}
-
-#[derive(Serialize)]
-struct MemoryStats {
-	active: f64,
-	allocated: f64,
-	mapped: f64,
-	metadata: f64,
-	resident: f64,
-	retained: f64,
-}
-
-#[derive(Serialize)]
-struct StreamStats {
-	stream_type: String,
-	requested: String,
-	resolved: String,
-}
-
-impl From<(ConnectPacket, ConnectPacket)> for StreamStats {
-	fn from(value: (ConnectPacket, ConnectPacket)) -> Self {
-		Self {
-			stream_type: format_stream_type(value.0.stream_type).to_string(),
-			requested: format!(
-				"{}:{}",
-				value.0.destination_hostname, value.0.destination_port
-			),
-			resolved: format!(
-				"{}:{}",
-				value.1.destination_hostname, value.1.destination_port
-			),
-		}
-	}
-}
-
-#[derive(Serialize)]
-struct ClientStats {
-	wsproxy: bool,
-	streams: HashMap<String, StreamStats>,
-}
-
-#[derive(Serialize)]
-struct ServerStats {
-	config: String,
-	clients: HashMap<String, ClientStats>,
-	memory: MemoryStats,
-}
-
-fn generate_stats() -> anyhow::Result<String> {
-	use tikv_jemalloc_ctl::stats::{active, allocated, mapped, metadata, resident, retained};
-	tikv_jemalloc_ctl::epoch::advance()?;
-
-	let memory = MemoryStats {
-		active: active::read()? as f64 / (1024 * 1024) as f64,
-		allocated: allocated::read()? as f64 / (1024 * 1024) as f64,
-		mapped: mapped::read()? as f64 / (1024 * 1024) as f64,
-		metadata: metadata::read()? as f64 / (1024 * 1024) as f64,
-		resident: resident::read()? as f64 / (1024 * 1024) as f64,
-		retained: retained::read()? as f64 / (1024 * 1024) as f64,
-	};
-
-	let clients = CLIENTS
-		.iter()
-		.map(|x| {
-			(
-				x.key().to_string(),
-				ClientStats {
-					wsproxy: x.value().1,
-					streams: x
-						.value()
-						.0
-						.iter()
-						.map(|x| (x.key().to_string(), StreamStats::from(x.value().clone())))
-						.collect(),
-				},
-			)
-		})
-		.collect();
-
-	let stats = ServerStats {
-		config: CONFIG.ser()?,
-		clients,
-		memory,
-	};
-
-	Ok(serde_json::to_string_pretty(&stats)?)
-}
-
-fn handle_stream(stream: ServerRouteResult, id: String) {
-	tokio::spawn(async move {
-		CLIENTS.insert(id.clone(), (DashMap::new(), false));
-		let res = match stream {
-			ServerRouteResult::Wisp(stream) => handle_wisp(stream, id.clone()).await,
-			ServerRouteResult::WsProxy(ws, path, udp) => {
-				handle_wsproxy(ws, id.clone(), path, udp).await
-			}
-		};
-		if let Err(e) = res {
-			error!("error while handling client: {:?}", e);
-		}
-		CLIENTS.remove(&id)
-	});
-}
-
 #[global_allocator]
 static JEMALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
@@ -235,10 +125,17 @@ fn main() -> anyhow::Result<()> {
 			CONFIG.server.bind, CONFIG.server.runtime, CONFIG.server.transport
 		);
 
+		trace!("CLI: {:#?}", &*CLI);
+		trace!("CONFIG: {:#?}", &*CONFIG);
+		trace!("RESOLVER: {:?}", &*RESOLVER);
+
 		tokio::spawn(async {
 			let mut sig = signal(SignalKind::user_defined1()).unwrap();
 			while sig.recv().await.is_some() {
-				info!("Stats:\n{}", generate_stats().unwrap());
+				match generate_stats() {
+					Ok(stats) => info!("Stats:\n{}", stats),
+					Err(err) => error!("error while creating stats {:?}", err),
+				}
 			}
 		});
 
@@ -287,6 +184,8 @@ fn main() -> anyhow::Result<()> {
 							} else {
 								client_id
 							};
+
+							trace!("routed {:?}: {}", client_id, stream);
 							handle_stream(stream, client_id)
 						})
 						.await;
@@ -300,4 +199,20 @@ fn main() -> anyhow::Result<()> {
 			}
 		}
 	})
+}
+
+fn handle_stream(stream: ServerRouteResult, id: String) {
+	tokio::spawn(async move {
+		CLIENTS.insert(id.clone(), (DashMap::new(), false));
+		let res = match stream {
+			ServerRouteResult::Wisp(stream) => handle_wisp(stream, id.clone()).await,
+			ServerRouteResult::WsProxy(ws, path, udp) => {
+				handle_wsproxy(ws, id.clone(), path, udp).await
+			}
+		};
+		if let Err(e) = res {
+			error!("error while handling client: {:?}", e);
+		}
+		CLIENTS.remove(&id)
+	});
 }

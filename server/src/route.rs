@@ -1,4 +1,4 @@
-use std::{future::Future, io::Cursor};
+use std::{fmt::Display, future::Future, io::Cursor};
 
 use anyhow::Context;
 use bytes::Bytes;
@@ -9,7 +9,7 @@ use hyper::{
 	Response, StatusCode,
 };
 use hyper_util::rt::TokioIo;
-use log::{debug, error};
+use log::{debug, error, trace};
 use tokio::io::AsyncReadExt;
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 use wisp_mux::{
@@ -26,11 +26,10 @@ use crate::{
 };
 
 type Body = Full<Bytes>;
-fn non_ws_resp() -> Response<Body> {
-	Response::builder()
+fn non_ws_resp() -> anyhow::Result<Response<Body>> {
+	Ok(Response::builder()
 		.status(StatusCode::OK)
-		.body(Body::new(CONFIG.server.non_ws_response.as_bytes().into()))
-		.unwrap()
+		.body(Body::new(CONFIG.server.non_ws_response.as_bytes().into()))?)
 }
 
 fn send_stats() -> anyhow::Result<Response<Body>> {
@@ -39,21 +38,22 @@ fn send_stats() -> anyhow::Result<Response<Body>> {
 			debug!("sent server stats to http client");
 			Ok(Response::builder()
 				.status(StatusCode::OK)
-				.body(Body::new(x.into()))
-				.unwrap())
+				.body(Body::new(x.into()))?)
 		}
 		Err(x) => {
 			error!("failed to send stats to http client: {:?}", x);
 			Ok(Response::builder()
 				.status(StatusCode::INTERNAL_SERVER_ERROR)
-				.body(Body::new(x.to_string().into()))
-				.unwrap())
+				.body(Body::new(x.to_string().into()))?)
 		}
 	}
 }
 
 fn get_header(headers: &HeaderMap, header: &str) -> Option<String> {
-	headers.get(header).and_then(|x| x.to_str().ok()).map(|x| x.to_string())
+	headers
+		.get(header)
+		.and_then(|x| x.to_str().ok())
+		.map(|x| x.to_string())
 }
 
 enum HttpUpgradeResult {
@@ -78,13 +78,15 @@ where
 				return send_stats();
 			} else {
 				debug!("sent non_ws_response to http client");
-				return Ok(non_ws_resp());
+				return non_ws_resp();
 			}
 		} else {
 			debug!("sent non_ws_response to http client");
-			return Ok(non_ws_resp());
+			return non_ws_resp();
 		}
 	}
+
+	trace!("recieved request {:?}", req);
 
 	let (resp, fut) = fastwebsockets::upgrade::upgrade(&mut req)?;
 	// replace body of Empty<Bytes> with Full<Bytes>
@@ -122,7 +124,7 @@ where
 		});
 	} else {
 		debug!("sent non_ws_response to http client");
-		return Ok(non_ws_resp());
+		return non_ws_resp();
 	}
 
 	Ok(resp)
@@ -222,4 +224,13 @@ pub type WispResult = (
 pub enum ServerRouteResult {
 	Wisp(WispResult),
 	WsProxy(WebSocketStreamWrapper, String, bool),
+}
+
+impl Display for ServerRouteResult {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	    match self {
+			Self::Wisp(_) => write!(f, "Wisp"),
+			Self::WsProxy(_, path, udp) => write!(f, "WsProxy path {:?} udp {:?}", path, udp),
+		}
+	}
 }
