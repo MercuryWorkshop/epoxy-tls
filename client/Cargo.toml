@@ -1,6 +1,6 @@
 [package]
 name = "epoxy-client"
-version = "2.1.3"
+version = "2.1.5"
 edition = "2021"
 
 [lib]
@@ -32,7 +32,7 @@ wasm-bindgen-futures = "0.4.43"
 wasm-streams = "0.4.0"
 web-sys = { version = "0.3.70", features = ["BinaryType", "Headers", "MessageEvent", "Request", "RequestInit", "Response", "ResponseInit", "WebSocket"] }
 webpki-roots = "0.26.3"
-wisp-mux = { path = "../wisp", features = ["wasm"] }
+wisp-mux = { path = "../wisp", features = ["wasm"], version = "5.1.0", default-features = false }
 
 [dependencies.getrandom]
 version = "*"
