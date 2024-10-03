@@ -27,7 +27,7 @@ pub(crate) enum WsEvent {
 	SendPong(Payload<'static>),
 	WispMessage(Option<Packet<'static>>, Option<Frame<'static>>),
 	EndFut(Option<CloseReason>),
-	Noop
+	Noop,
 }
 
 struct MuxMapValue {
@@ -316,10 +316,16 @@ impl<R: WebSocketRead + Send> MuxInner<R> {
 					}
 				}
 				WsEvent::SendPing(payload, channel) => {
-					let _ = channel.send(self.tx.write_frame(Frame::new(OpCode::Ping, payload, true)).await);
+					let _ = channel.send(
+						self.tx
+							.write_frame(Frame::new(OpCode::Ping, payload, true))
+							.await,
+					);
 				}
 				WsEvent::SendPong(payload) => {
-					self.tx.write_frame(Frame::new(OpCode::Pong, payload, true)).await?;
+					self.tx
+						.write_frame(Frame::new(OpCode::Pong, payload, true))
+						.await?;
 				}
 				WsEvent::EndFut(x) => {
 					if let Some(reason) = x {

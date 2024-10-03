@@ -533,7 +533,10 @@ impl EpoxyClient {
 		url.scheme().ok_or(EpoxyError::InvalidUrlScheme)?;
 
 		let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
-		let port_str = url.port_u16().map(|x| format!(":{}", x)).unwrap_or_default();
+		let port_str = url
+			.port_u16()
+			.map(|x| format!(":{}", x))
+			.unwrap_or_default();
 
 		let request_method = object_get(&options, "method")
 			.as_string()
@@ -587,7 +590,10 @@ impl EpoxyClient {
 		}
 		headers_map.insert("Connection", HeaderValue::from_static("keep-alive"));
 		headers_map.insert("User-Agent", HeaderValue::from_str(&self.user_agent)?);
-		headers_map.insert("Host", HeaderValue::from_str(&format!("{}{}", host, port_str))?);
+		headers_map.insert(
+			"Host",
+			HeaderValue::from_str(&format!("{}{}", host, port_str))?,
+		);
 
 		if let Some(content_type) = body_content_type {
 			headers_map.insert("Content-Type", HeaderValue::from_str(&content_type)?);

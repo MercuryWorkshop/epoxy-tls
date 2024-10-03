@@ -10,7 +10,10 @@ use pty_process::{Pty, Size};
 use tokio::{io::copy, process::Child, select, sync::Mutex};
 use tokio_util::compat::{FuturesAsyncReadCompatExt, FuturesAsyncWriteCompatExt};
 use wisp_mux::{
-	extensions::{AnyProtocolExtension, ProtocolExtension, ProtocolExtensionBuilder, AnyProtocolExtensionBuilder},
+	extensions::{
+		AnyProtocolExtension, AnyProtocolExtensionBuilder, ProtocolExtension,
+		ProtocolExtensionBuilder,
+	},
 	ws::{LockedWebSocketWrite, WebSocketRead},
 	MuxStreamAsyncRead, MuxStreamAsyncWrite, WispError,
 };
