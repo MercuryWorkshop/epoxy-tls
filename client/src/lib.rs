@@ -9,7 +9,10 @@ use cfg_if::cfg_if;
 use futures_util::future::Either;
 use futures_util::TryStreamExt;
 use http::{
-	header::{InvalidHeaderName, InvalidHeaderValue},
+	header::{
+		InvalidHeaderName, InvalidHeaderValue, ACCEPT_ENCODING, CONNECTION, CONTENT_LENGTH,
+		CONTENT_TYPE, HOST, USER_AGENT,
+	},
 	method::InvalidMethod,
 	uri::{InvalidUri, InvalidUriParts},
 	HeaderName, HeaderValue, Method, Request, Response,
@@ -573,7 +576,9 @@ impl EpoxyClient {
 			}
 		});
 
-		let mut request_builder = Request::builder().uri(url.clone()).method(request_method);
+		let mut request_builder = Request::builder()
+			.uri(url.clone())
+			.method(request_method.clone());
 
 		// Generic InvalidRequest because this only returns None if the builder has some error
 		// which we don't know
@@ -583,20 +588,20 @@ impl EpoxyClient {
 
 		cfg_if! {
 			if #[cfg(feature = "full")] {
-				headers_map.insert("Accept-Encoding", HeaderValue::from_static("gzip, br"));
+				headers_map.insert(ACCEPT_ENCODING, HeaderValue::from_static("gzip, br"));
 			} else {
-				headers_map.insert("Accept-Encoding", HeaderValue::from_static("identity"));
+				headers_map.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
 			}
 		}
-		headers_map.insert("Connection", HeaderValue::from_static("keep-alive"));
-		headers_map.insert("User-Agent", HeaderValue::from_str(&self.user_agent)?);
+		headers_map.insert(CONNECTION, HeaderValue::from_static("keep-alive"));
+		headers_map.insert(USER_AGENT, HeaderValue::from_str(&self.user_agent)?);
 		headers_map.insert(
-			"Host",
+			HOST,
 			HeaderValue::from_str(&format!("{}{}", host, port_str))?,
 		);
 
 		if let Some(content_type) = body_content_type {
-			headers_map.insert("Content-Type", HeaderValue::from_str(&content_type)?);
+			headers_map.insert(CONTENT_TYPE, HeaderValue::from_str(&content_type)?);
 		}
 
 		if let Some(headers) = headers {
@@ -606,6 +611,10 @@ impl EpoxyClient {
 					HeaderValue::from_str(&hdr[1])?,
 				);
 			}
+		}
+
+		if matches!(request_method, Method::POST | Method::PUT | Method::PATCH) && body.is_empty() {
+			headers_map.insert(CONTENT_LENGTH, 0.into());
 		}
 
 		let (mut response, response_uri, redirected) = self
