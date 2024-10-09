@@ -18,7 +18,7 @@ use futures_rustls::{
 use futures_util::{ready, AsyncRead, AsyncWrite, Future, Stream, StreamExt, TryStreamExt};
 use http::{HeaderValue, Uri};
 use hyper::{body::Body, rt::Executor};
-use js_sys::{Array, ArrayBuffer, JsString, Object, Uint8Array};
+use js_sys::{Array, ArrayBuffer, Function, JsString, Object, Uint8Array};
 use pin_project_lite::pin_project;
 use rustls_pki_types::{CertificateDer, ServerName, UnixTime};
 use send_wrapper::SendWrapper;
@@ -372,6 +372,55 @@ pub fn is_null_body(code: u16) -> bool {
 }
 
 #[wasm_bindgen(inline_js = r#"
+class WebSocketStreamPonyfill {
+    url;
+    opened;
+    closed;
+    close;
+    constructor(url, options = {}) {
+        if (options.signal?.aborted) {
+            throw new DOMException('This operation was aborted', 'AbortError');
+        }
+        this.url = url;
+        const ws = new WebSocket(url, options.protocols ?? []);
+		ws.binaryType = "arrayBuffer";
+        const closeWithInfo = ({ closeCode: code, reason } = {}) => ws.close(code, reason);
+        this.opened = new Promise((resolve, reject) => {
+            ws.onopen = () => {
+                resolve({
+                    readable: new ReadableStream({
+                        start(controller) {
+                            ws.onmessage = ({ data }) => controller.enqueue(data);
+                            ws.onerror = e => controller.error(e);
+                        },
+                        cancel: closeWithInfo,
+                    }),
+                    writable: new WritableStream({
+                        write(chunk) { ws.send(chunk); },
+                        abort() { ws.close(); },
+                        close: closeWithInfo,
+                    }),
+                    protocol: ws.protocol,
+                    extensions: ws.extensions,
+                });
+                ws.removeEventListener('error', reject);
+            };
+            ws.addEventListener('error', reject);
+        });
+        this.closed = new Promise((resolve, reject) => {
+            ws.onclose = ({ code, reason }) => {
+                resolve({ closeCode: code, reason });
+                ws.removeEventListener('error', reject);
+            };
+            ws.addEventListener('error', reject);
+        });
+        if (options.signal) {
+            options.signal.onabort = () => ws.close();
+        }
+        this.close = closeWithInfo;
+    }
+}
+
 export function object_get(obj, k) { 
 	try {
 		return obj[k]
@@ -408,6 +457,16 @@ export function from_entries(entries){
     for(var i = 0; i < entries.length; i++) ret[entries[i][0]] = entries[i][1];
     return ret;
 }
+
+async function websocket_connect(url, protocols) {
+	let wss = new WebSocketStreamPonyfill(url, { protocols: protocols });
+	let {readable, writable} = await wss.opened;
+	return {read: readable, write: writable};
+}
+
+function bind_ws_connect(url, protocols) {
+	return websocket_connect.bind(undefined, url, protocols);
+}
 "#)]
 extern "C" {
 	pub fn object_get(obj: &Object, key: &str) -> JsValue;
@@ -422,6 +481,8 @@ extern "C" {
 
 	#[wasm_bindgen(catch)]
 	pub fn from_entries(iterable: &JsValue) -> Result<Object, JsValue>;
+
+	pub fn bind_ws_connect(url: String, protocols: Vec<String>) -> Function;
 }
 
 pub async fn convert_body(val: JsValue) -> Result<(Uint8Array, Option<String>), JsValue> {
