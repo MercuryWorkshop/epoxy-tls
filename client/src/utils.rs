@@ -383,7 +383,7 @@ class WebSocketStreamPonyfill {
         }
         this.url = url;
         const ws = new WebSocket(url, options.protocols ?? []);
-		ws.binaryType = "arrayBuffer";
+		ws.binaryType = "arraybuffer";
         const closeWithInfo = ({ closeCode: code, reason } = {}) => ws.close(code, reason);
         this.opened = new Promise((resolve, reject) => {
             ws.onopen = () => {
@@ -464,7 +464,7 @@ async function websocket_connect(url, protocols) {
 	return {read: readable, write: writable};
 }
 
-function bind_ws_connect(url, protocols) {
+export function bind_ws_connect(url, protocols) {
 	return websocket_connect.bind(undefined, url, protocols);
 }
 "#)]

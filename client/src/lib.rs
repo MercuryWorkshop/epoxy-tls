@@ -42,7 +42,6 @@ use wisp_mux::{
 	ws::{WebSocketRead, WebSocketWrite},
 	CloseReason,
 };
-use ws_wrapper::WebSocketWrapper;
 
 #[cfg(feature = "full")]
 mod io_stream;
@@ -51,7 +50,6 @@ mod tokioio;
 mod utils;
 #[cfg(feature = "full")]
 mod websocket;
-mod ws_wrapper;
 
 type HttpBody = http_body_util::Full<Bytes>;
 
