@@ -12,7 +12,6 @@ async-trait = "0.1.81"
 bytes = "1.7.1"
 cfg-if = "1.0.0"
 fastwebsockets = { version = "0.8.0", features = ["unstable-split"], optional = true }
-flume = "0.11.0"
 futures-rustls = { version = "0.26.0", default-features = false, features = ["tls12", "ring"] }
 futures-util = { version = "0.3.30", features = ["sink"] }
 http = "1.1.0"
