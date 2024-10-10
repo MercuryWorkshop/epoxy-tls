@@ -20,7 +20,7 @@ use http::{
 use hyper::{body::Incoming, Uri};
 use hyper_util_wasm::client::legacy::Client;
 #[cfg(feature = "full")]
-use io_stream::{EpoxyIoStream, EpoxyUdpStream};
+use io_stream::{iostream_from_asyncrw, iostream_from_stream, EpoxyIoStream};
 use js_sys::{Array, Function, Object, Promise};
 use send_wrapper::SendWrapper;
 use stream_provider::{StreamProvider, StreamProviderService};
@@ -312,7 +312,7 @@ fn get_stream_provider(
 				))
 			}))
 		}),
-		&options,
+		options,
 	)
 }
 
@@ -383,75 +383,39 @@ impl EpoxyClient {
 	}
 
 	#[cfg(feature = "full")]
-	pub async fn connect_tcp(
-		&self,
-		handlers: EpoxyHandlers,
-		url: String,
-	) -> Result<EpoxyIoStream, EpoxyError> {
+	pub async fn connect_tcp(&self, url: String) -> Result<EpoxyIoStream, EpoxyError> {
 		let url: Uri = url.try_into()?;
 		let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
 		let port = url.port_u16().ok_or(EpoxyError::NoUrlPort)?;
-		match self
+		let stream = self
 			.stream_provider
 			.get_asyncread(StreamType::Tcp, host.to_string(), port)
-			.await
-		{
-			Ok(stream) => Ok(EpoxyIoStream::connect(Either::Right(stream), handlers)),
-			Err(err) => {
-				let _ = handlers
-					.onerror
-					.call1(&JsValue::null(), &err.to_string().into());
-				Err(err)
-			}
-		}
+			.await?;
+		Ok(iostream_from_asyncrw(Either::Right(stream)))
 	}
 
 	#[cfg(feature = "full")]
-	pub async fn connect_tls(
-		&self,
-		handlers: EpoxyHandlers,
-		url: String,
-	) -> Result<EpoxyIoStream, EpoxyError> {
+	pub async fn connect_tls(&self, url: String) -> Result<EpoxyIoStream, EpoxyError> {
 		let url: Uri = url.try_into()?;
 		let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
 		let port = url.port_u16().ok_or(EpoxyError::NoUrlPort)?;
-		match self
+		let stream = self
 			.stream_provider
 			.get_tls_stream(host.to_string(), port)
-			.await
-		{
-			Ok(stream) => Ok(EpoxyIoStream::connect(Either::Left(stream), handlers)),
-			Err(err) => {
-				let _ = handlers
-					.onerror
-					.call1(&JsValue::null(), &err.to_string().into());
-				Err(err)
-			}
-		}
+			.await?;
+		Ok(iostream_from_asyncrw(Either::Left(stream)))
 	}
 
 	#[cfg(feature = "full")]
-	pub async fn connect_udp(
-		&self,
-		handlers: EpoxyHandlers,
-		url: String,
-	) -> Result<EpoxyUdpStream, EpoxyError> {
+	pub async fn connect_udp(&self, url: String) -> Result<EpoxyIoStream, EpoxyError> {
 		let url: Uri = url.try_into()?;
 		let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
 		let port = url.port_u16().ok_or(EpoxyError::NoUrlPort)?;
-		match self
+		let stream = self
 			.stream_provider
 			.get_stream(StreamType::Udp, host.to_string(), port)
-			.await
-		{
-			Ok(stream) => Ok(EpoxyUdpStream::connect(stream, handlers)),
-			Err(err) => {
-				let _ = handlers
-					.onerror
-					.call1(&JsValue::null(), &err.to_string().into());
-				Err(err)
-			}
-		}
+			.await?;
+		Ok(iostream_from_stream(stream))
 	}
 
 	async fn send_req_inner(

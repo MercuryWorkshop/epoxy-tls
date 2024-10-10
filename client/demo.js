@@ -29,6 +29,7 @@ import initEpoxy, { EpoxyClient, EpoxyClientOptions, EpoxyHandlers, info as epox
 	await initEpoxy();
 	let epoxy_client_options = new EpoxyClientOptions();
 	epoxy_client_options.user_agent = navigator.userAgent;
+	epoxy_client_options.wisp_v2 = true;
 
 	let epoxy_client;
 
@@ -36,8 +37,8 @@ import initEpoxy, { EpoxyClient, EpoxyClientOptions, EpoxyHandlers, info as epox
 		log("using wisptransport with websocketstream backend");
 		epoxy_client = new EpoxyClient(async () => {
 			let wss = new WebSocketStream("ws://localhost:4000/");
-			let {readable, writable} = await wss.opened;
-			return {read: readable, write: writable};
+			let { readable, writable } = await wss.opened;
+			return { read: readable, write: writable };
 		}, epoxy_client_options);
 	} else {
 		epoxy_client = new EpoxyClient("ws://localhost:4000/", epoxy_client_options);
@@ -210,35 +211,52 @@ import initEpoxy, { EpoxyClient, EpoxyClientOptions, EpoxyHandlers, info as epox
 		}
 	} else if (should_tls_test) {
 		let decoder = new TextDecoder();
-		let handlers = new EpoxyHandlers(
-			() => log("opened"),
-			() => log("closed"),
-			err => console.error(err),
-			msg => { console.log(msg); console.log(decoder.decode(msg).split("\r\n\r\n")[1].length); log(decoder.decode(msg)) },
-		);
-		let ws = await epoxy_client.connect_tls(
-			handlers,
+		const { read, write } = await epoxy_client.connect_tls(
 			"google.com:443",
 		);
-		await ws.send("GET / HTTP 1.1\r\nHost: google.com\r\nConnection: close\r\n\r\n");
+		const reader = read.getReader();
+		const writer = write.getWriter();
+
+		log("opened");
+
+		(async () => {
+			while (true) {
+				const { value: msg, done } = await reader.read();
+				if (done || !msg) break;
+				console.log(msg);
+				log(decoder.decode(msg))
+			}
+			log("closed");
+		})();
+
+		await writer.write(new TextEncoder('utf-8').encode("GET / HTTP 1.1\r\nHost: google.com\r\n\r\n"));
 		await (new Promise((res, _) => setTimeout(res, 500)));
-		await ws.close();
+		await writer.close();
 	} else if (should_udp_test) {
 		let decoder = new TextDecoder();
-		let handlers = new EpoxyHandlers(
-			() => log("opened"),
-			() => log("closed"),
-			err => console.error(err),
-			msg => { console.log(msg); log(decoder.decode(msg)) },
-		);
 		// tokio example: `cargo r --example echo-udp -- 127.0.0.1:5000`
-		let ws = await epoxy_client.connect_udp(
-			handlers,
+		const { read, write } = await epoxy_client.connect_udp(
 			"127.0.0.1:5000",
 		);
+
+		const reader = read.getReader();
+		const writer = write.getWriter();
+
+		log("opened");
+
+		(async () => {
+			while (true) {
+				const { value: msg, done } = await reader.read();
+				if (done || !msg) break;
+				console.log(msg);
+				log(decoder.decode(msg))
+			}
+			log("closed");
+		})();
+
 		while (true) {
 			log("sending `data`");
-			await ws.send("data");
+			await writer.write(new TextEncoder('utf-8').encode("data"));
 			await (new Promise((res, _) => setTimeout(res, 100)));
 		}
 	} else if (should_reconnect_test) {
