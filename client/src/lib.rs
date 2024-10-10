@@ -78,10 +78,7 @@ pub enum EpoxyError {
 	#[error("Webpki: {0:?} ({0})")]
 	Webpki(#[from] webpki::Error),
 
-	#[error("Wisp WebSocket failed to connect")]
-	WebSocketConnectFailed,
-
-	#[error("Custom wisp transport: {0}")]
+	#[error("Wisp transport: {0}")]
 	WispTransport(String),
 	#[error("Invalid Wisp transport")]
 	InvalidWispTransport,
