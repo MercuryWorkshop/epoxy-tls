@@ -52,7 +52,7 @@ async fn copy_read_fast(
 }
 
 async fn copy_write_fast(muxtx: MuxStreamWrite, tcprx: OwnedReadHalf) -> anyhow::Result<()> {
-	let mut tcprx = BufReader::new(tcprx);
+	let mut tcprx = BufReader::with_capacity(CONFIG.stream.buffer_size, tcprx);
 	loop {
 		let buf = tcprx.fill_buf().await?;
 

@@ -26,13 +26,12 @@ use send_wrapper::SendWrapper;
 use stream_provider::{StreamProvider, StreamProviderService};
 use thiserror::Error;
 use utils::{
-	asyncread_to_readablestream_stream, bind_ws_connect, convert_body, entries_of_object,
+	asyncread_to_readablestream, bind_ws_connect, convert_body, entries_of_object,
 	from_entries, is_null_body, is_redirect, object_get, object_set, object_truthy, IncomingBody,
 	UriExt, WasmExecutor, WispTransportRead, WispTransportWrite,
 };
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
-use wasm_streams::ReadableStream;
 use web_sys::{ResponseInit, WritableStream};
 #[cfg(feature = "full")]
 use websocket::EpoxyWebSocket;
@@ -201,6 +200,7 @@ cfg_if! {
 			#[wasm_bindgen(getter_with_clone)]
 			pub pem_files: Vec<String>,
 			pub disable_certificate_validation: bool,
+			pub buffer_size: usize,
 		}
 	} else {
 		#[wasm_bindgen]
@@ -214,6 +214,7 @@ cfg_if! {
 			#[wasm_bindgen(getter_with_clone)]
 			pub user_agent: String,
 			pub disable_certificate_validation: bool,
+			pub buffer_size: usize,
 		}
 	}
 }
@@ -238,6 +239,7 @@ impl Default for EpoxyClientOptions {
 			#[cfg(feature = "full")]
 			pem_files: Vec::new(),
 			disable_certificate_validation: false,
+			buffer_size: 16384,
         }
 	}
 }
@@ -326,6 +328,7 @@ pub struct EpoxyClient {
 	pub redirect_limit: usize,
 	#[wasm_bindgen(getter_with_clone)]
 	pub user_agent: String,
+	pub buffer_size: usize,
 }
 
 #[wasm_bindgen]
@@ -364,6 +367,7 @@ impl EpoxyClient {
 			certs_tampered: options.disable_certificate_validation || !options.pem_files.is_empty(),
 			#[cfg(not(feature = "full"))]
 			certs_tampered: options.disable_certificate_validation,
+			buffer_size: options.buffer_size,
 		})
 	}
 
@@ -391,7 +395,7 @@ impl EpoxyClient {
 			.stream_provider
 			.get_asyncread(StreamType::Tcp, host.to_string(), port)
 			.await?;
-		Ok(iostream_from_asyncrw(Either::Right(stream)))
+		Ok(iostream_from_asyncrw(Either::Right(stream), self.buffer_size))
 	}
 
 	#[cfg(feature = "full")]
@@ -403,7 +407,7 @@ impl EpoxyClient {
 			.stream_provider
 			.get_tls_stream(host.to_string(), port)
 			.await?;
-		Ok(iostream_from_asyncrw(Either::Left(stream)))
+		Ok(iostream_from_asyncrw(Either::Left(stream), self.buffer_size))
 	}
 
 	#[cfg(feature = "full")]
@@ -624,14 +628,14 @@ impl EpoxyClient {
 						},
 						None => Either::Right(response_body),
 					};
-					Some(ReadableStream::from_stream(asyncread_to_readablestream_stream(decompressed_body)).into_raw())
+					Some(asyncread_to_readablestream(Box::pin(decompressed_body), self.buffer_size))
 				} else {
 					None
 				};
 			} else {
 				let response_stream = if !is_null_body(response.status().as_u16()) {
 					let response_body = IncomingBody::new(response.into_body()).into_async_read();
-					Some(ReadableStream::from_stream(asyncread_to_readablestream_stream(response_body)).into_raw())
+					Some(asyncread_to_readablestream(Box::pin(response_body)))
 				} else {
 					None
 				};

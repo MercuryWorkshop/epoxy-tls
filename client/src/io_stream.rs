@@ -53,10 +53,10 @@ fn create_iostream(
 	JsValue::from(out).into()
 }
 
-pub fn iostream_from_asyncrw(asyncrw: ProviderAsyncRW) -> EpoxyIoStream {
+pub fn iostream_from_asyncrw(asyncrw: ProviderAsyncRW, buffer_size: usize) -> EpoxyIoStream {
 	let (rx, tx) = asyncrw.split();
 	create_iostream(
-		Box::pin(ReaderStream::new(Box::pin(rx)).map_err(EpoxyError::Io)),
+		Box::pin(ReaderStream::new(Box::pin(rx), buffer_size).map_err(EpoxyError::Io)),
 		Box::pin(tx.into_sink().sink_map_err(EpoxyError::Io)),
 	)
 }

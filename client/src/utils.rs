@@ -24,7 +24,7 @@ use rustls_pki_types::{CertificateDer, ServerName, UnixTime};
 use send_wrapper::SendWrapper;
 use wasm_bindgen::{prelude::*, JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
-use wasm_streams::readable::IntoStream;
+use wasm_streams::{readable::IntoStream, ReadableStream};
 use web_sys::WritableStreamDefaultWriter;
 use wisp_mux::{
 	ws::{Frame, LockedWebSocketWrite, Payload, WebSocketRead, WebSocketWrite},
@@ -119,11 +119,11 @@ pin_project! {
 }
 
 impl<R: AsyncRead> ReaderStream<R> {
-	pub fn new(reader: R) -> Self {
+	pub fn new(reader: R, capacity: usize) -> Self {
 		ReaderStream {
 			reader: Some(reader),
 			buf: BytesMut::new(),
-			capacity: 4096,
+			capacity,
 		}
 	}
 }
@@ -502,12 +502,16 @@ pub fn entries_of_object(obj: &Object) -> Vec<Vec<String>> {
 		.collect()
 }
 
-pub fn asyncread_to_readablestream_stream<R: AsyncRead>(
-	read: R,
-) -> impl Stream<Item = Result<JsValue, JsValue>> {
-	ReaderStream::new(read)
-		.map_ok(|x| Uint8Array::from(x.as_ref()).into())
-		.map_err(|x| EpoxyError::from(x).into())
+pub fn asyncread_to_readablestream(
+	read: Pin<Box<dyn AsyncRead>>,
+	buffer_size: usize,
+) -> web_sys::ReadableStream {
+	ReadableStream::from_stream(
+		ReaderStream::new(read, buffer_size)
+			.map_ok(|x| Uint8Array::from(x.as_ref()).into())
+			.map_err(|x| EpoxyError::from(x).into()),
+	)
+	.into_raw()
 }
 
 pub fn object_truthy(val: JsValue) -> Option<JsValue> {

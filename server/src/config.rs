@@ -176,6 +176,8 @@ pub struct WispConfig {
 pub struct StreamConfig {
 	/// Whether or not to enable TCP nodelay.
 	pub tcp_nodelay: bool,
+	/// Buffer size of reads from TCP sockets.
+	pub buffer_size: usize,
 
 	/// Whether or not to allow Wisp clients to create UDP streams.
 	pub allow_udp: bool,
@@ -393,6 +395,7 @@ impl Default for StreamConfig {
 	fn default() -> Self {
 		Self {
 			tcp_nodelay: false,
+			buffer_size: 16384,
 
 			allow_udp: true,
 			allow_wsproxy_udp: false,
