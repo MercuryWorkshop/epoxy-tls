@@ -12,8 +12,9 @@ else
 	CARGOFLAGS=""
 fi
 
-if [ "$(wasm-bindgen -V)" != "wasm-bindgen 0.2.94" ]; then
-	echo "Incorrect wasm-bindgen version: '$(wasm-bindgen -V)' != 'wasm-bindgen 0.2.94'"
+WBG="wasm-bindgen 0.2.95"
+if [ "$(wasm-bindgen -V)" != "$WBG" ]; then
+	echo "Incorrect wasm-bindgen version: '$(wasm-bindgen -V)' != '$WBG'"
 	exit 1
 fi
 
