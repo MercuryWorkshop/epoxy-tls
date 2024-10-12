@@ -274,7 +274,7 @@ impl ConnectSvc for StreamProviderService {
 	fn connect(self, req: hyper::Uri) -> Self::Future {
 		let provider = self.0.clone();
 		Box::pin(async move {
-			let scheme = req.scheme_str().ok_or(EpoxyError::InvalidUrlScheme)?;
+			let scheme = req.scheme_str().ok_or(EpoxyError::InvalidUrlScheme(None))?;
 			let host = req.host().ok_or(EpoxyError::NoUrlHost)?.to_string();
 			let port = req.port_u16().map(Ok).unwrap_or_else(|| match scheme {
 				"https" | "wss" => Ok(443),
@@ -287,7 +287,7 @@ impl ConnectSvc for StreamProviderService {
 					"http" | "ws" => {
 						Either::Right(provider.get_asyncread(StreamType::Tcp, host, port).await?)
 					}
-					_ => return Err(EpoxyError::InvalidUrlScheme),
+					_ => return Err(EpoxyError::InvalidUrlScheme(Some(scheme.to_string()))),
 				},
 			})
 		})

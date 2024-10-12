@@ -20,15 +20,15 @@ use http::{
 use hyper::{body::Incoming, Uri};
 use hyper_util_wasm::client::legacy::Client;
 #[cfg(feature = "full")]
-use io_stream::{iostream_from_asyncrw, iostream_from_stream, EpoxyIoStream};
+use io_stream::{iostream_from_asyncrw, iostream_from_stream};
 use js_sys::{Array, Function, Object, Promise};
 use send_wrapper::SendWrapper;
 use stream_provider::{StreamProvider, StreamProviderService};
 use thiserror::Error;
 use utils::{
-	asyncread_to_readablestream, convert_body, entries_of_object,
-	from_entries, is_null_body, is_redirect, object_get, object_set, object_truthy, IncomingBody,
-	UriExt, WasmExecutor, WispTransportRead, WispTransportWrite,
+	asyncread_to_readablestream, convert_body, entries_of_object, from_entries, is_null_body,
+	is_redirect, object_get, object_set, object_truthy, IncomingBody, UriExt, WasmExecutor,
+	WispTransportRead, WispTransportWrite,
 };
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
@@ -51,6 +51,28 @@ mod utils;
 #[cfg(feature = "full")]
 mod websocket;
 mod ws_wrapper;
+
+#[wasm_bindgen(typescript_custom_section)]
+const EPOXYCLIENT_TYPES: &'static str = r#"
+type EpoxyIoStream = {
+	read: ReadableStream<Uint8Array>,
+	write: WritableStream<Uint8Array>,
+}
+type EpoxyWispTransport = string | (() => { read: ReadableStream<ArrayBuffer>, write: WritableStream<Uint8Array> })
+type EpoxyWebSocketInput = string | ArrayBuffer;
+type EpoxyWebSocketHeadersInput = Headers | { [key: string]: string }
+"#;
+#[wasm_bindgen]
+extern "C" {
+	#[wasm_bindgen(typescript_type = "EpoxyWispTransport")]
+	pub type EpoxyWispTransport;
+	#[wasm_bindgen(typescript_type = "EpoxyIoStream")]
+	pub type EpoxyIoStream;
+	#[wasm_bindgen(typescript_type = "EpoxyWebSocketInput")]
+	pub type EpoxyWebSocketInput;
+	#[wasm_bindgen(typescript_type = "EpoxyWebSocketHeadersInput")]
+	pub type EpoxyWebSocketHeadersInput;
+}
 
 type HttpBody = http_body_util::Full<Bytes>;
 
@@ -84,10 +106,10 @@ pub enum EpoxyError {
 
 	#[error("Custom Wisp transport: {0}")]
 	WispTransport(String),
-	#[error("Invalid Wisp transport")]
-	InvalidWispTransport,
-	#[error("Invalid Wisp transport packet")]
-	InvalidWispTransportPacket,
+	#[error("Invalid Wisp transport: {0}")]
+	InvalidWispTransport(String),
+	#[error("Invalid Wisp transport packet: {0}")]
+	InvalidWispTransportPacket(String),
 	#[error("Wisp transport already closed")]
 	WispTransportClosed,
 
@@ -104,11 +126,11 @@ pub enum EpoxyError {
 	#[error("Invalid websocket connection header: {0:?} != \"Upgrade\"")]
 	WsInvalidConnectionHeader(String),
 	#[cfg(feature = "full")]
-	#[error("Invalid websocket payload, only String/ArrayBuffer accepted")]
-	WsInvalidPayload,
+	#[error("Invalid websocket payload: {0}")]
+	WsInvalidPayload(String),
 
-	#[error("Invalid URL scheme")]
-	InvalidUrlScheme,
+	#[error("Invalid URL scheme: {0:?}")]
+	InvalidUrlScheme(Option<String>),
 	#[error("No URL host found")]
 	NoUrlHost,
 	#[error("No URL port found")]
@@ -292,11 +314,16 @@ pub struct EpoxyClient {
 #[wasm_bindgen]
 impl EpoxyClient {
 	#[wasm_bindgen(constructor)]
-	pub fn new(wisp_url: JsValue, options: EpoxyClientOptions) -> Result<EpoxyClient, EpoxyError> {
-		let stream_provider = if let Some(wisp_url) = wisp_url.as_string() {
+	pub fn new(
+		transport: EpoxyWispTransport,
+		options: EpoxyClientOptions,
+	) -> Result<EpoxyClient, EpoxyError> {
+		let stream_provider = if let Some(wisp_url) = transport.as_string() {
 			let wisp_uri: Uri = wisp_url.clone().try_into()?;
 			if wisp_uri.scheme_str() != Some("wss") && wisp_uri.scheme_str() != Some("ws") {
-				return Err(EpoxyError::InvalidUrlScheme);
+				return Err(EpoxyError::InvalidUrlScheme(
+					wisp_uri.scheme_str().map(ToString::to_string),
+				));
 			}
 
 			let ws_protocols = options.websocket_protocols.clone();
@@ -318,8 +345,8 @@ impl EpoxyClient {
 				}),
 				&options,
 			)?)
-		} else if let Ok(wisp_transport) = wisp_url.dyn_into::<Function>() {
-			let wisp_transport = SendWrapper::new(wisp_transport);
+		} else if let Some(wisp_transport) = transport.dyn_ref::<Function>() {
+			let wisp_transport = SendWrapper::new(wisp_transport.clone());
 			Arc::new(StreamProvider::new(
 				Box::new(move || {
 					let wisp_transport = wisp_transport.clone();
@@ -361,7 +388,10 @@ impl EpoxyClient {
 				&options,
 			)?)
 		} else {
-			return Err(EpoxyError::InvalidWispTransport);
+			return Err(EpoxyError::InvalidWispTransport(format!(
+				"{:?}",
+				JsValue::from(transport)
+			)));
 		};
 
 		let service = StreamProviderService(stream_provider.clone());
@@ -394,7 +424,7 @@ impl EpoxyClient {
 		handlers: EpoxyHandlers,
 		url: String,
 		protocols: Vec<String>,
-		headers: JsValue,
+		headers: EpoxyWebSocketHeadersInput,
 	) -> Result<EpoxyWebSocket, EpoxyError> {
 		EpoxyWebSocket::connect(self, handlers, url, protocols, headers, &self.user_agent).await
 	}
@@ -408,7 +438,10 @@ impl EpoxyClient {
 			.stream_provider
 			.get_asyncread(StreamType::Tcp, host.to_string(), port)
 			.await?;
-		Ok(iostream_from_asyncrw(Either::Right(stream), self.buffer_size))
+		Ok(iostream_from_asyncrw(
+			Either::Right(stream),
+			self.buffer_size,
+		))
 	}
 
 	#[cfg(feature = "full")]
@@ -420,7 +453,10 @@ impl EpoxyClient {
 			.stream_provider
 			.get_tls_stream(host.to_string(), port)
 			.await?;
-		Ok(iostream_from_asyncrw(Either::Left(stream), self.buffer_size))
+		Ok(iostream_from_asyncrw(
+			Either::Left(stream),
+			self.buffer_size,
+		))
 	}
 
 	#[cfg(feature = "full")]
@@ -501,7 +537,9 @@ impl EpoxyClient {
 	) -> Result<web_sys::Response, EpoxyError> {
 		let url: Uri = url.try_into()?;
 		// only valid `Scheme`s are HTTP and HTTPS, which are the ones we support
-		url.scheme().ok_or(EpoxyError::InvalidUrlScheme)?;
+		url.scheme().ok_or(EpoxyError::InvalidUrlScheme(
+			url.scheme_str().map(ToString::to_string),
+		))?;
 
 		let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
 		let port_str = url

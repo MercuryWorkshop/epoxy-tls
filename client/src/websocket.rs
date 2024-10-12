@@ -24,7 +24,8 @@ use wasm_bindgen_futures::spawn_local;
 use crate::{
 	tokioio::TokioIo,
 	utils::{entries_of_object, from_entries, ws_key},
-	EpoxyClient, EpoxyError, EpoxyHandlers, HttpBody,
+	EpoxyClient, EpoxyError, EpoxyHandlers, EpoxyWebSocketHeadersInput, EpoxyWebSocketInput,
+	HttpBody,
 };
 
 #[wasm_bindgen]
@@ -40,9 +41,10 @@ impl EpoxyWebSocket {
 		handlers: EpoxyHandlers,
 		url: String,
 		protocols: Vec<String>,
-		headers: JsValue,
+		headers: EpoxyWebSocketHeadersInput,
 		user_agent: &str,
 	) -> Result<Self, EpoxyError> {
+		let headers = JsValue::from(headers);
 		let EpoxyHandlers {
 			onopen,
 			onclose,
@@ -151,7 +153,7 @@ impl EpoxyWebSocket {
 		}
 	}
 
-	pub async fn send(&self, payload: JsValue) -> Result<(), EpoxyError> {
+	pub async fn send(&self, payload: EpoxyWebSocketInput) -> Result<(), EpoxyError> {
 		let ret = if let Some(str) = payload.as_string() {
 			self.tx
 				.lock()
@@ -159,17 +161,20 @@ impl EpoxyWebSocket {
 				.write_frame(Frame::text(Payload::Owned(str.as_bytes().to_vec())))
 				.await
 				.map_err(EpoxyError::from)
-		} else if let Ok(binary) = payload.dyn_into::<ArrayBuffer>() {
+		} else if let Some(binary) = payload.dyn_ref::<ArrayBuffer>() {
 			self.tx
 				.lock()
 				.await
 				.write_frame(Frame::binary(Payload::Owned(
-					Uint8Array::new(&binary).to_vec(),
+					Uint8Array::new(binary).to_vec(),
 				)))
 				.await
 				.map_err(EpoxyError::from)
 		} else {
-			Err(EpoxyError::WsInvalidPayload)
+			Err(EpoxyError::WsInvalidPayload(format!(
+				"{:?}",
+				JsValue::from(payload)
+			)))
 		};
 
 		match ret {

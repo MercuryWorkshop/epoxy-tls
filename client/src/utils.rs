@@ -198,8 +198,11 @@ impl WebSocketRead for WispTransportRead {
 		if let Some(pkt) = obj {
 			let pkt =
 				pkt.map_err(|x| WispError::WsImplError(Box::new(EpoxyError::wisp_transport(x))))?;
-			let arr: ArrayBuffer = pkt.dyn_into().map_err(|_| {
-				WispError::WsImplError(Box::new(EpoxyError::InvalidWispTransportPacket))
+			let arr: ArrayBuffer = pkt.dyn_into().map_err(|x| {
+				WispError::WsImplError(Box::new(EpoxyError::InvalidWispTransportPacket(format!(
+					"{:?}",
+					x
+				))))
 			})?;
 
 			Ok(Frame::binary(Payload::Bytes(

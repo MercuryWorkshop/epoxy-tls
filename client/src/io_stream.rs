@@ -9,22 +9,8 @@ use wasm_streams::{ReadableStream, WritableStream};
 use crate::{
 	stream_provider::{ProviderAsyncRW, ProviderUnencryptedStream},
 	utils::{convert_body, object_set, ReaderStream},
-	EpoxyError,
+	EpoxyError, EpoxyIoStream,
 };
-
-#[wasm_bindgen(typescript_custom_section)]
-const IO_STREAM_RET: &'static str = r#"
-type EpoxyIoStream = {
-	read: ReadableStream<Uint8Array>,
-	write: WritableStream<Uint8Array>,
-}
-"#;
-
-#[wasm_bindgen]
-extern "C" {
-	#[wasm_bindgen(typescript_type = "EpoxyIoStream")]
-	pub type EpoxyIoStream;
-}
 
 fn create_iostream(
 	stream: Pin<Box<dyn Stream<Item = Result<Bytes, EpoxyError>>>>,
