@@ -11,7 +11,9 @@ async-compression = { version = "0.4.12", features = ["futures-io", "gzip", "bro
 async-trait = "0.1.81"
 bytes = "1.7.1"
 cfg-if = "1.0.0"
+event-listener = "5.3.1"
 fastwebsockets = { version = "0.8.0", features = ["unstable-split"], optional = true }
+flume = "0.11.0"
 futures-rustls = { version = "0.26.0", default-features = false, features = ["tls12", "ring"] }
 futures-util = { version = "0.3.30", features = ["sink"] }
 http = "1.1.0"
@@ -28,7 +30,7 @@ tokio = "1.39.3"
 wasm-bindgen = "0.2.93"
 wasm-bindgen-futures = "0.4.43"
 wasm-streams = "0.4.0"
-web-sys = { version = "0.3.70", features = ["Headers", "Request", "RequestInit", "Response", "ResponseInit"] }
+web-sys = { version = "0.3.70", features = ["BinaryType", "Headers", "MessageEvent", "Request", "RequestInit", "Response", "ResponseInit", "WebSocket"] }
 webpki-roots = "0.26.3"
 wisp-mux = { path = "../wisp", features = ["wasm"], version = "5.1.0", default-features = false }
 
