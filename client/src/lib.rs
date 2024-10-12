@@ -635,7 +635,7 @@ impl EpoxyClient {
 			} else {
 				let response_stream = if !is_null_body(response.status().as_u16()) {
 					let response_body = IncomingBody::new(response.into_body()).into_async_read();
-					Some(asyncread_to_readablestream(Box::pin(response_body)))
+					Some(asyncread_to_readablestream(Box::pin(response_body), self.buffer_size))
 				} else {
 					None
 				};

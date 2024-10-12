@@ -459,7 +459,7 @@ export function from_entries(entries){
 }
 
 async function websocket_connect(url, protocols) {
-	let wss = new (WebSocketStream ? WebSocketStream : WebSocketStreamPonyfill)(url, { protocols: protocols });
+	let wss = new (typeof WebSocketStream !== "undefined" ? WebSocketStream : WebSocketStreamPonyfill)(url, { protocols: protocols });
 	let {readable, writable} = await wss.opened;
 	return {read: readable, write: writable};
 }
