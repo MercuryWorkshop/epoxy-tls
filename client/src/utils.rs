@@ -403,7 +403,7 @@ export function define_property(obj, k, v) {
 export function ws_key() {
 	let key = new Uint8Array(16);
 	crypto.getRandomValues(key);
-	return btoa(Array.from(key).map(String.fromCharCode).join(''));
+	return btoa(String.fromCharCode.apply(null, key));
 }
 
 export function from_entries(entries){

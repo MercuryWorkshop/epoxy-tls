@@ -60,7 +60,7 @@ impl EpoxyWebSocket {
 				.method(Method::GET)
 				.uri(url.clone())
 				.header(HOST, host)
-				.header(CONNECTION, "upgrade")
+				.header(CONNECTION, "Upgrade")
 				.header(UPGRADE, "websocket")
 				.header(SEC_WEBSOCKET_KEY, ws_key())
 				.header(SEC_WEBSOCKET_VERSION, "13")
