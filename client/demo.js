@@ -84,6 +84,7 @@ import initEpoxy, { EpoxyClient, EpoxyClientOptions, EpoxyHandlers, info as epox
 		for (const url of [
 			["https://httpbin.org/post", { method: "POST", body: readableStream((new TextEncoder()).encode("abc")) }],
 			["https://httpbin.org/get", {}],
+			[new URL("https://httpbin.org/get"), {}],
 			["https://httpbin.org/gzip", {}],
 			["https://httpbin.org/brotli", {}],
 			["https://httpbin.org/redirect/11", {}],

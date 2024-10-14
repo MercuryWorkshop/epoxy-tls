@@ -32,7 +32,7 @@ use utils::{
 };
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{ResponseInit, WritableStream};
+use web_sys::{ResponseInit, Url, WritableStream};
 #[cfg(feature = "full")]
 use websocket::EpoxyWebSocket;
 #[cfg(feature = "full")]
@@ -57,10 +57,11 @@ const EPOXYCLIENT_TYPES: &'static str = r#"
 type EpoxyIoStream = {
 	read: ReadableStream<Uint8Array>,
 	write: WritableStream<Uint8Array>,
-}
-type EpoxyWispTransport = string | (() => { read: ReadableStream<ArrayBuffer>, write: WritableStream<Uint8Array> })
+};
+type EpoxyWispTransport = string | (() => { read: ReadableStream<ArrayBuffer>, write: WritableStream<Uint8Array> });
 type EpoxyWebSocketInput = string | ArrayBuffer;
-type EpoxyWebSocketHeadersInput = Headers | { [key: string]: string }
+type EpoxyWebSocketHeadersInput = Headers | { [key: string]: string };
+type EpoxyUrlInput = string | URL;
 "#;
 #[wasm_bindgen]
 extern "C" {
@@ -72,6 +73,22 @@ extern "C" {
 	pub type EpoxyWebSocketInput;
 	#[wasm_bindgen(typescript_type = "EpoxyWebSocketHeadersInput")]
 	pub type EpoxyWebSocketHeadersInput;
+	#[wasm_bindgen(typescript_type = "EpoxyUrlInput")]
+	pub type EpoxyUrlInput;
+}
+
+impl TryFrom<EpoxyUrlInput> for Uri {
+	type Error = EpoxyError;
+	fn try_from(value: EpoxyUrlInput) -> Result<Self, Self::Error> {
+		let value = JsValue::from(value);
+		if let Some(value) = value.dyn_ref::<Url>() {
+			value.href().try_into().map_err(EpoxyError::from)
+		} else if let Some(value) = value.as_string() {
+			value.try_into().map_err(EpoxyError::from)
+		} else {
+			Err(EpoxyError::InvalidUrl(format!("{:?}", value)))
+		}
+	}
 }
 
 type HttpBody = http_body_util::Full<Bytes>;
@@ -129,6 +146,8 @@ pub enum EpoxyError {
 	#[error("Invalid websocket payload: {0}")]
 	WsInvalidPayload(String),
 
+	#[error("Invalid URL input: {0}")]
+	InvalidUrl(String),
 	#[error("Invalid URL scheme: {0:?}")]
 	InvalidUrlScheme(Option<String>),
 	#[error("No URL host found")]
@@ -422,7 +441,7 @@ impl EpoxyClient {
 	pub async fn connect_websocket(
 		&self,
 		handlers: EpoxyHandlers,
-		url: String,
+		url: EpoxyUrlInput,
 		protocols: Vec<String>,
 		headers: EpoxyWebSocketHeadersInput,
 	) -> Result<EpoxyWebSocket, EpoxyError> {
@@ -430,7 +449,7 @@ impl EpoxyClient {
 	}
 
 	#[cfg(feature = "full")]
-	pub async fn connect_tcp(&self, url: String) -> Result<EpoxyIoStream, EpoxyError> {
+	pub async fn connect_tcp(&self, url: EpoxyUrlInput) -> Result<EpoxyIoStream, EpoxyError> {
 		let url: Uri = url.try_into()?;
 		let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
 		let port = url.port_u16().ok_or(EpoxyError::NoUrlPort)?;
@@ -445,7 +464,7 @@ impl EpoxyClient {
 	}
 
 	#[cfg(feature = "full")]
-	pub async fn connect_tls(&self, url: String) -> Result<EpoxyIoStream, EpoxyError> {
+	pub async fn connect_tls(&self, url: EpoxyUrlInput) -> Result<EpoxyIoStream, EpoxyError> {
 		let url: Uri = url.try_into()?;
 		let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
 		let port = url.port_u16().ok_or(EpoxyError::NoUrlPort)?;
@@ -460,7 +479,7 @@ impl EpoxyClient {
 	}
 
 	#[cfg(feature = "full")]
-	pub async fn connect_udp(&self, url: String) -> Result<EpoxyIoStream, EpoxyError> {
+	pub async fn connect_udp(&self, url: EpoxyUrlInput) -> Result<EpoxyIoStream, EpoxyError> {
 		let url: Uri = url.try_into()?;
 		let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
 		let port = url.port_u16().ok_or(EpoxyError::NoUrlPort)?;
@@ -532,7 +551,7 @@ impl EpoxyClient {
 
 	pub async fn fetch(
 		&self,
-		url: String,
+		url: EpoxyUrlInput,
 		options: Object,
 	) -> Result<web_sys::Response, EpoxyError> {
 		let url: Uri = url.try_into()?;

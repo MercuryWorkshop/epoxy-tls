@@ -24,8 +24,8 @@ use wasm_bindgen_futures::spawn_local;
 use crate::{
 	tokioio::TokioIo,
 	utils::{entries_of_object, from_entries, ws_key},
-	EpoxyClient, EpoxyError, EpoxyHandlers, EpoxyWebSocketHeadersInput, EpoxyWebSocketInput,
-	HttpBody,
+	EpoxyClient, EpoxyError, EpoxyHandlers, EpoxyUrlInput, EpoxyWebSocketHeadersInput,
+	EpoxyWebSocketInput, HttpBody,
 };
 
 #[wasm_bindgen]
@@ -39,7 +39,7 @@ impl EpoxyWebSocket {
 	pub(crate) async fn connect(
 		client: &EpoxyClient,
 		handlers: EpoxyHandlers,
-		url: String,
+		url: EpoxyUrlInput,
 		protocols: Vec<String>,
 		headers: EpoxyWebSocketHeadersInput,
 		user_agent: &str,
