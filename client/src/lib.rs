@@ -331,6 +331,7 @@ pub struct EpoxyClient {
 	certs_tampered: bool,
 
 	pub redirect_limit: usize,
+	#[cfg(feature = "full")]
 	header_limit: usize,
 	#[cfg(feature = "full")]
 	ws_title_case_headers: bool,
@@ -433,10 +434,11 @@ impl EpoxyClient {
 			stream_provider,
 			client,
 			redirect_limit: options.redirect_limit,
-			header_limit: options.header_limit,
 			user_agent: options.user_agent,
 			buffer_size: options.buffer_size,
 
+			#[cfg(feature = "full")]
+			header_limit: options.header_limit,
 			#[cfg(feature = "full")]
 			ws_title_case_headers: options.ws_title_case_headers,
 			#[cfg(feature = "full")]
