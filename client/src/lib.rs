@@ -238,9 +238,11 @@ cfg_if! {
 			pub wisp_v2: bool,
 			pub udp_extension_required: bool,
 			pub title_case_headers: bool,
+			pub ws_title_case_headers: bool,
 			#[wasm_bindgen(getter_with_clone)]
 			pub websocket_protocols: Vec<String>,
 			pub redirect_limit: usize,
+			pub header_limit: usize,
 			#[wasm_bindgen(getter_with_clone)]
 			pub user_agent: String,
 			#[wasm_bindgen(getter_with_clone)]
@@ -257,6 +259,7 @@ cfg_if! {
 			#[wasm_bindgen(getter_with_clone)]
 			pub websocket_protocols: Vec<String>,
 			pub redirect_limit: usize,
+			pub header_limit: usize,
 			#[wasm_bindgen(getter_with_clone)]
 			pub user_agent: String,
 			pub disable_certificate_validation: bool,
@@ -276,12 +279,15 @@ impl EpoxyClientOptions {
 impl Default for EpoxyClientOptions {
 	fn default() -> Self {
 		Self {
-            wisp_v2: false,
-            udp_extension_required: false,
+			wisp_v2: false,
+			udp_extension_required: false,
 			title_case_headers: false,
-            websocket_protocols: Vec::new(),
-            redirect_limit: 10,
-            user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36".to_string(),
+			#[cfg(feature = "full")]
+			ws_title_case_headers: true,
+			websocket_protocols: Vec::new(),
+			redirect_limit: 10,
+			header_limit: 200,
+			user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36".to_string(),
 			#[cfg(feature = "full")]
 			pem_files: Vec::new(),
 			disable_certificate_validation: false,
@@ -325,6 +331,9 @@ pub struct EpoxyClient {
 	certs_tampered: bool,
 
 	pub redirect_limit: usize,
+	header_limit: usize,
+	#[cfg(feature = "full")]
+	ws_title_case_headers: bool,
 	#[wasm_bindgen(getter_with_clone)]
 	pub user_agent: String,
 	pub buffer_size: usize,
@@ -417,19 +426,23 @@ impl EpoxyClient {
 		let client = Client::builder(WasmExecutor)
 			.http09_responses(true)
 			.http1_title_case_headers(options.title_case_headers)
-			.http1_max_headers(200)
+			.http1_max_headers(options.header_limit)
 			.build(service);
 
 		Ok(Self {
 			stream_provider,
 			client,
 			redirect_limit: options.redirect_limit,
+			header_limit: options.header_limit,
 			user_agent: options.user_agent,
+			buffer_size: options.buffer_size,
+
+			#[cfg(feature = "full")]
+			ws_title_case_headers: options.ws_title_case_headers,
 			#[cfg(feature = "full")]
 			certs_tampered: options.disable_certificate_validation || !options.pem_files.is_empty(),
 			#[cfg(not(feature = "full"))]
 			certs_tampered: options.disable_certificate_validation,
-			buffer_size: options.buffer_size,
 		})
 	}
 

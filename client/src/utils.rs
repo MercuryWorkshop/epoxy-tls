@@ -37,12 +37,22 @@ use crate::{stream_provider::ProviderUnencryptedAsyncRW, EpoxyError};
 extern "C" {
 	#[wasm_bindgen(js_namespace = console, js_name = log)]
 	pub fn js_console_log(s: &str);
+
+	#[wasm_bindgen(js_namespace = console, js_name = error)]
+	pub fn js_console_error(s: &str);
 }
 
 #[macro_export]
 macro_rules! console_log {
 	($($expr:expr),*) => {
 		$crate::utils::js_console_log(&format!($($expr),*));
+	};
+}
+
+#[macro_export]
+macro_rules! console_error {
+	($($expr:expr),*) => {
+		$crate::utils::js_console_error(&format!($($expr),*));
 	};
 }
 
