@@ -13,6 +13,9 @@ import initEpoxy, { EpoxyClient, EpoxyClientOptions, EpoxyHandlers, info as epox
 	const should_reconnect_test = params.has("reconnect_test");
 	const should_perf2_test = params.has("perf2_test");
 	const should_wisptransport = params.has("wisptransport");
+	const test_url = params.get("url");
+	const wisp_url = params.get("wisp") || "ws://localhost:4000/";
+	const wisp_v1 = params.has("v1");
 	console.log(
 		"%cWASM is significantly slower with DevTools open!",
 		"color:red;font-size:3rem;font-weight:bold"
@@ -29,19 +32,20 @@ import initEpoxy, { EpoxyClient, EpoxyClientOptions, EpoxyHandlers, info as epox
 	await initEpoxy();
 	let epoxy_client_options = new EpoxyClientOptions();
 	epoxy_client_options.user_agent = navigator.userAgent;
-	epoxy_client_options.wisp_v2 = true;
+	epoxy_client_options.wisp_v2 = !wisp_v1;
 
 	let epoxy_client;
 
+	log(`connecting to "${wisp_url}"${wisp_v1 ? " with wisp v1" : ""}`);
 	if (should_wisptransport) {
 		log("using wisptransport with websocketstream backend");
 		epoxy_client = new EpoxyClient(async () => {
-			let wss = new WebSocketStream("ws://localhost:4000/");
+			let wss = new WebSocketStream(wisp_url);
 			let { readable, writable } = await wss.opened;
 			return { read: readable, write: writable };
 		}, epoxy_client_options);
 	} else {
-		epoxy_client = new EpoxyClient("ws://localhost:4000/", epoxy_client_options);
+		epoxy_client = new EpoxyClient(wisp_url, epoxy_client_options);
 	}
 
 	const tconn0 = performance.now();
@@ -287,7 +291,7 @@ import initEpoxy, { EpoxyClient, EpoxyClientOptions, EpoxyHandlers, info as epox
 		log(`total avg mux (${num_outer_tests} tests of ${num_inner_tests} reqs): ${total_mux_multi} ms or ${total_mux_multi / 1000} s`);
 	} else {
 		console.time();
-		let resp = await epoxy_client.fetch("https://www.example.com/");
+		let resp = await epoxy_client.fetch(test_url || "https://www.example.com/");
 		console.timeEnd();
 		console.log(resp, resp.rawHeaders);
 		log(await resp.text());
