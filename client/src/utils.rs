@@ -269,6 +269,7 @@ pin_project! {
 	pub struct IgnoreCloseNotify {
 		#[pin]
 		pub inner: TlsStream<ProviderUnencryptedAsyncRW>,
+		pub h2_negotiated: bool,
 	}
 }
 

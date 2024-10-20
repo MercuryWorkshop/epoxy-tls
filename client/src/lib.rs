@@ -485,7 +485,7 @@ impl EpoxyClient {
 		let port = url.port_u16().ok_or(EpoxyError::NoUrlPort)?;
 		let stream = self
 			.stream_provider
-			.get_tls_stream(host.to_string(), port)
+			.get_tls_stream(host.to_string(), port, false)
 			.await?;
 		Ok(iostream_from_asyncrw(
 			Either::Left(stream),
