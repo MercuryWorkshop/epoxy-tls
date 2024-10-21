@@ -11,7 +11,7 @@ use futures_util::TryStreamExt;
 use http::{
 	header::{
 		InvalidHeaderName, InvalidHeaderValue, ACCEPT_ENCODING, CONNECTION, CONTENT_LENGTH,
-		CONTENT_TYPE, HOST, USER_AGENT,
+		CONTENT_TYPE, USER_AGENT,
 	},
 	method::InvalidMethod,
 	uri::{InvalidUri, InvalidUriParts},
@@ -523,13 +523,8 @@ impl EpoxyClient {
 					&& let Some(mut new_req) = new_req
 					&& let Some(location) = res.headers().get("Location")
 					&& let Ok(redirect_url) = new_req.uri().get_redirect(location)
-					&& let Some(redirect_url_authority) = redirect_url.clone().authority()
 				{
 					*new_req.uri_mut() = redirect_url;
-					new_req.headers_mut().insert(
-						"Host",
-						HeaderValue::from_str(redirect_url_authority.as_str())?,
-					);
 					Ok(EpoxyResponse::Redirect((res, new_req)))
 				} else {
 					Ok(EpoxyResponse::Success(res))
@@ -574,12 +569,6 @@ impl EpoxyClient {
 		url.scheme().ok_or(EpoxyError::InvalidUrlScheme(
 			url.scheme_str().map(ToString::to_string),
 		))?;
-
-		let host = url.host().ok_or(EpoxyError::NoUrlHost)?;
-		let port_str = url
-			.port_u16()
-			.map(|x| format!(":{}", x))
-			.unwrap_or_default();
 
 		let request_method = object_get(&options, "method")
 			.as_string()
@@ -635,10 +624,6 @@ impl EpoxyClient {
 		}
 		headers_map.insert(CONNECTION, HeaderValue::from_static("keep-alive"));
 		headers_map.insert(USER_AGENT, HeaderValue::from_str(&self.user_agent)?);
-		headers_map.insert(
-			HOST,
-			HeaderValue::from_str(&format!("{}{}", host, port_str))?,
-		);
 
 		if let Some(content_type) = body_content_type {
 			headers_map.insert(CONTENT_TYPE, HeaderValue::from_str(&content_type)?);
