@@ -282,7 +282,7 @@ impl hyper::rt::Write for HyperIo {
 impl Connection for HyperIo {
 	fn connected(&self) -> Connected {
 		let conn = Connected::new();
-		let conn = if let Either::Left(tls_stream) = &self.inner {
+		if let Either::Left(tls_stream) = &self.inner {
 			if tls_stream.h2_negotiated {
 				conn.negotiated_h2()
 			} else {
@@ -290,8 +290,7 @@ impl Connection for HyperIo {
 			}
 		} else {
 			conn
-		};
-		conn
+		}
 	}
 }
 
