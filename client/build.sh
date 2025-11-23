@@ -2,6 +2,8 @@
 set -euo pipefail
 shopt -s inherit_errexit
 
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
 mkdir out/ || true
 rm -r pkg/ || true
 mkdir pkg/
