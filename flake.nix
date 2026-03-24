@@ -23,7 +23,7 @@
             pkg-config
             mkcert
             wasm-bindgen-cli
-            (rust-bin.stable.latest.default.override
+            (rust-bin.nightly.latest.default.override
               {
                 targets = [ "wasm32-unknown-unknown" ];
               })
