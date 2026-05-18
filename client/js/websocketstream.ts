@@ -61,6 +61,16 @@ export class WebSocketStream<
 					}),
 					writable: new WritableStream<T>({
 						write(chunk) {
+							// Calling send() on a CLOSING/CLOSED ws prints a
+							// console warning. Reject the write so the upper
+							// layer (e.g. wisp mux) sees the close and stops
+							// pushing more frames into a dead socket.
+							if (ws.readyState !== WebSocket.OPEN) {
+								throw new DOMException(
+									"WebSocket is closed",
+									"InvalidStateError"
+								);
+							}
 							ws.send(chunk);
 						},
 						abort() {

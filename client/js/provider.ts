@@ -7,6 +7,14 @@ import {
 	WasmProvider,
 	WasmWispProvider,
 } from "epoxy/wbg";
+/* EXTENDED.START */
+import {
+	TorSocketProvider as EpxTorSocketProvider,
+	TorBootstrapCallback,
+	TorBootstrapProgress,
+	TorStateMgrCallbacks,
+} from "epoxy/wbg";
+/* EXTENDED.END */
 import { WebSocketStream } from "./websocketstream";
 import { ProtocolExtensionBuilder, WispExtensions } from "./wispExtension";
 
@@ -168,7 +176,84 @@ export class EitherSocketProvider extends Provider<
 	}
 }
 
+/* EXTENDED.START */
+import {
+	openSnowflakeStream,
+	DEFAULT_SNOWFLAKE_FINGERPRINT,
+	SnowflakeConfig,
+} from "./tor/snowflake";
+
+export type TorStorage = TorStateMgrCallbacks;
+
+/** Backend selector for `TorSocketProvider`. Pass an existing
+ *  `SocketProvider` to tunnel tor over your own transport, or pass
+ *  `{ snowflake: SnowflakeConfig }` to use the built-in snowflake client.
+ *
+ *  The bare string `"snowflake"` is shorthand for `{ snowflake: {} }` and
+ *  uses the built-in defaults (public broker + bridge). */
+export type TorBackend =
+	| Exclude<SocketProvider, TorSocketProvider>
+	| "snowflake"
+	| { snowflake: SnowflakeConfig };
+
+// Address used in the bridge line when the underlying transport ignores
+// (host, port) — snowflake routes everything to its single bridge regardless.
+// 192.0.2.0/24 is RFC 5737 TEST-NET-1, so it can't conflict with real relays.
+const SNOWFLAKE_FAKE_ADDR = "192.0.2.3:80";
+
+function makeSnowflakeUnderlying(cfg: SnowflakeConfig): SocketProvider {
+	return new JsSocketProvider(async (_host, _port) => openSnowflakeStream(cfg));
+}
+
+export class TorSocketProvider extends Provider<
+	EpxTorSocketProvider,
+	WasmProvider
+> {
+	constructor(backend: TorBackend, storage: TorStorage) {
+		let underlying: SocketProvider;
+		let bridges: string[] | undefined;
+		if (backend === "snowflake") {
+			underlying = makeSnowflakeUnderlying({});
+			bridges = [`${SNOWFLAKE_FAKE_ADDR} ${DEFAULT_SNOWFLAKE_FINGERPRINT}`];
+		} else if (
+			typeof backend === "object" &&
+			backend !== null &&
+			"snowflake" in backend
+		) {
+			underlying = makeSnowflakeUnderlying(backend.snowflake);
+			const fpr =
+				backend.snowflake.fingerprint ?? DEFAULT_SNOWFLAKE_FINGERPRINT;
+			bridges = [`${SNOWFLAKE_FAKE_ADDR} ${fpr}`];
+		} else {
+			// After the snowflake-shaped checks above, only the
+			// `Exclude<SocketProvider, TorSocketProvider>` branch is left, but
+			// TS doesn't narrow `{ snowflake: … }` away here.
+			underlying = backend as Exclude<SocketProvider, TorSocketProvider>;
+		}
+		super(
+			new EpxTorSocketProvider(underlying.provider, storage, bridges),
+			(x) => x.box()
+		);
+	}
+
+	async bootstrap() {
+		await this._provider.bootstrap();
+	}
+
+	/** Subscribe to bootstrap progress. The callback fires with the current
+	 *  snapshot synchronously, then again on every status change until the
+	 *  provider is dropped. Calling this more than once replaces the previous
+	 *  callback. */
+	onProgress(cb: (progress: TorBootstrapProgress) => void) {
+		this._provider.on_progress(cb as TorBootstrapCallback);
+	}
+}
+/* EXTENDED.END */
+
 export type SocketProvider =
 	| JsSocketProvider
 	| WispSocketProvider
-	| EitherSocketProvider;
+	| EitherSocketProvider
+	/* EXTENDED.START */
+	| TorSocketProvider
+	/* EXTENDED.END */;

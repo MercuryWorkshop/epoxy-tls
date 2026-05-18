@@ -14,7 +14,7 @@ import wasm from "@rollup/plugin-wasm";
 let VERSION;
 let DEV = false;
 let SIZE = false;
-const INLINE_WASM_LIMIT = 2 * 1024 * 1024;
+const INLINE_WASM_LIMIT = 8 * 1024 * 1024;
 const WASM_BINDGEN_IMPORT_META_FALLBACK =
 	"module_or_path = new URL('epoxy_client_bg.wasm', import.meta.url);";
 let FAKED_TYPES = [
@@ -44,6 +44,10 @@ let FAKED_TYPES = [
 	"CertAuthProtocolExtension",
 	"WsReadEvent",
 	"WsWriteEvent",
+	"TorSocketProvider",
+	"TorStateMgrCallbacks",
+	"TorBootstrapCallback",
+	"TorBootstrapProgress",
 ];
 const rustBuildCache = new Map();
 
@@ -235,11 +239,14 @@ const stripBetweenComments = (startComment, endComment) => ({
 	},
 });
 
-const common = (include, bundleWasm) => [
+const commonPre = (bundleWasm) => [
 	nodeResolve(),
 	wasm({
 		maxFileSize: bundleWasm ? INLINE_WASM_LIMIT : 0,
 	}),
+];
+
+const commonPost = (include) => [
 	typescript({
 		include: include + "/**/*",
 		filterRoot: process.cwd(),
@@ -275,8 +282,12 @@ const cfg = (inputDir, inputFile, output, defs, bundleWasm, plugins) => {
 			input,
 			output: [{ file: output, sourcemap: true, format: "es" }],
 			plugins: [
-				...common(inputDir, bundleWasm),
+				...commonPre(bundleWasm),
+				// Strip plugins MUST run before typescript, so feature-gated
+				// imports/usages are gone before TS validates against the .d.ts
+				// (the .d.ts comes from a profile-specific Rust build).
 				...plugins,
+				...commonPost(inputDir),
 				versionInfo,
 				rustFallback,
 			],
@@ -288,7 +299,16 @@ const cfg = (inputDir, inputFile, output, defs, bundleWasm, plugins) => {
 				input:
 					"dist/types/" + input.substring("js/".length).replace(".ts", ".d.ts"),
 				output: [{ file: output.replace(".js", ".d.ts"), format: "es" }],
-				plugins: [dts(), versionInfo, rustFallback],
+				plugins: [
+					// Strip plugins must run BEFORE dts(), since the typescript
+					// declaration emission in the JS pipeline above produces
+					// unstripped .d.ts files (typescript()'s view of source is
+					// disk-direct and ignores the rollup transform chain).
+					...plugins.filter((p) => p.name === "stripBetweenComments"),
+					dts(),
+					versionInfo,
+					rustFallback,
+				],
 			})
 		);
 	}
@@ -310,17 +330,30 @@ export default async (args) => {
 
 	VERSION = { version, git };
 
-	const profiles = ["minimal", "full"];
-	// const profiles = ["minimal", "full", "extended"];
+	const ALL_PROFILES = ["minimal", "full", "extended"];
+	const profileArg = args["config-profile"];
+	const profiles = profileArg
+		? String(profileArg).split(",").map((s) => s.trim()).filter(Boolean)
+		: ALL_PROFILES;
+	for (const p of profiles) {
+		if (!ALL_PROFILES.includes(p)) {
+			throw new Error(
+				`unknown profile "${p}"; valid: ${ALL_PROFILES.join(", ")}`
+			);
+		}
+	}
 	const variants = [
 		{ bundled: false, inputFile: "index_unbundled.ts", suffix: "" },
 		{ bundled: true, inputFile: "index.ts", suffix: ".bundled" },
 	];
 
 	const outputs = [];
-	for (let [i, profile] of profiles.map((x, i) => [i, x])) {
-		let strips = profiles
-			.slice(i + 1)
+	for (const profile of profiles) {
+		// Compute strips against the full profile ladder so that e.g. building
+		// only "minimal" still strips FULL/EXTENDED-marked regions.
+		const profileIdx = ALL_PROFILES.indexOf(profile);
+		let strips = ALL_PROFILES
+			.slice(profileIdx + 1)
 			.map((x) =>
 				stripBetweenComments(
 					`${x.toUpperCase()}.START`,

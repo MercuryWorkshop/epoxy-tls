@@ -39,11 +39,53 @@ fastwebsockets = { optional = true, version = "0.10.0", features = ["unstable-sp
 tokio = { version = "1.50.0", features = ["io-util"] }
 base64 = "0.22.1"
 
+# arti / tor — pinned to a fork that adds the wasm-friendly hooks
+# (DynStateMgr, DynStore, DirMgrStoreBuilder, etc.). See
+# https://github.com/r58Playz/arti for the changes.
+arti-client = { git = "https://github.com/r58Playz/arti", rev = "e271774e870ca158211f1c1b19b448b2eb49b879", default-features = false, optional = true, features = [
+	"experimental-api",
+	"error_detail",
+	"pt-client-external",
+	"bridge-client",
+	"onion-service-client",
+] }
+tor-persist = { git = "https://github.com/r58Playz/arti", rev = "e271774e870ca158211f1c1b19b448b2eb49b879", default-features = false, optional = true }
+tor-rtcompat = { git = "https://github.com/r58Playz/arti", rev = "e271774e870ca158211f1c1b19b448b2eb49b879", default-features = false, optional = true }
+tor-proto = { git = "https://github.com/r58Playz/arti", rev = "e271774e870ca158211f1c1b19b448b2eb49b879", default-features = false, optional = true }
+tor-error = { git = "https://github.com/r58Playz/arti", rev = "e271774e870ca158211f1c1b19b448b2eb49b879", default-features = false, optional = true }
+tor-general-addr = { git = "https://github.com/r58Playz/arti", rev = "e271774e870ca158211f1c1b19b448b2eb49b879", default-features = false, optional = true }
+tor-config-path = { git = "https://github.com/r58Playz/arti", rev = "e271774e870ca158211f1c1b19b448b2eb49b879", default-features = false, optional = true, features = ["arti-client"] }
+tor-dirmgr = { git = "https://github.com/r58Playz/arti", rev = "e271774e870ca158211f1c1b19b448b2eb49b879", default-features = false, optional = true, features = ["bridge-client"] }
+tor-guardmgr = { git = "https://github.com/r58Playz/arti", rev = "e271774e870ca158211f1c1b19b448b2eb49b879", default-features = false, optional = true, features = ["bridge-client"] }
+tor-netdoc = { git = "https://github.com/r58Playz/arti", rev = "e271774e870ca158211f1c1b19b448b2eb49b879", default-features = false, optional = true }
+web-time = { version = "1.1.0", optional = true }
+serde_json = { version = "1.0", optional = true }
+coarsetime = { version = "0.1.36", optional = true }
+rustls-webpki = { version = "0.103", optional = true }
+void = { version = "1", optional = true }
+
 [features]
 default = ["extended"]
 minimal = []
 full = ["minimal", "hyper/http2", "dep:fastwebsockets"]
-extended = ["full"]
+extended = ["full", "tor"]
+tor = [
+	"dep:arti-client",
+	"dep:tor-persist",
+	"dep:tor-rtcompat",
+	"dep:tor-proto",
+	"dep:tor-error",
+	"dep:tor-general-addr",
+	"dep:tor-config-path",
+	"dep:tor-dirmgr",
+	"dep:tor-guardmgr",
+	"dep:tor-netdoc",
+	"dep:web-time",
+	"dep:serde_json",
+	"dep:coarsetime",
+	"dep:rustls-webpki",
+	"dep:void",
+]
 debug = []
 
 [dependencies.ring]

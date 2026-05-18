@@ -107,8 +107,14 @@ impl WispProviderInner {
 			.with_required_extensions(&extensions)
 			.await?;
 
+		// When the mux's driver future ends (peer closed, transport died),
+		// drop the cached mux so the next `call` creates a fresh one instead
+		// of pushing frames into a dead transport.
+		let locked = self.locked.clone();
 		spawn_local(async move {
 			let _ = fut.await;
+			let mut guard = locked.lock().await;
+			guard.mux.take();
 		});
 
 		guard.mux.replace(mux);

@@ -9,6 +9,9 @@ export {
 	WispSocketProvider,
 	ProviderResult,
 } from "./provider";
+/* EXTENDED.START */
+export { TorSocketProvider, TorStorage } from "./provider";
+/* EXTENDED.END */
 export {
 	Role,
 	TransportRead,

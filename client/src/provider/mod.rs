@@ -21,6 +21,8 @@ use crate::{EpoxyError, EpoxyErrorExt, provider::extra_roots::EXTRA_TLS_SERVER_R
 mod extra_roots;
 pub mod js;
 pub mod service;
+#[cfg(feature = "tor")]
+pub mod tor;
 pub mod wisp;
 
 #[derive(Clone)]
@@ -140,7 +142,7 @@ impl AsyncWrite for ProviderUnencryptedStream {
 }
 pub type ProviderStream = Either<ProviderUnencryptedStream, ProviderEncryptedStream>;
 
-type StreamProviderBackendService =
+pub type StreamProviderBackendService =
 	BoxProviderService<ProviderServiceReq, ProviderUnencryptedStream, EpoxyError>;
 
 pub struct StreamProvider {
