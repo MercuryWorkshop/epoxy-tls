@@ -7,7 +7,7 @@ edition = "2024"
 workspace = true
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib","rlib"]
 
 [dependencies]
 async-compression = { version = "0.4.12", features = ["futures-io", "gzip", "brotli"], optional = true }
