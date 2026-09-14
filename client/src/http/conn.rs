@@ -74,7 +74,33 @@ where
 				let io = connector.oneshot(()).await?;
 				debug_assert!(io.is_negotiated_h2());
 
+				// Chrome's SETTINGS frame, its connection-level WINDOW_UPDATE,
+				// and nothing else. The h2 preface is as much of a fingerprint
+				// as the ClientHello is -- Cloudflare reads both -- and hyper's
+				// defaults are visibly not a browser's:
+				//
+				//   Chrome  1:65536;2:0;4:6291456;6:262144  window +15663105
+				//   hyper   2:0;4:2097152;5:16384;6:16384   window  +5177345
+				//
+				// `initial_connection_window_size` is the whole window, not the
+				// increment: h2 sends the difference from the 65535 default, so
+				// 15728640 here is the 15663105 on the wire.
+				//
+				// `max_frame_size(None)` suppresses SETTINGS 5 entirely, which
+				// Chrome does not send at all. Left at hyper's default it is one
+				// more field that says "not a browser".
+				//
+				// Still different afterwards, and not reachable from here: h2
+				// orders the pseudo-headers `:method :scheme :authority :path`
+				// where Chrome sends `:method :authority :scheme :path`, and
+				// Chrome sets the PRIORITY flag on its HEADERS frame. Both are
+				// inside the h2 crate.
 				let (tx, conn) = conn::http2::Builder::new(WasmExecutor)
+					.header_table_size(65536)
+					.initial_stream_window_size(6291456)
+					.initial_connection_window_size(15728640)
+					.max_header_list_size(262144)
+					.max_frame_size(None)
 					.handshake(io)
 					.await
 					.map_err(|err| -> BoxError { Box::new(err) })?;

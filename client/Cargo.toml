@@ -30,6 +30,13 @@ wasm-bindgen = "0.2.114"
 wasm-streams = "0.6.0"
 webpki-roots = "1.0.6"
 futures-rustls = { version = "0.26.0", default-features = false, features = ["tls12", "ring"] }
+# Direct, only to turn on brotli certificate decompression. Chrome offers
+# `compress_certificate` with brotli and Cloudflare takes the offer, so a client
+# that advertises it without a decompressor gets a `CompressedCertificate`
+# handshake message where it expects `Certificate` and the connection dies.
+# Offering it is not optional either -- it is one of the eighteen extensions in
+# Chrome's hello. So: offer it and mean it.
+rustls = { version = "0.23", default-features = false, features = ["brotli"] }
 http-body-util = "0.1.3"
 http = "1.3.1"
 http-body = "1.0.1"
@@ -76,7 +83,16 @@ missing_fields_in_debug = "allow"
 case_sensitive_file_extension_comparisons = "allow"
 
 [patch.crates-io]
-h2 = { git = "https://github.com/r58Playz/h2-wasm" }
+# Local checkout, patched to emit Chrome's ClientHello. Cloudflare branches on
+# the handshake -- proven by running stock Chromium with
+# `--cipher-suite-blacklist=0x1301,0x1302,0x1303`, which changes nothing but the
+# handshake and moves it onto the same challenge branch the proxy gets.
+rustls = { path = "../../rustls-chrome/rustls" }
+# Local checkout, not the git URL: the pseudo-header order in
+# `src/frame/headers.rs` is patched to Chrome's `:method :authority :scheme
+# :path`, which is the last field of the Akamai HTTP/2 fingerprint. Point this
+# back at the git remote once that is upstream.
+h2 = { path = "../../h2-wasm" }
 hyper = { git = "https://github.com/r58Playz/hyper" }
 
 [profile.release]
