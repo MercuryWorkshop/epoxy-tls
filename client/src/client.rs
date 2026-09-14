@@ -251,8 +251,23 @@ impl Client {
 			self.hyper.clone()
 		};
 
+		// The override sits INSIDE the decompression layer, so it rewrites the
+		// `accept-encoding` that layer just added rather than being overwritten
+		// by it. Same encodings -- the decoder set is what the Cargo.toml
+		// comment says it is -- spelled the way Chromium 155 spells them.
+		//
+		// `gzip,deflate,br` is what tower-http emits and is a fingerprint in
+		// itself: no zstd, and no spaces after the commas. Measured against a
+		// live Chromium over HTTP/2, every request it makes carries
+		// `gzip, deflate, br, zstd`, navigation and subresource alike.
 		#[cfg(feature = "full")]
-		let hyper = tower_http::decompression::DecompressionLayer::new().layer(hyper);
+		let hyper = tower_http::decompression::DecompressionLayer::new().layer(
+			SetRequestHeaderLayer::overriding(
+				header::ACCEPT_ENCODING,
+				HeaderValue::from_static("gzip, deflate, br, zstd"),
+			)
+			.layer(hyper),
+		);
 		#[cfg(not(feature = "full"))]
 		let hyper = hyper
 			.map_response(|response| response.map(|body| body.map_err(|err| BoxError::from(err))));

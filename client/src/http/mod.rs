@@ -221,6 +221,7 @@ where
 				.layer_fn(DelayedRelease::new)
 				.layer_fn(h1::SetHost::new)
 				.layer_fn(h1::RequestTarget::new)
+				.layer_fn(h1::DropPriority::new)
 				.service(x)
 		}))
 		.layer_fn(|x| cache::builder().executor(WasmExecutor).build(x))

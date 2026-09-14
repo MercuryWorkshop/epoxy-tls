@@ -5,7 +5,7 @@
 use std::task::{Context, Poll};
 
 use http::{
-	Method, Request, Uri,
+	HeaderName, Method, Request, Uri,
 	header::{HOST, HeaderValue},
 };
 use tower_service::Service;
@@ -24,6 +24,22 @@ pub struct SetHost<S> {
 /// Ensures CONNECT uses authority-form, and all other methods use origin-form.
 #[derive(Clone, Debug)]
 pub struct RequestTarget<S> {
+	inner: S,
+}
+
+/// A middleware that drops the `priority` header.
+///
+/// RFC 9218 extensible priorities are an HTTP/2 and HTTP/3 signal, and a
+/// browser sends the header there and nowhere else: measured against Chromium
+/// 155, the same navigation to the same server carries `priority: u=0, i` over
+/// h2 and carries no such header over HTTP/1.1.
+///
+/// The caller cannot make that distinction -- whether the connection ends up
+/// h2 or h1 is ALPN's answer, settled long after the request was composed --
+/// so it sets the header for the h2 case and this drops it again on the branch
+/// where a browser would not have sent one.
+#[derive(Clone, Debug)]
+pub struct DropPriority<S> {
 	inner: S,
 }
 
@@ -148,4 +164,38 @@ fn authority_form(uri: &mut Uri) {
 			unreachable!("authority_form with relative uri");
 		}
 	};
+}
+
+// ===== impl DropPriority =====
+
+const PRIORITY: HeaderName = HeaderName::from_static("priority");
+
+impl<S> DropPriority<S> {
+	/// Create a new `DropPriority` middleware wrapping the given service.
+	pub fn new(inner: S) -> Self {
+		DropPriority { inner }
+	}
+
+	/// Access the inner service.
+	pub fn inner(&self) -> &S {
+		&self.inner
+	}
+}
+
+impl<S, ReqBody> Service<Request<ReqBody>> for DropPriority<S>
+where
+	S: Service<Request<ReqBody>>,
+{
+	type Response = S::Response;
+	type Error = S::Error;
+	type Future = S::Future;
+
+	fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+		self.inner.poll_ready(cx)
+	}
+
+	fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
+		req.headers_mut().remove(PRIORITY);
+		self.inner.call(req)
+	}
 }
