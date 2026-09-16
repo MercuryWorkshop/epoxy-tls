@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 hyper = { git = "https://github.com/r58Playz/hyper", features = ["client", "http1"] } # fork rebased onto v1.10.1 so the patch outranks crates.io; re-rebase when hyper releases
-hyper-util = { git = "https://github.com/r58Playz/hyper-util", branch = "tokio-client", features = ["client-pool"] }
+hyper-util = { git = "https://github.com/hyperium/hyper-util", rev = "e1c5a6c89bfaed11fb34bd483fe9ba616f403791", features = ["client-pool"] }
 futures = { version = "0.3.31", default-features = false, features = ["std", "async-await"] }
 futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
 # zstd because Chrome advertises it. `accept-encoding` is not a free string:
@@ -89,16 +89,15 @@ missing_fields_in_debug = "allow"
 case_sensitive_file_extension_comparisons = "allow"
 
 [patch.crates-io]
-# Local checkout, patched to emit Chrome's ClientHello. Cloudflare branches on
+# Hosted branch, patched to emit Chrome's ClientHello. Cloudflare branches on
 # the handshake -- proven by running stock Chromium with
 # `--cipher-suite-blacklist=0x1301,0x1302,0x1303`, which changes nothing but the
 # handshake and moves it onto the same challenge branch the proxy gets.
-rustls = { path = "../../rustls-chrome/rustls" }
-# Local checkout, not the git URL: the pseudo-header order in
+rustls = { git = "https://github.com/r58playz/rustls", branch = "vibe-turnstile" }
+# Hosted branch: the pseudo-header order in
 # `src/frame/headers.rs` is patched to Chrome's `:method :authority :scheme
-# :path`, which is the last field of the Akamai HTTP/2 fingerprint. Point this
-# back at the git remote once that is upstream.
-h2 = { path = "../../h2-wasm" }
+# :path`, which is the last field of the Akamai HTTP/2 fingerprint.
+h2 = { git = "https://github.com/r58Playz/h2-wasm", branch = "vibe-turnstile" }
 hyper = { git = "https://github.com/r58Playz/hyper" }
 
 [profile.release]

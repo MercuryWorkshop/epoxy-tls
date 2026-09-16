@@ -442,6 +442,7 @@ dependencies = [
 [[package]]
 name = "h2"
 version = "0.4.14"
+source = "git+https://github.com/r58Playz/h2-wasm?branch=vibe-turnstile#1a4f63aec0b90c0ab7acbaec8eca04c956e9050e"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -540,7 +541,7 @@ dependencies = [
 [[package]]
 name = "hyper-util"
 version = "0.1.20"
-source = "git+https://github.com/r58Playz/hyper-util?branch=tokio-client#ba63e8a44234ebe900046c3fe37a54a4e12283fc"
+source = "git+https://github.com/hyperium/hyper-util?rev=e1c5a6c89bfaed11fb34bd483fe9ba616f403791#e1c5a6c89bfaed11fb34bd483fe9ba616f403791"
 dependencies = [
  "bytes",
  "futures-channel",
@@ -961,6 +962,7 @@ checksum = "94300abf3f1ae2e2b8ffb7b58043de3d399c73fa6f4b73826402a5c457614dbe"
 [[package]]
 name = "rustls"
 version = "0.23.40"
+source = "git+https://github.com/r58playz/rustls?branch=vibe-turnstile#aad9e951843c85130c6d3054c838fb2f28027fec"
 dependencies = [
  "brotli",
  "brotli-decompressor",
