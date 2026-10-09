@@ -111,7 +111,8 @@ export class WsProxyJsSocketProvider extends JsSocketProvider {
 
 export interface WispV2Handshake {
 	builders: ProtocolExtensionBuilder[];
-	requiredExts: number[],
+	// ids of extensions the server must support, each must also have a builder in `builders`
+	requiredExts?: number[];
 }
 
 export class WispSocketProvider extends Provider<
@@ -134,11 +135,23 @@ export class WispSocketProvider extends Provider<
 
 				let handshake: JsWispV2Handshake | undefined;
 				if (v2) {
+					let required = v2.requiredExts ?? [];
+					let ids = new Set(v2.builders.map((x) => x.id));
+					let missing = required.filter((x) => !ids.has(x));
+					if (missing.length > 0)
+						throw new Error(
+							`required extensions have no builder: ${missing.join(", ")}`
+						);
+
 					let builders = new ProtocolExtensionBuilders();
 					for (let builder of v2.builders) {
 						builder.appendTo(builders);
 					}
-					handshake = new JsWispV2Handshake(builders, new Uint8Array(v2.requiredExts), async () => { });
+					handshake = new JsWispV2Handshake(
+						builders,
+						new Uint8Array(required),
+						async () => {}
+					);
 				}
 
 				return handshake;

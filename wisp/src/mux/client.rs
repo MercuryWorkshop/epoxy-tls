@@ -65,11 +65,11 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
 		rx: &mut R,
 		tx: &mut LockedWebSocketWrite<W>,
 		v2: Option<WispV2Handshake>,
+		required: Vec<u8>,
 	) -> Result<WispHandshakeResult, WispError> {
 		if let Some(WispV2Handshake {
 			mut builders,
 			closure,
-			required,
 		}) = v2
 		{
 			// user asked for v2 client
@@ -79,7 +79,14 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
 			match packet {
 				MaybeInfoPacket::Info(info) => {
 					// v2 server
-					if let Some(missing) = missing_required_extensions(Some(&info.extensions), required) {
+					
+					if let Some(closure) = closure {
+						(closure)(&mut builders).await?;
+					}
+
+					if let Some(missing) =
+						missing_required_extensions(Some(&info.extensions), required)
+					{
 						tx.lock().await;
 						let mut handle = tx.get_handle();
 						handle
@@ -90,10 +97,6 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
 						handle.close().await?;
 
 						return Err(WispError::ExtensionsNotSupported(missing));
-					}
-
-					if let Some(closure) = closure {
-						(closure)(&mut builders).await?;
 					}
 
 					let mut supported_extensions =
@@ -141,6 +144,10 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
 				}
 			}
 		} else {
+			if let Some(missing) = missing_required_extensions(None, required) {
+				return Err(WispError::ExtensionsNotSupported(missing));
+			}
+
 			// user asked for a v1 client
 			let buffer_size =
 				validate_continue_packet(&Packet::decode(rx.next_erroring().await?)?)?;
@@ -158,32 +165,44 @@ impl<W: TransportWrite> Multiplexor<ClientImpl, W> {
 	/// Create a new client side multiplexor.
 	///
 	/// If `wisp_v2` is None a Wisp v1 connection is created, otherwise a Wisp v2 connection is created.
-	/// **It is not guaranteed that all extensions you specify are available.** You must manually check
-	/// if the extensions you need are available after the multiplexor has been created.
+	/// **It is not guaranteed that all extensions you specify are available.** You can specify the
+	/// extensions you require to be supported in the `required_extensions` array.
 	pub async fn new<R: TransportRead>(
 		rx: R,
 		tx: W,
 		wisp_v2: Option<WispV2Handshake>,
+		required_extensions: Vec<u8>,
 	) -> Result<MuxResult<ClientImpl, W>, WispError> {
-		Self::create::<R, NoTimer>(rx, tx, wisp_v2, None, ClientImpl, ClientActor).await
+		Self::create::<R, NoTimer>(
+			rx,
+			tx,
+			wisp_v2,
+			required_extensions,
+			None,
+			ClientImpl,
+			ClientActor,
+		)
+		.await
 	}
 
 	/// Create a new client side multiplexor with a handshake timeout.
 	///
 	/// If `wisp_v2` is None a Wisp v1 connection is created, otherwise a Wisp v2 connection is created.
-	/// **It is not guaranteed that all extensions you specify are available.** You must manually check
-	/// if the extensions you need are available after the multiplexor has been created.
+	/// **It is not guaranteed that all extensions you specify are available.** You can specify the
+	/// extensions you require to be supported in the `required_extensions` array.
 	pub async fn with_timeout<R: TransportRead, T: Timer>(
 		rx: R,
 		tx: W,
 		timer: T,
 		timeout: Duration,
 		wisp_v2: Option<WispV2Handshake>,
+		required_extensions: Vec<u8>,
 	) -> Result<MuxResult<ClientImpl, W>, WispError> {
 		Self::create(
 			rx,
 			tx,
 			wisp_v2,
+			required_extensions,
 			Some((timer, timeout)),
 			ClientImpl,
 			ClientActor,

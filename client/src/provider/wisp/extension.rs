@@ -179,7 +179,12 @@ fn builder_to_jsval(
 }
 
 #[wasm_bindgen]
-pub struct JsWispV2Handshake(#[wasm_bindgen(skip)] pub WispV2Handshake);
+pub struct JsWispV2Handshake {
+	#[wasm_bindgen(skip)]
+	pub handshake: WispV2Handshake,
+	#[wasm_bindgen(skip)]
+	pub required: Vec<u8>,
+}
 
 #[wasm_bindgen]
 impl JsWispV2Handshake {
@@ -212,6 +217,9 @@ impl JsWispV2Handshake {
 				})
 			});
 
-		Self(WispV2Handshake::new(builders.0, required).with_middleware(closure))
+		Self {
+			handshake: WispV2Handshake::new(builders.0).with_middleware(closure),
+			required,
+		}
 	}
 }

@@ -5,6 +5,7 @@ use std::{
 	path::PathBuf,
 };
 
+use anyhow::bail;
 use cfg_if::cfg_if;
 use clap::{Parser, ValueEnum};
 use lazy_static::lazy_static;
@@ -402,7 +403,7 @@ impl WispConfig {
 	}
 
 	#[doc(hidden)]
-	pub async fn to_opts(&self) -> anyhow::Result<(Option<WispV2Handshake>, u32)> {
+	pub async fn to_opts(&self) -> anyhow::Result<(Option<WispV2Handshake>, Vec<u8>, u32)> {
 		if self.wisp_v2 {
 			let mut extensions: Vec<AnyProtocolExtensionBuilder> = Vec::new();
 			let mut required_extensions: Vec<u8> = Vec::new();
@@ -447,11 +448,16 @@ impl WispConfig {
 			}
 
 			Ok((
-				Some(WispV2Handshake::new(extensions, required_extensions)),
+				Some(WispV2Handshake::new(extensions)),
+				required_extensions,
 				self.buffer_size,
 			))
 		} else {
-			Ok((None, self.buffer_size))
+			if self.certificate_extension_required || self.password_extension_required {
+				bail!("certificate/password extension cannot be required without wisp v2");
+			}
+
+			Ok((None, vec![], self.buffer_size))
 		}
 	}
 }

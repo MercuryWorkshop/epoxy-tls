@@ -151,11 +151,12 @@ async fn create_mux(
 		ClientMux::new(
 			rx,
 			tx,
-			Some(WispV2Handshake::new(extensions, extension_ids)),
+			Some(WispV2Handshake::new(extensions)),
+			extension_ids,
 		)
 		.await?
 	} else {
-		ClientMux::new(rx, tx, None).await?
+		ClientMux::new(rx, tx, None, extension_ids).await?
 	};
 
 	Ok((mux, fut))

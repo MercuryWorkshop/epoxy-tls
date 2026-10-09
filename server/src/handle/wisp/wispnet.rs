@@ -218,10 +218,8 @@ pub async fn handle_wispnet(stream: WispResult, id: String) -> Result<()> {
 	let net_id = WISPNET_IDS.fetch_add(1, Ordering::SeqCst);
 
 	let extensions = vec![WispnetServerProtocolExtensionBuilder(net_id).into()];
-	let handshake = Some(WispV2Handshake::new(
-		extensions,
-		vec![WispnetServerProtocolExtension::ID],
-	));
+	let handshake = Some(WispV2Handshake::new(extensions));
+	let required = vec![WispnetServerProtocolExtension::ID];
 
 	let (mux, fut) = if let Some(timeout) = CONFIG.wisp.handshake_timeout {
 		Box::pin(ClientMux::with_timeout(
@@ -230,10 +228,11 @@ pub async fn handle_wispnet(stream: WispResult, id: String) -> Result<()> {
 			TokioTimer,
 			Duration::from_secs(timeout),
 			handshake,
+			required,
 		))
 		.await
 	} else {
-		Box::pin(ClientMux::new(read, write, handshake)).await
+		Box::pin(ClientMux::new(read, write, handshake, required)).await
 	}
 	.context("failed to create client multiplexor")?;
 

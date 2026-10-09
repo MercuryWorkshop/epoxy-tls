@@ -331,11 +331,11 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 	cfg_if! {
 		if #[cfg(feature = "twisp")] {
 			let twisp_map = twisp::new_map();
-			let (extensions, buffer_size) = CONFIG.wisp.to_opts().await?;
+			let (extensions, required, buffer_size) = CONFIG.wisp.to_opts().await?;
 
 			let extensions = extensions.map(|x| x.with_extension(twisp::new_ext(twisp_map.clone())));
 		} else {
-			let (extensions, buffer_size) = CONFIG.wisp.to_opts().await?;
+			let (extensions, required, buffer_size) = CONFIG.wisp.to_opts().await?;
 		}
 	}
 
@@ -358,6 +358,7 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 			Duration::from_secs(timeout),
 			buffer_size,
 			if is_v2 { extensions } else { None },
+			required,
 		))
 		.await
 	} else {
@@ -366,6 +367,7 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 			write,
 			buffer_size,
 			if is_v2 { extensions } else { None },
+			required,
 		))
 		.await
 	}

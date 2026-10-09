@@ -113,7 +113,11 @@ impl WispProviderInner {
 				protocol: v2.is_some().then(ws_protocol),
 			})
 			.await?;
-		let (mux, fut) = ClientMux::new(stream.read, stream.write, v2.map(|x| x.0)).await?;
+		let (v2, required) = match v2 {
+			Some(x) => (Some(x.handshake), x.required),
+			None => (None, Vec::new()),
+		};
+		let (mux, fut) = ClientMux::new(stream.read, stream.write, v2, required).await?;
 
 		guard.generation = guard.generation.wrapping_add(1);
 		let generation = guard.generation;

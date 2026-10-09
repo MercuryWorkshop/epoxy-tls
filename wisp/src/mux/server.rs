@@ -78,11 +78,11 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ServerImpl<W> {
 		rx: &mut R,
 		tx: &mut LockedWebSocketWrite<W>,
 		v2: Option<WispV2Handshake>,
+		required: Vec<u8>,
 	) -> Result<WispHandshakeResult, WispError> {
 		if let Some(WispV2Handshake {
 			mut builders,
 			closure,
-			required,
 		}) = v2
 		{
 			send_info_packet(tx, &mut builders, Role::Server).await?;
@@ -96,7 +96,9 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ServerImpl<W> {
 
 			match packet {
 				MaybeInfoPacket::Info(info) => {
-					if let Some(missing) = missing_required_extensions(Some(&info.extensions), required) {
+					if let Some(missing) =
+						missing_required_extensions(Some(&info.extensions), required)
+					{
 						tx.lock().await;
 						let mut handle = tx.get_handle();
 						handle
@@ -155,6 +157,10 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ServerImpl<W> {
 				}
 			}
 		} else {
+			if let Some(missing) = missing_required_extensions(None, required) {
+				return Err(WispError::ExtensionsNotSupported(missing));
+			}
+
 			// user asked for v1 server
 			tx.lock().await;
 			tx.get()
@@ -175,13 +181,14 @@ impl<W: TransportWrite> Multiplexor<ServerImpl<W>, W> {
 	/// Create a new server-side multiplexor.
 	///
 	/// If `wisp_v2` is None a Wisp v1 connection is created, otherwise a Wisp v2 connection is created.
-	/// **It is not guaranteed that all extensions you specify are available.** You must manually check
-	/// if the extensions you need are available after the multiplexor has been created.
+	/// **It is not guaranteed that all extensions you specify are available.** You can specify the
+	/// extensions you require to be supported in the `required_extensions` array.
 	pub async fn new<R: TransportRead>(
 		rx: R,
 		tx: W,
 		buffer_size: u32,
 		wisp_v2: Option<WispV2Handshake>,
+		required_extensions: Vec<u8>,
 	) -> Result<MuxResult<ServerImpl<W>, W>, WispError> {
 		let (stream_tx, stream_rx) = flume::unbounded();
 
@@ -191,14 +198,14 @@ impl<W: TransportWrite> Multiplexor<ServerImpl<W>, W> {
 		};
 		let actor = ServerActor { stream_tx };
 
-		Self::create::<R, NoTimer>(rx, tx, wisp_v2, None, mux, actor).await
+		Self::create::<R, NoTimer>(rx, tx, wisp_v2, required_extensions, None, mux, actor).await
 	}
 
 	/// Create a new server-side multiplexor with a handshake timeout.
 	///
 	/// If `wisp_v2` is None a Wisp v1 connection is created, otherwise a Wisp v2 connection is created.
-	/// **It is not guaranteed that all extensions you specify are available.** You must manually check
-	/// if the extensions you need are available after the multiplexor has been created.
+	/// **It is not guaranteed that all extensions you specify are available.** You can specify the
+	/// extensions you require to be supported in the `required_extensions` array.
 	pub async fn with_timeout<R: TransportRead, T: Timer>(
 		rx: R,
 		tx: W,
@@ -206,6 +213,7 @@ impl<W: TransportWrite> Multiplexor<ServerImpl<W>, W> {
 		timeout: Duration,
 		buffer_size: u32,
 		wisp_v2: Option<WispV2Handshake>,
+		required_extensions: Vec<u8>,
 	) -> Result<MuxResult<ServerImpl<W>, W>, WispError> {
 		let (stream_tx, stream_rx) = flume::unbounded();
 
@@ -215,7 +223,16 @@ impl<W: TransportWrite> Multiplexor<ServerImpl<W>, W> {
 		};
 		let actor = ServerActor { stream_tx };
 
-		Self::create(rx, tx, wisp_v2, Some((timer, timeout)), mux, actor).await
+		Self::create(
+			rx,
+			tx,
+			wisp_v2,
+			required_extensions,
+			Some((timer, timeout)),
+			mux,
+			actor,
+		)
+		.await
 	}
 
 	/// Wait for a stream to be created.

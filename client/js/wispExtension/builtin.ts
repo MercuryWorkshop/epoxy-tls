@@ -18,7 +18,8 @@ import { ProtocolExtension, ProtocolExtensionBuilder } from "./js";
 
 export class UdpProtocolExtensionBuilder extends ProtocolExtensionBuilder {
 	inner: EpxUdpProtocolExtensionBuilder;
-	readonly id = 0x01;
+	static readonly ID = 0x01;
+	readonly id = UdpProtocolExtensionBuilder.ID;
 
 	private constructor(inner: EpxUdpProtocolExtensionBuilder) {
 		super();
@@ -68,7 +69,8 @@ export class UdpProtocolExtension extends ProtocolExtension {
 
 export class MotdProtocolExtensionBuilder extends ProtocolExtensionBuilder {
 	inner: EpxMotdProtocolExtensionBuilder;
-	readonly id = 0x04;
+	static readonly ID = 0x04;
+	readonly id = MotdProtocolExtensionBuilder.ID;
 
 	private constructor(inner: EpxMotdProtocolExtensionBuilder) {
 		super();
@@ -131,7 +133,8 @@ export class MotdProtocolExtension extends ProtocolExtension {
 
 export class PasswordProtocolExtensionBuilder extends ProtocolExtensionBuilder {
 	inner: EpxPasswordProtocolExtensionBuilder;
-	readonly id = 0x02;
+	static readonly ID = 0x02;
+	readonly id = PasswordProtocolExtensionBuilder.ID;
 
 	private constructor(inner: EpxPasswordProtocolExtensionBuilder) {
 		super();
@@ -204,7 +207,8 @@ export class PasswordProtocolExtension extends ProtocolExtension {
 
 export class CertAuthProtocolExtensionBuilder extends ProtocolExtensionBuilder {
 	inner: EpxCertAuthProtocolExtensionBuilder;
-	readonly id = 0x03;
+	static readonly ID = 0x03;
+	readonly id = CertAuthProtocolExtensionBuilder.ID;
 
 	private constructor(inner: EpxCertAuthProtocolExtensionBuilder) {
 		super();

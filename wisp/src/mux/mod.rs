@@ -134,6 +134,7 @@ trait MultiplexorImpl<W: TransportWrite> {
 		rx: &mut R,
 		tx: &mut LockedWebSocketWrite<W>,
 		v2: Option<WispV2Handshake>,
+		required_extensions: Vec<u8>,
 	) -> Result<WispHandshakeResult, WispError>;
 }
 
@@ -154,6 +155,7 @@ impl<M: MultiplexorImpl<W>, W: TransportWrite> Multiplexor<M, W> {
 		mut rx: R,
 		tx: W,
 		wisp_v2: Option<WispV2Handshake>,
+		required_extensions: Vec<u8>,
 		timer: Option<(T, Duration)>,
 		mut muxer: M,
 		actor: M::Actor,
@@ -165,7 +167,7 @@ impl<M: MultiplexorImpl<W>, W: TransportWrite> Multiplexor<M, W> {
 		let mut tx = LockedWebSocketWrite::new(tx);
 		let handshake_result = if let Some((mut timer, duration)) = timer {
 			match select(
-				pin!(muxer.handshake(&mut rx, &mut tx, wisp_v2)),
+				pin!(muxer.handshake(&mut rx, &mut tx, wisp_v2, required_extensions)),
 				pin!(timer.sleep(duration)),
 			)
 			.await
@@ -174,7 +176,9 @@ impl<M: MultiplexorImpl<W>, W: TransportWrite> Multiplexor<M, W> {
 				Either::Right(_) => return Err(WispError::HandshakeTimedOut),
 			}
 		} else {
-			muxer.handshake(&mut rx, &mut tx, wisp_v2).await?
+			muxer
+				.handshake(&mut rx, &mut tx, wisp_v2, required_extensions)
+				.await?
 		};
 		let (extensions, extra_packet) = handshake_result.kind.into_parts();
 
@@ -283,7 +287,6 @@ pub type WispV2Middleware = dyn for<'a> Fn(
 /// Wisp V2 handshake and protocol extension settings wrapper struct.
 pub struct WispV2Handshake {
 	builders: Vec<AnyProtocolExtensionBuilder>,
-	required: Vec<u8>,
 	closure: Option<Box<WispV2Middleware>>,
 }
 
@@ -292,16 +295,14 @@ impl WispV2Handshake {
 	pub fn empty() -> Self {
 		Self {
 			builders: Vec::new(),
-			required: Vec::new(),
 			closure: None,
 		}
 	}
 
 	/// Create a Wisp V2 settings struct with some extensions.
-	pub fn new(builders: Vec<AnyProtocolExtensionBuilder>, required: Vec<u8>) -> Self {
+	pub fn new(builders: Vec<AnyProtocolExtensionBuilder>) -> Self {
 		Self {
 			builders,
-			required,
 			closure: None,
 		}
 	}
@@ -318,19 +319,5 @@ impl WispV2Handshake {
 		self.builders.push(extension);
 
 		self
-	}
-
-	/// Add a Wisp V2 extension to the list of extensions that has to be supported by the other side
-	/// in the settings struct.
-	pub fn with_required_extension(mut self, extension: u8) -> Self {
-		self.required.push(extension);
-
-		self
-	}
-
-	/// Add the UDP Wisp V2 extension to the list of extensions that has to be supported by the other side
-	/// in the settings struct.
-	pub fn with_udp_required_extension(self) -> Self {
-		self.with_required_extension(UdpProtocolExtension::ID)
 	}
 }
