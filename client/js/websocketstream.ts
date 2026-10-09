@@ -44,6 +44,14 @@ export class WebSocketStream<
 			reason,
 		}: WebSocketCloseInfo = {}) => ws.close(code, reason);
 
+		let closePromise = this.closed = new Promise<WebSocketCloseInfo>((resolve, reject) => {
+			ws.onclose = ({ code, reason }) => {
+				resolve({ closeCode: code, reason });
+				ws.removeEventListener("error", reject);
+			};
+			ws.addEventListener("error", reject);
+		});
+
 		this.opened = new Promise((resolve, reject) => {
 			ws.onopen = () => {
 				resolve({
@@ -56,6 +64,7 @@ export class WebSocketStream<
 										: new Uint8Array(data)) as any
 								);
 							ws.onerror = (e) => controller.error(e);
+							closePromise.then(() => { try { controller.close() } catch {} }, () => {})
 						},
 						cancel: closeWithInfo,
 					}),
@@ -71,14 +80,6 @@ export class WebSocketStream<
 					protocol: ws.protocol,
 					extensions: ws.extensions,
 				});
-				ws.removeEventListener("error", reject);
-			};
-			ws.addEventListener("error", reject);
-		});
-
-		this.closed = new Promise<WebSocketCloseInfo>((resolve, reject) => {
-			ws.onclose = ({ code, reason }) => {
-				resolve({ closeCode: code, reason });
 				ws.removeEventListener("error", reject);
 			};
 			ws.addEventListener("error", reject);

@@ -11,10 +11,14 @@ use wasm_bindgen_futures::spawn_local;
 use wisp_mux::{ClientMux, WispError, packet::StreamType};
 
 use crate::{
-	EpoxyError, EpoxyJsValErrorExt, client::ws_protocol, js_types::{JsWispV2ConnectionPrefs, WispExtensionList}, provider::{
+	EpoxyError, EpoxyJsValErrorExt,
+	client::ws_protocol,
+	js_types::{JsWispV2ConnectionPrefs, WispExtensionList},
+	provider::{
 		service::{WasmProvider, WasmWispProvider},
 		wisp::extension::{JsWispV2Handshake, RefScope, extension_to_jsval, to_wisp_v2_handshake},
-	}, send_wrapper::SendWrapper,
+	},
+	send_wrapper::SendWrapper,
 };
 
 use super::{
@@ -39,6 +43,7 @@ pub struct WispProviderReq {
 }
 
 struct WispProviderLocked {
+	generation: usize,
 	service: BoxProviderService<WispProviderReq, WispProviderStream, EpoxyError>,
 	mux: Option<ClientMux<WispProviderWrite>>,
 }
@@ -73,7 +78,11 @@ impl WispProviderInner {
 			None => Box::new(|| Ok(None)) as V2Func,
 		};
 		Self {
-			locked: Arc::new(Mutex::new(WispProviderLocked { service, mux: None })),
+			locked: Arc::new(Mutex::new(WispProviderLocked {
+				generation: 0,
+				service,
+				mux: None,
+			})),
 			server,
 			v2: SendWrapper(v2),
 		}
@@ -106,8 +115,15 @@ impl WispProviderInner {
 			.await?;
 		let (mux, fut) = ClientMux::new(stream.read, stream.write, v2.map(|x| x.0)).await?;
 
+		guard.generation = guard.generation.wrapping_add(1);
+		let generation = guard.generation;
+		let mux_lock = self.locked.clone();
 		spawn_local(async move {
 			let _ = fut.await;
+			let mut locked = mux_lock.lock().await;
+			if generation == locked.generation {
+				locked.mux.take();
+			}
 		});
 
 		guard.mux.replace(mux);
