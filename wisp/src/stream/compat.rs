@@ -35,13 +35,21 @@ impl<W: TransportWrite> Stream for MapToIo<W> {
 pub struct MuxStreamAsyncRead<W: TransportWrite> {
 	#[pin]
 	inner: IntoAsyncRead<MapToIo<W>>,
+	info: Arc<StreamInfo>,
 }
 
 impl<W: TransportWrite> MuxStreamAsyncRead<W> {
 	pub(crate) fn new(inner: MuxStreamRead<W>) -> Self {
+		let info = inner.info.clone();
 		Self {
 			inner: MapToIo(inner).into_async_read(),
+			info,
 		}
+	}
+
+	/// Get the stream's close reason, if it was closed.
+	pub fn get_close_reason(&self) -> Option<CloseReason> {
+		self.info.is_closed().then(|| self.info.get_reason())
 	}
 }
 
@@ -212,7 +220,7 @@ impl<W: TransportWrite> MuxStreamAsyncRW<W> {
 
 	/// Get the stream's close reason, if it was closed.
 	pub fn get_close_reason(&self) -> Option<CloseReason> {
-		self.write.get_close_reason()
+		self.read.get_close_reason()
 	}
 }
 
@@ -291,3 +299,75 @@ const _: () = {
 		}
 	}
 };
+
+#[cfg(test)]
+mod tests {
+	use std::time::Duration;
+
+	use futures::{channel::mpsc, AsyncReadExt, SinkExt};
+	use tokio::time::timeout;
+
+	use crate::{
+		packet::{CloseReason, Packet, StreamType},
+		ws::Payload,
+		ClientMux, WispError,
+	};
+
+	#[tokio::test]
+	async fn close_reason_is_per_stream() {
+		timeout(Duration::from_secs(5), async {
+			let (to_client, from_server) = mpsc::unbounded::<Result<Payload, WispError>>();
+			let (to_server, _server_rx) = mpsc::unbounded::<Payload>();
+			let tx = to_server.sink_map_err(|_| WispError::WsImplSocketClosed);
+
+			to_client
+				.unbounded_send(Ok(Packet::new_continue(0, 128).encode()))
+				.unwrap();
+			let (mux, actor) = ClientMux::new(from_server, tx, None)
+				.await
+				.unwrap()
+				.with_no_required_extensions();
+			tokio::spawn(actor);
+
+			let blocked = mux
+				.new_stream(StreamType::Tcp, "blocked.test".into(), 443)
+				.await
+				.unwrap();
+			let open = mux
+				.new_stream(StreamType::Tcp, "open.test".into(), 443)
+				.await
+				.unwrap();
+			let (blocked_id, open_id) = (blocked.get_stream_id(), open.get_stream_id());
+
+			to_client
+				.unbounded_send(Ok(Packet::new_close(
+					blocked_id,
+					CloseReason::ServerStreamBlockedAddress,
+				)
+				.encode()))
+				.unwrap();
+			let mut blocked = blocked.into_async_rw();
+			let mut buf = [0; 8];
+			assert_eq!(blocked.read(&mut buf).await.unwrap(), 0);
+			assert_eq!(
+				blocked.get_close_reason(),
+				Some(CloseReason::ServerStreamBlockedAddress)
+			);
+
+			let mut open = open.into_async_rw();
+			assert_eq!(open.get_close_reason(), None);
+			to_client
+				.unbounded_send(Ok(Packet::new_data(open_id, &b"hi"[..]).encode()))
+				.unwrap();
+			assert_eq!(open.read(&mut buf).await.unwrap(), 2);
+			assert_eq!(&buf[..2], b"hi");
+			assert_eq!(open.get_close_reason(), None);
+
+			drop(to_client);
+			let _ = open.read(&mut buf).await;
+			assert_eq!(open.get_close_reason(), None);
+		})
+		.await
+		.expect("close_reason_is_per_stream timed out");
+	}
+}

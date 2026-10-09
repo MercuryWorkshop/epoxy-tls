@@ -1,7 +1,7 @@
 use std::{
 	pin::pin,
 	sync::{
-		atomic::{AtomicU32, AtomicU8, Ordering},
+		atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering},
 		Arc, Mutex,
 	},
 	task::Context,
@@ -61,6 +61,7 @@ pub(crate) struct StreamInfo {
 	pub target_flow_control: u32,
 	flow_control: AtomicU32,
 	close_reason: AtomicU8,
+	closed: AtomicBool,
 	flow_waker: Mutex<Waiter>,
 }
 
@@ -80,6 +81,7 @@ impl StreamInfo {
 			flow_control: AtomicU32::new(buffer_size),
 			flow_waker: Mutex::new(Waiter::Woken),
 			close_reason: AtomicU8::new(CloseReason::Unknown.into()),
+			closed: AtomicBool::new(false),
 		}
 	}
 
@@ -129,6 +131,13 @@ impl StreamInfo {
 	}
 	pub fn set_reason(&self, reason: CloseReason) {
 		self.close_reason.store(reason.into(), Ordering::Relaxed);
+	}
+	pub fn set_closed_by_server(&self) {
+		self.closed.store(true, Ordering::Release);
+	}
+	/// Only true after a server CLOSE, not when the connection drops
+	pub fn is_closed(&self) -> bool {
+		self.closed.load(Ordering::Acquire)
 	}
 }
 
@@ -378,8 +387,9 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> MuxInner<R, W,
 	}
 
 	fn close_stream(stream: StreamMapValue, close: ClosePacket) {
-		drop(stream.stream);
+		// Dropping the channel wakes the reader, so set the reason first
 		stream.info.set_reason(close.reason);
+		drop(stream.stream);
 	}
 
 	fn handle_packet(&mut self, packet: Packet<'static>) -> Result<bool, WispError> {
@@ -416,6 +426,7 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> MuxInner<R, W,
 		}
 
 		if let Some(stream) = self.streams.remove(&stream_id) {
+			stream.info.set_closed_by_server();
 			Self::close_stream(stream, close);
 		}
 
