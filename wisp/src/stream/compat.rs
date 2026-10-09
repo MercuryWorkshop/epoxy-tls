@@ -370,4 +370,51 @@ mod tests {
 		.await
 		.expect("close_reason_is_per_stream timed out");
 	}
+
+	#[tokio::test]
+	async fn data_before_close_is_read() {
+		timeout(Duration::from_secs(5), async {
+			let (to_client, from_server) = mpsc::unbounded::<Result<Payload, WispError>>();
+			let (to_server, _server_rx) = mpsc::unbounded::<Payload>();
+			let tx = to_server.sink_map_err(|_| WispError::WsImplSocketClosed);
+
+			to_client
+				.unbounded_send(Ok(Packet::new_continue(0, 128).encode()))
+				.unwrap();
+			let (mux, actor) = ClientMux::new(from_server, tx, None)
+				.await
+				.unwrap()
+				.with_no_required_extensions();
+			tokio::spawn(actor);
+
+			let stream = mux
+				.new_stream(StreamType::Tcp, "stream.test".into(), 443)
+				.await
+				.unwrap();
+			let id = stream.get_stream_id();
+
+			// the data and the close are both queued before the stream is read
+			to_client
+				.unbounded_send(Ok(Packet::new_data(id, &[0x41; 64][..]).encode()))
+				.unwrap();
+			to_client
+				.unbounded_send(Ok(Packet::new_close(id, CloseReason::Voluntary).encode()))
+				.unwrap();
+
+			let mut stream = stream.into_async_rw();
+			let mut buf = [0; 128];
+			let mut total = 0;
+			loop {
+				match stream.read(&mut buf[total..]).await.unwrap() {
+					0 => break,
+					n => total += n,
+				}
+			}
+			assert_eq!(total, 64);
+			assert_eq!(&buf[..64], &[0x41; 64][..]);
+			assert_eq!(stream.get_close_reason(), Some(CloseReason::Voluntary));
+		})
+		.await
+		.expect("data_before_close_is_read timed out");
+	}
 }
