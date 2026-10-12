@@ -1,4 +1,10 @@
-import { Client, ClientReqBuilder, JsSocket, JsTlsSocket, Redirect } from "epoxy/wbg";
+import {
+	Client,
+	ClientReqBuilder,
+	JsSocket,
+	JsTlsSocket,
+	Redirect,
+} from "epoxy/wbg";
 import { SocketProvider } from "./provider";
 import { decode, encode, EpoxyResponse, EpoxyRawHeaders } from "./util";
 
@@ -228,44 +234,40 @@ function normalizeRequest(
 	resource: Request | URL | string,
 	options: RequestInit = {}
 ): NormalizedRequest {
-	let inputMethod = resource instanceof Request ? resource.method : "GET";
-	let method = normalizeMethod(options.method ?? inputMethod);
+	let input = resource instanceof Request ? resource : undefined;
+	let method = normalizeMethod(options.method ?? input?.method ?? "GET");
 	let headers = new HeaderList();
 
 	if (options.headers !== undefined) {
 		headers.fill(options.headers);
-	} else if (resource instanceof Request) {
-		headers.fill(resource.headers);
+	} else if (input !== undefined) {
+		headers.fill(input.headers);
 	}
 
-	let hasInitBody = "body" in options && options.body != null;
-	let inheritedBody = resource instanceof Request ? resource.body : null;
-	if (
-		(hasInitBody || inheritedBody !== null) &&
-		(method === "GET" || method === "HEAD")
-	) {
+	let bodySource = options.body ?? input?.body;
+	if (bodySource != null && (method === "GET" || method === "HEAD")) {
 		throw new TypeError("Request with GET/HEAD method cannot have body");
 	}
 
-	let browserInit: RequestInit & { duplex?: string } = {
+	// Response validates stream usability without requiring Request's duplex option.
+	let streamBody =
+		bodySource instanceof ReadableStream
+			? new Response(bodySource).body
+			: undefined;
+	let inputMode = input?.mode === "navigate" ? "same-origin" : input?.mode;
+	// Use the URL so an input Request's body cannot be inherited by the constructor.
+	let browserRequest = new Request(input?.url ?? resource, {
 		...options,
-		headers: undefined,
-		method: hasInitBody
-			? "POST"
-			: resource instanceof Request
-				? resource.method
-				: undefined,
-		duplex: "half",
-	};
-	if (!hasInitBody) {
-		delete browserInit.body;
-	}
-
-	let browserRequest = new Request(resource, browserInit);
-	let body = browserRequest.body as ReadableStream<Uint8Array> | null;
-	let length = inferBodyLength(hasInitBody ? options.body : undefined);
+		headers: input?.headers,
+		method: "POST",
+		body: streamBody ? undefined : bodySource,
+		mode: options.mode === undefined ? inputMode : options.mode,
+		cache: options.cache === undefined ? input?.cache : options.cache,
+		redirect:
+			options.redirect === undefined ? input?.redirect : options.redirect,
+		signal: options.signal === undefined ? input?.signal : options.signal,
+	});
 	let contentType = browserRequest.headers.get("content-type");
-	let redirect = normalizeRedirect(browserRequest.redirect);
 	if (contentType !== null && !headers.has("content-type")) {
 		headers.append("Content-Type", contentType);
 	}
@@ -274,9 +276,9 @@ function normalizeRequest(
 		uri: browserRequest.url,
 		method,
 		headers: headers.toTuples(),
-		redirect,
-		body: body ?? undefined,
-		length,
+		redirect: normalizeRedirect(browserRequest.redirect),
+		body: streamBody ?? browserRequest.body ?? undefined,
+		length: inferBodyLength(bodySource),
 		signal: browserRequest.signal,
 	};
 }
