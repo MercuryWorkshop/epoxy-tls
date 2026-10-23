@@ -17,7 +17,7 @@ use wasm_bindgen_futures::spawn_local;
 use webpki_roots::TLS_SERVER_ROOTS;
 use wisp_mux::{
 	extensions::{udp::UdpProtocolExtensionBuilder, AnyProtocolExtensionBuilder},
-	packet::StreamType,
+	packet::{CloseReason, StreamType},
 	stream::{MuxStream, MuxStreamAsyncRW},
 	ws::{TransportRead, TransportWrite},
 	ClientMux, WispV2Handshake,
@@ -221,7 +221,10 @@ impl StreamProvider {
 			Err((err, stream)) => {
 				if matches!(err.kind(), ErrorKind::UnexpectedEof) {
 					// maybe actually a wisp error?
-					if let Some(reason) = stream.get_close_reason() {
+					if let Some(reason) = stream
+						.get_close_reason()
+						.filter(|reason| *reason != CloseReason::Unknown)
+					{
 						return Err(EpoxyError::WispCloseReason(reason, err));
 					}
 				}

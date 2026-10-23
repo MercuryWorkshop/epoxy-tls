@@ -77,10 +77,6 @@ impl<W: TransportWrite> Stream for MuxStreamRead<W> {
 	type Item = Result<Payload, WispError>;
 
 	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-		if self.inner.is_disconnected() {
-			return Poll::Ready(None);
-		}
-
 		let was_reading = self.chunk.is_some();
 		let chunk = if let Some(chunk) = self.chunk.take() {
 			chunk
@@ -103,7 +99,8 @@ impl<W: TransportWrite> Stream for MuxStreamRead<W> {
 			};
 		}
 
-		if self.info.flow_status == FlowControl::EnabledSendMessages {
+		// a closed or dropped stream gets no buffer updates, but its buffered data is still read
+		if self.info.flow_status == FlowControl::EnabledSendMessages && !self.inner.is_disconnected() {
 			if !was_reading {
 				self.read_cnt += 1;
 			}
