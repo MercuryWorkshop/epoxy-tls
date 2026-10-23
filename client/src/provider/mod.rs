@@ -17,9 +17,8 @@ use service::{BoxProviderService, ProviderService};
 use tower::Service;
 use webpki_roots::TLS_SERVER_ROOTS;
 
-use crate::{EpoxyError, EpoxyErrorExt, provider::extra_roots::EXTRA_TLS_SERVER_ROOTS};
+use crate::{EpoxyError, EpoxyErrorExt};
 
-mod extra_roots;
 pub mod js;
 pub mod service;
 pub mod wisp;
@@ -177,13 +176,7 @@ impl StreamProvider {
 		let provider = Arc::new(futures_rustls::rustls::crypto::ring::default_provider());
 		let mut client_config = ClientConfig::builder_with_provider(provider.clone())
 			.with_safe_default_protocol_versions()?
-			.with_root_certificates(
-				TLS_SERVER_ROOTS
-					.iter()
-					.chain(EXTRA_TLS_SERVER_ROOTS.iter())
-					.cloned()
-					.collect::<RootCertStore>(),
-			)
+			.with_root_certificates(TLS_SERVER_ROOTS.iter().cloned().collect::<RootCertStore>())
 			.with_no_client_auth();
 
 		if let Some(protocols) = alpn_protocols {
