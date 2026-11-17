@@ -16,7 +16,7 @@ use rustc_hash::FxHashMap;
 
 use crate::{
 	extensions::AnyProtocolExtension,
-	locked_sink::Waiter,
+	waiters::Waiter,
 	packet::{
 		ClosePacket, CloseReason, ConnectPacket, ContinuePacket, MaybeExtensionPacket, Packet,
 		PacketType, StreamType,

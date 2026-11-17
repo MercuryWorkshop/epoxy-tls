@@ -7,6 +7,7 @@ use thiserror::Error as ErrorDerive;
 
 pub mod extensions;
 mod locked_sink;
+mod waiters;
 mod mux;
 pub mod packet;
 pub mod stream;
