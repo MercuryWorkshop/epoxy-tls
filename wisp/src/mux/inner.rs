@@ -16,12 +16,12 @@ use rustc_hash::FxHashMap;
 
 use crate::{
 	extensions::AnyProtocolExtension,
-	waiters::Waiter,
 	packet::{
 		ClosePacket, CloseReason, ConnectPacket, ContinuePacket, MaybeExtensionPacket, Packet,
 		PacketType, StreamType,
 	},
 	stream::MuxStream,
+	waiters::Waiter,
 	ws::{Payload, TransportRead, TransportWrite},
 	LockedWebSocketWrite, WispError,
 };
@@ -364,11 +364,8 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> MuxInner<R, W,
 
 	fn add_stream(&mut self, id: u32, ty: StreamType) -> MuxStream<W> {
 		let flow = M::get_flow_control(ty, &self.flow_stream_types);
-		let (data_tx, data_rx) = if flow == FlowControl::EnabledSendMessages {
-			flume::bounded(self.buffer_size as usize)
-		} else {
-			flume::unbounded()
-		};
+		// just drop packets if they go too fast to avoid us buffering
+		let (data_tx, data_rx) = flume::bounded(self.buffer_size as usize);
 
 		let info = Arc::new(StreamInfo::new(id, flow, self.buffer_size));
 		let val = StreamMapValue {
