@@ -54,23 +54,20 @@ impl WispHandshakeResultKind {
 
 async fn handle_handshake<R: TransportRead, W: TransportWrite>(
 	read: &mut R,
-	write: &mut LockedWebSocketWrite<W>,
+	write: &mut W,
 	extensions: &mut [AnyProtocolExtension],
 ) -> Result<Option<(CloseReason, WispError)>, WispError> {
-	write.lock().await;
-	let mut handle = write.get_handle();
 	for extension in extensions {
-		if let Some(reason) = extension.handle_handshake(read, &mut handle).await? {
+		if let Some(reason) = extension.handle_handshake(read, write).await? {
 			return Ok(Some(reason));
 		}
 	}
-	drop(handle);
 
 	Ok(None)
 }
 
 async fn send_info_packet<W: TransportWrite>(
-	write: &mut LockedWebSocketWrite<W>,
+	tx: &mut W,
 	builders: &mut [AnyProtocolExtensionBuilder],
 	role: Role,
 ) -> Result<(), WispError> {
@@ -85,11 +82,7 @@ async fn send_info_packet<W: TransportWrite>(
 	}
 	.encode();
 
-	write.lock().await;
-	let ret = write.get().send(packet).await;
-	write.unlock();
-
-	ret
+	tx.send(packet).await
 }
 
 fn validate_continue_packet(packet: &Packet) -> Result<u32, WispError> {
@@ -132,7 +125,7 @@ trait MultiplexorImpl<W: TransportWrite> {
 	async fn handshake<R: TransportRead>(
 		&mut self,
 		rx: &mut R,
-		tx: &mut LockedWebSocketWrite<W>,
+		tx: &mut W,
 		v2: Option<WispV2Handshake>,
 		required_extensions: Vec<u8>,
 	) -> Result<WispHandshakeResult, WispError>;
@@ -153,7 +146,7 @@ pub struct Multiplexor<M: MultiplexorImpl<W>, W: TransportWrite> {
 impl<M: MultiplexorImpl<W>, W: TransportWrite> Multiplexor<M, W> {
 	async fn create<R, T>(
 		mut rx: R,
-		tx: W,
+		mut tx: W,
 		wisp_v2: Option<WispV2Handshake>,
 		required_extensions: Vec<u8>,
 		timer: Option<(T, Duration)>,
@@ -164,7 +157,6 @@ impl<M: MultiplexorImpl<W>, W: TransportWrite> Multiplexor<M, W> {
 		R: TransportRead,
 		T: Timer,
 	{
-		let mut tx = LockedWebSocketWrite::new(tx);
 		let handshake_result = if let Some((mut timer, duration)) = timer {
 			match select(
 				pin!(muxer.handshake(&mut rx, &mut tx, wisp_v2, required_extensions)),
@@ -182,6 +174,7 @@ impl<M: MultiplexorImpl<W>, W: TransportWrite> Multiplexor<M, W> {
 		};
 		let (extensions, extra_packet) = handshake_result.kind.into_parts();
 
+		let tx = LockedWebSocketWrite::new(tx);
 		let MuxInnerResult { mux, actor_tx } = MuxInner::new(
 			rx,
 			tx.clone(),

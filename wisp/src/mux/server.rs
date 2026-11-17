@@ -3,7 +3,6 @@ use std::time::Duration;
 use futures::SinkExt;
 
 use crate::{
-	locked_sink::LockedWebSocketWrite,
 	packet::{CloseReason, ConnectPacket, MaybeInfoPacket, Packet, StreamType},
 	stream::MuxStream,
 	timer::{NoTimer, Timer},
@@ -76,7 +75,7 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ServerImpl<W> {
 	async fn handshake<R: TransportRead>(
 		&mut self,
 		rx: &mut R,
-		tx: &mut LockedWebSocketWrite<W>,
+		tx: &mut W,
 		v2: Option<WispV2Handshake>,
 		required: Vec<u8>,
 	) -> Result<WispHandshakeResult, WispError> {
@@ -99,14 +98,9 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ServerImpl<W> {
 					if let Some(missing) =
 						missing_required_extensions(Some(&info.extensions), required)
 					{
-						tx.lock().await;
-						let mut handle = tx.get_handle();
-						handle
-							.send(
-								Packet::new_close(0, CloseReason::ExtensionsIncompatible).encode(),
-							)
+						tx.send(Packet::new_close(0, CloseReason::ExtensionsIncompatible).encode())
 							.await?;
-						handle.close().await?;
+						tx.close().await?;
 
 						return Err(WispError::ExtensionsNotSupported(missing));
 					}
@@ -117,19 +111,13 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ServerImpl<W> {
 					if let Some((close_reason, err)) =
 						handle_handshake(rx, tx, &mut supported_extensions).await?
 					{
-						tx.lock().await;
-						let mut handle = tx.get_handle();
-						handle
-							.send(Packet::new_close(0, close_reason).encode())
-							.await?;
-						handle.close().await?;
+						tx.send(Packet::new_close(0, close_reason).encode()).await?;
+						tx.close().await?;
 
 						return Err(err);
 					}
 
-					tx.lock().await;
-					tx.get_handle()
-						.send(Packet::new_continue(0, self.buffer_size).encode())
+					tx.send(Packet::new_continue(0, self.buffer_size).encode())
 						.await?;
 
 					// v2 client
@@ -162,11 +150,8 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ServerImpl<W> {
 			}
 
 			// user asked for v1 server
-			tx.lock().await;
-			tx.get()
-				.send(Packet::new_continue(0, self.buffer_size).encode())
+			tx.send(Packet::new_continue(0, self.buffer_size).encode())
 				.await?;
-			tx.unlock();
 
 			Ok(WispHandshakeResult {
 				kind: WispHandshakeResultKind::V1 { packet: None },

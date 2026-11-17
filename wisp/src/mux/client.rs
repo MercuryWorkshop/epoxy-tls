@@ -9,7 +9,7 @@ use crate::{
 	stream::MuxStream,
 	timer::{NoTimer, Timer},
 	ws::{TransportRead, TransportReadExt, TransportWrite},
-	LockedWebSocketWrite, Role, WispError,
+	Role, WispError,
 };
 
 use super::{
@@ -63,7 +63,7 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
 	async fn handshake<R: TransportRead>(
 		&mut self,
 		rx: &mut R,
-		tx: &mut LockedWebSocketWrite<W>,
+		tx: &mut W,
 		v2: Option<WispV2Handshake>,
 		required: Vec<u8>,
 	) -> Result<WispHandshakeResult, WispError> {
@@ -79,7 +79,7 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
 			match packet {
 				MaybeInfoPacket::Info(info) => {
 					// v2 server
-					
+
 					if let Some(closure) = closure {
 						(closure)(&mut builders).await?;
 					}
@@ -87,14 +87,9 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
 					if let Some(missing) =
 						missing_required_extensions(Some(&info.extensions), required)
 					{
-						tx.lock().await;
-						let mut handle = tx.get_handle();
-						handle
-							.send(
-								Packet::new_close(0, CloseReason::ExtensionsIncompatible).encode(),
-							)
+						tx.send(Packet::new_close(0, CloseReason::ExtensionsIncompatible).encode())
 							.await?;
-						handle.close().await?;
+						tx.close().await?;
 
 						return Err(WispError::ExtensionsNotSupported(missing));
 					}
@@ -105,12 +100,8 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
 					if let Some((close_reason, err)) =
 						handle_handshake(rx, tx, &mut supported_extensions).await?
 					{
-						tx.lock().await;
-						let mut handle = tx.get_handle();
-						handle
-							.send(Packet::new_close(0, close_reason).encode())
-							.await?;
-						handle.close().await?;
+						tx.send(Packet::new_close(0, close_reason).encode()).await?;
+						tx.close().await?;
 
 						return Err(err);
 					}
