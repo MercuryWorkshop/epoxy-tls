@@ -20,8 +20,6 @@ use wisp_mux::{
 	WispError,
 };
 
-use crate::route::WispStreamWrite;
-
 pub type TwispMap = Arc<Mutex<HashMap<u32, RawFd>>>;
 
 pub const STREAM_TYPE: u8 = 0x03;
@@ -63,15 +61,15 @@ impl ProtocolExtension for TWispServerProtocolExtension {
 	async fn handle_packet(
 		&mut self,
 		packet_type: u8,
+		stream_id: u32,
 		mut packet: Bytes,
 		_: &mut dyn TransportRead,
 		_: &mut dyn TransportWrite,
 	) -> Result<(), WispError> {
 		if packet_type == 0xF0 {
-			if packet.remaining() < 4 + 2 + 2 {
+			if packet.remaining() < 2 + 2 {
 				return Err(WispError::PacketTooSmall);
 			}
-			let stream_id = packet.get_u32_le();
 			let row = packet.get_u16_le();
 			let col = packet.get_u16_le();
 
@@ -130,8 +128,8 @@ pub fn new_ext(map: TwispMap) -> AnyProtocolExtensionBuilder {
 
 pub async fn handle_twisp(
 	id: u32,
-	streamrx: &mut MuxStreamAsyncRead<WispStreamWrite>,
-	streamtx: &mut MuxStreamAsyncWrite<WispStreamWrite>,
+	streamrx: &mut MuxStreamAsyncRead,
+	streamtx: &mut MuxStreamAsyncWrite,
 	map: TwispMap,
 	mut pty: Pty,
 	mut cmd: Child,

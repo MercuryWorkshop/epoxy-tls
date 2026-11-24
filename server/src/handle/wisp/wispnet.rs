@@ -23,14 +23,10 @@ use wisp_mux::{
 	ClientMux, Role, WispError, WispV2Handshake,
 };
 
-use crate::{
-	route::{WispResult, WispStreamWrite},
-	stream::ClientStream,
-	CLIENTS, CONFIG,
-};
+use crate::{route::WispResult, stream::ClientStream, CLIENTS, CONFIG};
 
 struct WispnetClient {
-	mux: ClientMux<WispStreamWrite>,
+	mux: ClientMux,
 	id: String,
 	private: bool,
 }
@@ -109,19 +105,12 @@ impl ProtocolExtension for WispnetServerProtocolExtension {
 	async fn handle_packet(
 		&mut self,
 		packet_type: u8,
-		mut packet: Bytes,
+		_stream_id: u32,
+		_packet: Bytes,
 		_: &mut dyn TransportRead,
 		write: &mut dyn TransportWrite,
 	) -> Result<(), WispError> {
 		if packet_type == Self::ID {
-			if packet.remaining() < 4 {
-				return Err(WispError::PacketTooSmall);
-			}
-			let id = packet.get_u32_le();
-			if id != 0 {
-				return Err(WispError::InvalidStreamId(id));
-			}
-
 			let mut out = BytesMut::new();
 			out.put_u8(Self::ID);
 			out.put_u32_le(0);
@@ -158,8 +147,8 @@ pub async fn route_wispnet(server: u32, packet: ConnectPacket) -> Result<ClientS
 }
 
 async fn copy_wisp(
-	mut rx: MuxStreamRead<WispStreamWrite>,
-	mut tx: MuxStreamWrite<WispStreamWrite>,
+	mut rx: MuxStreamRead,
+	mut tx: MuxStreamWrite,
 	#[cfg(feature = "speed-limit")] limiter: async_speed_limit::Limiter<
 		async_speed_limit::clock::StandardClock,
 	>,
@@ -175,8 +164,8 @@ async fn copy_wisp(
 }
 
 pub async fn handle_stream(
-	mux: MuxStream<WispStreamWrite>,
-	wisp: MuxStream<WispStreamWrite>,
+	mux: MuxStream,
+	wisp: MuxStream,
 	mux_id: String,
 	uuid: Uuid,
 	resolved_stream: ConnectPacket,
@@ -195,7 +184,7 @@ pub async fn handle_stream(
 			.insert(uuid, (resolved_stream.clone(), resolved_stream));
 	}
 
-	let closer = mux.get_close_handle();
+	let mut closer = mux.get_close_handle();
 
 	let (muxread, muxwrite) = mux.into_split();
 	let (wispread, wispwrite) = wisp.into_split();

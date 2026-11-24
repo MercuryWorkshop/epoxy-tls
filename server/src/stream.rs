@@ -23,7 +23,7 @@ use wisp_mux::{
 	stream::MuxStream,
 };
 
-use crate::{route::WispStreamWrite, CONFIG, RESOLVER};
+use crate::{CONFIG, RESOLVER};
 
 fn match_addr(str: &str, allowed: &RegexSet, blocked: &RegexSet) -> bool {
 	blocked.is_match(str) && !allowed.is_match(str)
@@ -51,7 +51,7 @@ pub enum ClientStream {
 	UdpSocks5(Socks5Datagram<TcpStream>, TargetAddr),
 	#[cfg(feature = "twisp")]
 	Pty(tokio::process::Child, pty_process::Pty),
-	Wispnet(MuxStream<WispStreamWrite>, String),
+	Wispnet(MuxStream, String),
 
 	NoResolvedAddrs,
 	Blocked,

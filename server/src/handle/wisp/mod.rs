@@ -8,14 +8,13 @@ use std::{sync::Arc, time::Duration};
 use anyhow::{bail, Context};
 use cfg_if::cfg_if;
 use event_listener::Event;
-use futures_util::{future::Either, FutureExt, SinkExt, StreamExt};
+use futures_util::{FutureExt, StreamExt};
 use log::{debug, trace};
 use tokio::{
 	io::{AsyncWriteExt, BufReader},
 	net::TcpStream,
 	select,
 	task::JoinSet,
-	time::interval,
 };
 use tokio_util::compat::{FuturesAsyncReadCompatExt, FuturesAsyncWriteCompatExt};
 use uuid::Uuid;
@@ -28,13 +27,13 @@ use wisp_mux::{
 use wispnet::route_wispnet;
 
 use crate::{
-	route::{WispResult, WispStreamWrite, WispWsStreamWrite},
+	route::WispResult,
 	stream::{ClientStream, ResolvedPacket},
 	CLIENTS, CONFIG,
 };
 
 async fn copy_fast(
-	mux: MuxStream<WispStreamWrite>,
+	mux: MuxStream,
 	tcp: TcpStream,
 	#[cfg(feature = "speed-limit")] read_limit: async_speed_limit::Limiter<
 		async_speed_limit::clock::StandardClock,
@@ -68,7 +67,7 @@ async fn copy_fast(
 
 async fn resolve_stream(
 	connect: ConnectPacket,
-	muxstream: &MuxStream<WispStreamWrite>,
+	muxstream: &mut MuxStream,
 ) -> Option<(ConnectPacket, ConnectPacket, ClientStream)> {
 	let requested_stream = connect.clone();
 
@@ -113,7 +112,7 @@ async fn resolve_stream(
 }
 
 async fn forward_stream(
-	muxstream: MuxStream<WispStreamWrite>,
+	mut muxstream: MuxStream,
 	stream: ClientStream,
 	resolved_stream: ConnectPacket,
 	uuid: Uuid,
@@ -127,7 +126,7 @@ async fn forward_stream(
 ) {
 	match stream {
 		ClientStream::Tcp(stream) => {
-			let closer = muxstream.get_close_handle();
+			let mut closer = muxstream.get_close_handle();
 
 			let ret: anyhow::Result<()> = async {
 				copy_fast(
@@ -153,7 +152,7 @@ async fn forward_stream(
 			}
 		}
 		ClientStream::Udp(stream) => {
-			let closer = muxstream.get_close_handle();
+			let mut closer = muxstream.get_close_handle();
 			let (mut read, write) = muxstream.into_split();
 			let mut write = write.into_async_write().compat_write();
 
@@ -187,7 +186,7 @@ async fn forward_stream(
 			}
 		}
 		ClientStream::UdpSocks5(stream, target) => {
-			let closer = muxstream.get_close_handle();
+			let mut closer = muxstream.get_close_handle();
 			let (mut read, write) = muxstream.into_split();
 			let mut write = write.into_async_write().compat_write();
 
@@ -225,7 +224,7 @@ async fn forward_stream(
 		}
 		#[cfg(feature = "twisp")]
 		ClientStream::Pty(cmd, pty) => {
-			let closer = muxstream.get_close_handle();
+			let mut closer = muxstream.get_close_handle();
 			let id = muxstream.get_stream_id();
 			let (mut rx, mut tx) = muxstream.into_async_rw().into_split();
 
@@ -268,7 +267,7 @@ async fn forward_stream(
 
 async fn handle_stream(
 	connect: ConnectPacket,
-	muxstream: MuxStream<WispStreamWrite>,
+	mut muxstream: MuxStream,
 	id: String,
 	event: Arc<Event>,
 	#[cfg(feature = "twisp")] twisp_map: twisp::TwispMap,
@@ -280,7 +279,7 @@ async fn handle_stream(
 	>,
 ) {
 	let Some((requested_stream, resolved_stream, stream)) =
-		resolve_stream(connect, &muxstream).await
+		resolve_stream(connect, &mut muxstream).await
 	else {
 		// muxstream was closed
 		return;
@@ -386,32 +385,6 @@ pub async fn handle_wisp(stream: WispResult, is_v2: bool, id: String) -> anyhow:
 
 	let mux_id = id.clone();
 	set.spawn(fut.map(move |x| debug!("wisp client id {:?} multiplexor result {:?}", mux_id, x)));
-
-	let ping_mux = mux.clone();
-	let ping_event = event.clone();
-	let ping_id = id.clone();
-	set.spawn(async move {
-		let mut interval = interval(Duration::from_secs(30));
-		let send_ping = || async {
-			let mut locked = ping_mux.lock_ws().await?;
-			if let Either::Left(ws) = &mut *locked {
-				<WispWsStreamWrite as SinkExt<tokio_websockets::Message>>::send(
-					ws,
-					tokio_websockets::Message::ping(&[] as &[u8]),
-				)
-				.await?;
-			}
-			anyhow::Ok(())
-		};
-
-		while (send_ping)().await.is_ok() {
-			trace!("sent ping to wisp client id {:?}", ping_id);
-			select! {
-				_ = interval.tick() => (),
-				() = ping_event.listen() => break,
-			};
-		}
-	});
 
 	while let Some((connect, stream)) = mux.wait_for_stream().await {
 		set.spawn(handle_stream(
