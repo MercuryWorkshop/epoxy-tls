@@ -1,30 +1,30 @@
 use std::time::Duration;
 
-use futures::{channel::oneshot, SinkExt};
+use futures::{SinkExt, channel::oneshot};
 
 use crate::{
+	Role, WispError,
 	extensions::udp::UdpProtocolExtension,
 	mux::send_info_packet,
 	packet::{CloseReason, ConnectPacket, ContinuePacket, MaybeInfoPacket, Packet, StreamType},
 	stream::MuxStream,
 	timer::{NoTimer, Timer},
 	ws::{TransportRead, TransportReadExt, TransportWrite},
-	Role, WispError,
 };
 
 use super::{
-	get_supported_extensions, handle_handshake,
+	Multiplexor, MultiplexorImpl, MuxResult, WispHandshakeResult, WispHandshakeResultKind,
+	WispV2Handshake, get_supported_extensions, handle_handshake,
 	inner::{FlowControl, MultiplexorActor, StreamMap, WsEvent},
-	missing_required_extensions, validate_continue_packet, Multiplexor, MultiplexorImpl, MuxResult,
-	WispHandshakeResult, WispHandshakeResultKind, WispV2Handshake,
+	missing_required_extensions, validate_continue_packet,
 };
 
 pub(crate) struct ClientActor;
 
-impl<W: TransportWrite> MultiplexorActor<W> for ClientActor {
+impl MultiplexorActor for ClientActor {
 	fn handle_connect_packet(
 		&mut self,
-		_: crate::stream::MuxStream<W>,
+		_: crate::stream::MuxStream,
 		_: crate::packet::ConnectPacket,
 	) -> Result<(), WispError> {
 		Err(WispError::InvalidPacketType(0x01))
@@ -57,10 +57,10 @@ impl<W: TransportWrite> MultiplexorActor<W> for ClientActor {
 
 pub struct ClientImpl;
 
-impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
+impl MultiplexorImpl for ClientImpl {
 	type Actor = ClientActor;
 
-	async fn handshake<R: TransportRead>(
+	async fn handshake<R: TransportRead, W: TransportWrite>(
 		&mut self,
 		rx: &mut R,
 		tx: &mut W,
@@ -152,19 +152,19 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ClientImpl {
 	}
 }
 
-impl<W: TransportWrite> Multiplexor<ClientImpl, W> {
+impl Multiplexor<ClientImpl> {
 	/// Create a new client side multiplexor.
 	///
 	/// If `wisp_v2` is None a Wisp v1 connection is created, otherwise a Wisp v2 connection is created.
 	/// **It is not guaranteed that all extensions you specify are available.** You can specify the
 	/// extensions you require to be supported in the `required_extensions` array.
-	pub async fn new<R: TransportRead>(
+	pub async fn new<R: TransportRead, W: TransportWrite>(
 		rx: R,
 		tx: W,
 		wisp_v2: Option<WispV2Handshake>,
 		required_extensions: Vec<u8>,
-	) -> Result<MuxResult<ClientImpl, W>, WispError> {
-		Self::create::<R, NoTimer>(
+	) -> Result<MuxResult<ClientImpl>, WispError> {
+		Self::create::<R, W, NoTimer>(
 			rx,
 			tx,
 			wisp_v2,
@@ -181,14 +181,14 @@ impl<W: TransportWrite> Multiplexor<ClientImpl, W> {
 	/// If `wisp_v2` is None a Wisp v1 connection is created, otherwise a Wisp v2 connection is created.
 	/// **It is not guaranteed that all extensions you specify are available.** You can specify the
 	/// extensions you require to be supported in the `required_extensions` array.
-	pub async fn with_timeout<R: TransportRead, T: Timer>(
+	pub async fn with_timeout<R: TransportRead, W: TransportWrite, T: Timer>(
 		rx: R,
 		tx: W,
 		timer: T,
 		timeout: Duration,
 		wisp_v2: Option<WispV2Handshake>,
 		required_extensions: Vec<u8>,
-	) -> Result<MuxResult<ClientImpl, W>, WispError> {
+	) -> Result<MuxResult<ClientImpl>, WispError> {
 		Self::create(
 			rx,
 			tx,
@@ -207,7 +207,7 @@ impl<W: TransportWrite> Multiplexor<ClientImpl, W> {
 		stream_type: StreamType,
 		host: String,
 		port: u16,
-	) -> Result<MuxStream<W>, WispError> {
+	) -> Result<MuxStream, WispError> {
 		if self.actor_tx.is_disconnected() {
 			return Err(WispError::MuxTaskEnded);
 		}

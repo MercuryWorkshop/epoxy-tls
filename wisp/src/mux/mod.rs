@@ -1,31 +1,33 @@
-mod client;
-pub(crate) mod inner;
-mod server;
 use std::{
 	future::Future,
-	pin::{pin, Pin},
+	pin::{Pin, pin},
 	time::Duration,
 };
 
 use futures::{
-	future::{select, Either},
 	SinkExt,
+	future::{Either, select},
 };
-use inner::{MultiplexorActor, MuxInner, WsEvent};
+
+mod client;
+pub(crate) mod inner;
+mod server;
+pub(crate) mod stream_chan;
 
 pub use client::ClientImpl;
+use inner::{MultiplexorActor, MuxInner, WsEvent};
 pub use server::ServerImpl;
 
-pub type ServerMux<W> = Multiplexor<ServerImpl<W>, W>;
-pub type ClientMux<W> = Multiplexor<ClientImpl, W>;
+pub type ServerMux = Multiplexor<ServerImpl>;
+pub type ClientMux = Multiplexor<ClientImpl>;
 
 use crate::{
-	extensions::{udp::UdpProtocolExtension, AnyProtocolExtension, AnyProtocolExtensionBuilder},
+	Role, WISP_VERSION, WispError,
+	extensions::{AnyProtocolExtension, AnyProtocolExtensionBuilder, udp::UdpProtocolExtension},
 	inner::MuxInnerResult,
 	packet::{CloseReason, InfoPacket, Packet, PacketType},
 	timer::Timer,
 	ws::{TransportRead, TransportWrite},
-	LockedWebSocketWrite, LockedWebSocketWriteGuard, Role, WispError, WISP_VERSION,
 };
 
 struct WispHandshakeResult {
@@ -119,10 +121,10 @@ fn missing_required_extensions(
 	(!missing.is_empty()).then_some(missing)
 }
 
-trait MultiplexorImpl<W: TransportWrite> {
-	type Actor: MultiplexorActor<W> + 'static;
+trait MultiplexorImpl {
+	type Actor: MultiplexorActor + 'static;
 
-	async fn handshake<R: TransportRead>(
+	async fn handshake<R: TransportRead, W: TransportWrite>(
 		&mut self,
 		rx: &mut R,
 		tx: &mut W,
@@ -132,19 +134,18 @@ trait MultiplexorImpl<W: TransportWrite> {
 }
 
 #[expect(private_bounds)]
-pub struct Multiplexor<M: MultiplexorImpl<W>, W: TransportWrite> {
+pub struct Multiplexor<M: MultiplexorImpl> {
 	mux: M,
 
 	downgraded: bool,
 	supported_extensions: Vec<AnyProtocolExtension>,
 
-	actor_tx: flume::Sender<WsEvent<W>>,
-	tx: LockedWebSocketWrite<W>,
+	actor_tx: flume::Sender<WsEvent>,
 }
 
 #[expect(private_bounds)]
-impl<M: MultiplexorImpl<W>, W: TransportWrite> Multiplexor<M, W> {
-	async fn create<R, T>(
+impl<M: MultiplexorImpl> Multiplexor<M> {
+	async fn create<R, W, T>(
 		mut rx: R,
 		mut tx: W,
 		wisp_v2: Option<WispV2Handshake>,
@@ -152,9 +153,10 @@ impl<M: MultiplexorImpl<W>, W: TransportWrite> Multiplexor<M, W> {
 		timer: Option<(T, Duration)>,
 		mut muxer: M,
 		actor: M::Actor,
-	) -> Result<MuxResult<M, W>, WispError>
+	) -> Result<MuxResult<M>, WispError>
 	where
 		R: TransportRead,
+		W: TransportWrite,
 		T: Timer,
 	{
 		let handshake_result = if let Some((mut timer, duration)) = timer {
@@ -174,10 +176,9 @@ impl<M: MultiplexorImpl<W>, W: TransportWrite> Multiplexor<M, W> {
 		};
 		let (extensions, extra_packet) = handshake_result.kind.into_parts();
 
-		let tx = LockedWebSocketWrite::new(tx);
 		let MuxInnerResult { mux, actor_tx } = MuxInner::new(
 			rx,
-			tx.clone(),
+			tx,
 			actor,
 			extra_packet,
 			extensions.clone(),
@@ -192,7 +193,6 @@ impl<M: MultiplexorImpl<W>, W: TransportWrite> Multiplexor<M, W> {
 				supported_extensions: extensions,
 
 				actor_tx,
-				tx,
 			},
 			Box::pin(mux.into_future()),
 		))
@@ -219,17 +219,6 @@ impl<M: MultiplexorImpl<W>, W: TransportWrite> Multiplexor<M, W> {
 			.iter()
 			.map(|x| x.get_id())
 			.collect()
-	}
-
-	/// Get a locked guard to the write half of the websocket.
-	pub async fn lock_ws(&self) -> Result<LockedWebSocketWriteGuard<W>, WispError> {
-		if self.actor_tx.is_disconnected() {
-			Err(WispError::WsImplSocketClosed)
-		} else {
-			let mut cloned = self.tx.clone();
-			cloned.lock().await;
-			Ok(cloned.get_guard())
-		}
 	}
 
 	async fn close_internal(&self, reason: Option<CloseReason>) -> Result<(), WispError> {
@@ -269,8 +258,7 @@ pub type MultiplexorActorFuture = Pin<Box<dyn Future<Output = Result<(), WispErr
 
 /// Result of creating a multiplexor. Helps require protocol extensions.
 #[expect(private_bounds, type_alias_bounds)]
-pub type MuxResult<M: MultiplexorImpl<W>, W: TransportWrite> =
-	(Multiplexor<M, W>, MultiplexorActorFuture);
+pub type MuxResult<M: MultiplexorImpl> = (Multiplexor<M>, MultiplexorActorFuture);
 
 /// Wisp V2 middleware closure.
 pub type WispV2Middleware = dyn for<'a> Fn(

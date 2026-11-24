@@ -4,9 +4,9 @@ use bytes::{Buf, BufMut};
 use num_enum::{FromPrimitive, IntoPrimitive};
 
 use crate::{
+	Role, WISP_VERSION, WispError,
 	extensions::{AnyProtocolExtension, AnyProtocolExtensionBuilder},
-	ws::{Payload, PayloadMut, PayloadRef, TransportRead, TransportWrite},
-	LockedWebSocketWrite, Role, WispError, WISP_VERSION,
+	ws::{Payload, PayloadMut, PayloadRef},
 };
 
 trait PacketCodec: Sized {
@@ -400,16 +400,11 @@ impl MaybeInfoPacket<'static> {
 
 pub(crate) enum MaybeExtensionPacket<'a> {
 	Packet(Packet<'a>),
-	ExtensionHandled,
+	Extension(u8, u32, Payload),
 }
 
 impl MaybeExtensionPacket<'static> {
-	pub(crate) async fn decode<W: TransportWrite>(
-		mut packet: Payload,
-		extensions: &mut [AnyProtocolExtension],
-		rx: &mut dyn TransportRead,
-		tx: &mut LockedWebSocketWrite<W>,
-	) -> Result<Self, WispError> {
+	pub(crate) fn decode(mut packet: Payload) -> Result<Self, WispError> {
 		if packet.remaining() < size_of::<u8>() + size_of::<u32>() {
 			return Err(WispError::PacketTooSmall);
 		}
@@ -423,17 +418,7 @@ impl MaybeExtensionPacket<'static> {
 				packet_type: PacketType::decode(packet, ty)?,
 			}))
 		} else {
-			tx.lock().await;
-			let mut handle = tx.get_handle();
-			for extension in extensions {
-				if extension.get_supported_packets().contains(&ty) {
-					extension.handle_packet(ty, packet, rx, &mut handle).await?;
-					return Ok(Self::ExtensionHandled);
-				}
-			}
-			drop(handle);
-
-			Err(WispError::InvalidPacketType(ty))
+			Ok(Self::Extension(ty, stream_id, packet))
 		}
 	}
 }

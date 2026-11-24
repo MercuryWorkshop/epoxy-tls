@@ -19,7 +19,7 @@ impl Waiter {
 		}
 	}
 
-	pub fn wake(&mut self) -> Option<Waker> {
+	pub fn take(&mut self) -> Option<Waker> {
 		match std::mem::replace(self, Self::Woken) {
 			Self::Sleeping(x) => Some(x),
 			Self::Woken => None,
@@ -27,11 +27,11 @@ impl Waiter {
 	}
 }
 
-pub struct WakerList {
+pub struct WaiterList {
 	inner: Slab<Waiter>,
 }
 
-impl WakerList {
+impl WaiterList {
 	pub fn new() -> Self {
 		Self { inner: Slab::new() }
 	}
@@ -51,14 +51,13 @@ impl WakerList {
 		self.inner.remove(key);
 	}
 
-	/// Takes the wakers of every queued waiter, marking them all woken.
-	///
-	/// Deliberately not "wake one": a woken task is not obliged to take the lock — it may
-	/// be re-polled for something else entirely and never come back — and waking one at a
-	/// time makes that task swallow the handoff and strand the rest. Everyone retries and
-	/// re-queues instead; on a single-threaded executor with a handful of streams the
-	/// extra polls are cheap next to a stall.
+	pub fn take_and_remove(&mut self, key: &mut Option<usize>) {
+		if let Some(key) = key.take() {
+			self.remove(key);
+		}
+	}
+
 	pub fn take_all(&mut self) -> Vec<Waker> {
-		self.inner.iter_mut().filter_map(|x| x.1.wake()).collect()
+		self.inner.iter_mut().filter_map(|x| x.1.take()).collect()
 	}
 }

@@ -6,18 +6,14 @@ use packet::WispVersion;
 use thiserror::Error as ErrorDerive;
 
 pub mod extensions;
-mod locked_sink;
-mod waiters;
 mod mux;
 pub mod packet;
 pub mod stream;
 pub mod timer;
+mod waiters;
 pub mod ws;
 
 pub use mux::*;
-
-use locked_sink::LockedWebSocketWrite;
-pub use locked_sink::{LockedSinkGuard, LockedWebSocketWriteGuard};
 
 pub const WISP_VERSION: WispVersion = WispVersion { major: 2, minor: 0 };
 

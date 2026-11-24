@@ -3,28 +3,28 @@ use std::time::Duration;
 use futures::SinkExt;
 
 use crate::{
+	Role, WispError,
 	packet::{CloseReason, ConnectPacket, MaybeInfoPacket, Packet, StreamType},
 	stream::MuxStream,
 	timer::{NoTimer, Timer},
 	ws::{Payload, TransportRead, TransportReadExt, TransportWrite},
-	Role, WispError,
 };
 
 use super::{
-	get_supported_extensions, handle_handshake,
+	Multiplexor, MultiplexorImpl, MuxResult, WispHandshakeResult, WispHandshakeResultKind,
+	WispV2Handshake, get_supported_extensions, handle_handshake,
 	inner::{FlowControl, MultiplexorActor, StreamMap},
-	missing_required_extensions, send_info_packet, Multiplexor, MultiplexorImpl, MuxResult,
-	WispHandshakeResult, WispHandshakeResultKind, WispV2Handshake,
+	missing_required_extensions, send_info_packet,
 };
 
-pub(crate) struct ServerActor<W: TransportWrite> {
-	stream_tx: flume::Sender<(ConnectPacket, MuxStream<W>)>,
+pub(crate) struct ServerActor {
+	stream_tx: flume::Sender<(ConnectPacket, MuxStream)>,
 }
 
-impl<W: TransportWrite> MultiplexorActor<W> for ServerActor<W> {
+impl MultiplexorActor for ServerActor {
 	fn handle_connect_packet(
 		&mut self,
-		stream: MuxStream<W>,
+		stream: MuxStream,
 		pkt: ConnectPacket,
 	) -> Result<(), WispError> {
 		self.stream_tx
@@ -64,15 +64,15 @@ impl<W: TransportWrite> MultiplexorActor<W> for ServerActor<W> {
 	}
 }
 
-pub struct ServerImpl<W: TransportWrite> {
+pub struct ServerImpl {
 	buffer_size: u32,
-	stream_rx: flume::Receiver<(ConnectPacket, MuxStream<W>)>,
+	stream_rx: flume::Receiver<(ConnectPacket, MuxStream)>,
 }
 
-impl<W: TransportWrite> MultiplexorImpl<W> for ServerImpl<W> {
-	type Actor = ServerActor<W>;
+impl MultiplexorImpl for ServerImpl {
+	type Actor = ServerActor;
 
-	async fn handshake<R: TransportRead>(
+	async fn handshake<R: TransportRead, W: TransportWrite>(
 		&mut self,
 		rx: &mut R,
 		tx: &mut W,
@@ -162,19 +162,19 @@ impl<W: TransportWrite> MultiplexorImpl<W> for ServerImpl<W> {
 	}
 }
 
-impl<W: TransportWrite> Multiplexor<ServerImpl<W>, W> {
+impl Multiplexor<ServerImpl> {
 	/// Create a new server-side multiplexor.
 	///
 	/// If `wisp_v2` is None a Wisp v1 connection is created, otherwise a Wisp v2 connection is created.
 	/// **It is not guaranteed that all extensions you specify are available.** You can specify the
 	/// extensions you require to be supported in the `required_extensions` array.
-	pub async fn new<R: TransportRead>(
+	pub async fn new<R: TransportRead, W: TransportWrite>(
 		rx: R,
 		tx: W,
 		buffer_size: u32,
 		wisp_v2: Option<WispV2Handshake>,
 		required_extensions: Vec<u8>,
-	) -> Result<MuxResult<ServerImpl<W>, W>, WispError> {
+	) -> Result<MuxResult<ServerImpl>, WispError> {
 		let (stream_tx, stream_rx) = flume::unbounded();
 
 		let mux = ServerImpl {
@@ -183,7 +183,7 @@ impl<W: TransportWrite> Multiplexor<ServerImpl<W>, W> {
 		};
 		let actor = ServerActor { stream_tx };
 
-		Self::create::<R, NoTimer>(rx, tx, wisp_v2, required_extensions, None, mux, actor).await
+		Self::create::<R, W, NoTimer>(rx, tx, wisp_v2, required_extensions, None, mux, actor).await
 	}
 
 	/// Create a new server-side multiplexor with a handshake timeout.
@@ -191,7 +191,7 @@ impl<W: TransportWrite> Multiplexor<ServerImpl<W>, W> {
 	/// If `wisp_v2` is None a Wisp v1 connection is created, otherwise a Wisp v2 connection is created.
 	/// **It is not guaranteed that all extensions you specify are available.** You can specify the
 	/// extensions you require to be supported in the `required_extensions` array.
-	pub async fn with_timeout<R: TransportRead, T: Timer>(
+	pub async fn with_timeout<R: TransportRead, W: TransportWrite, T: Timer>(
 		rx: R,
 		tx: W,
 		timer: T,
@@ -199,7 +199,7 @@ impl<W: TransportWrite> Multiplexor<ServerImpl<W>, W> {
 		buffer_size: u32,
 		wisp_v2: Option<WispV2Handshake>,
 		required_extensions: Vec<u8>,
-	) -> Result<MuxResult<ServerImpl<W>, W>, WispError> {
+	) -> Result<MuxResult<ServerImpl>, WispError> {
 		let (stream_tx, stream_rx) = flume::unbounded();
 
 		let mux = ServerImpl {
@@ -221,7 +221,7 @@ impl<W: TransportWrite> Multiplexor<ServerImpl<W>, W> {
 	}
 
 	/// Wait for a stream to be created.
-	pub async fn wait_for_stream(&self) -> Option<(ConnectPacket, MuxStream<W>)> {
+	pub async fn wait_for_stream(&self) -> Option<(ConnectPacket, MuxStream)> {
 		self.mux.stream_rx.recv_async().await.ok()
 	}
 }

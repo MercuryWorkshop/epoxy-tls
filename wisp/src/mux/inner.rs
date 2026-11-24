@@ -1,39 +1,52 @@
 use std::{
-	pin::pin,
+	collections::VecDeque,
+	future::poll_fn,
 	sync::{
-		atomic::{AtomicU32, AtomicU8, Ordering},
 		Arc, Mutex,
+		atomic::{AtomicU16, AtomicU32, Ordering},
 	},
-	task::Context,
+	task::{Context, Poll},
 };
 
-use futures::{
-	channel::oneshot,
-	stream::{select, unfold},
-	SinkExt, StreamExt,
-};
+use futures::{SinkExt, StreamExt, channel::oneshot};
 use rustc_hash::FxHashMap;
 
 use crate::{
+	WispError,
 	extensions::AnyProtocolExtension,
+	mux::stream_chan::{StreamChanEvent, StreamChanRecv},
 	packet::{
-		ClosePacket, CloseReason, ConnectPacket, ContinuePacket, MaybeExtensionPacket, Packet,
-		PacketType, StreamType,
+		CloseReason, ConnectPacket, ContinuePacket, MaybeExtensionPacket, Packet, PacketType,
+		StreamType,
 	},
 	stream::MuxStream,
 	waiters::Waiter,
 	ws::{Payload, TransportRead, TransportWrite},
-	LockedWebSocketWrite, WispError,
 };
 
-pub(crate) enum WsEvent<W: TransportWrite> {
-	Close(u32, ClosePacket, oneshot::Sender<Result<(), WispError>>),
-	CreateStream(
-		ConnectPacket,
-		oneshot::Sender<Result<MuxStream<W>, WispError>>,
-	),
-	WispMessage(Packet<'static>),
+pub(crate) enum WsEvent {
+	CreateStream(ConnectPacket, oneshot::Sender<Result<MuxStream, WispError>>),
+	Continue(u32, ContinuePacket),
 	EndFut(Option<CloseReason>),
+}
+
+enum PumpPending {
+	Connect(
+		Payload,
+		MuxStream,
+		oneshot::Sender<Result<MuxStream, WispError>>,
+	),
+	Continue(Payload),
+	EndFut(Payload),
+}
+
+enum FlushPending {
+	Close(oneshot::Sender<Result<(), WispError>>),
+}
+
+enum PumpEvent {
+	Extension(u8, u32, Payload),
+	Ended,
 }
 
 pub(crate) type StreamMap = FxHashMap<u32, StreamMapValue>;
@@ -57,13 +70,14 @@ pub(crate) enum FlowControl {
 	EnabledSendMessages,
 }
 
+const CLOSE_REASON_NOT_CLOSED: u16 = 0x100;
 pub(crate) struct StreamInfo {
 	pub id: u32,
 
 	pub flow_status: FlowControl,
 	pub target_flow_control: u32,
 	flow_control: AtomicU32,
-	close_reason: AtomicU8,
+	close_reason: AtomicU16,
 	flow_waker: Mutex<Waiter>,
 }
 
@@ -82,7 +96,7 @@ impl StreamInfo {
 			target_flow_control: target,
 			flow_control: AtomicU32::new(buffer_size),
 			flow_waker: Mutex::new(Waiter::Woken),
-			close_reason: AtomicU8::new(CloseReason::Unknown.into()),
+			close_reason: AtomicU16::new(CLOSE_REASON_NOT_CLOSED),
 		}
 	}
 
@@ -120,25 +134,31 @@ impl StreamInfo {
 	}
 	pub fn flow_wake(&self) {
 		let mut waiter = self.flow_waker.lock().expect("flow_waker was poisoned");
-		if let Some(waker) = waiter.wake() {
+		if let Some(waker) = waiter.take() {
 			drop(waiter);
 
 			waker.wake();
 		}
 	}
 
-	pub fn get_reason(&self) -> CloseReason {
-		self.close_reason.load(Ordering::Relaxed).into()
+	pub fn closed(&self) -> bool {
+		self.close_reason.load(Ordering::Relaxed) != CLOSE_REASON_NOT_CLOSED
+	}
+
+	pub fn get_reason(&self) -> Option<CloseReason> {
+		let reason = self.close_reason.load(Ordering::Relaxed);
+		(reason != CLOSE_REASON_NOT_CLOSED).then(|| CloseReason::from(reason as u8))
 	}
 	pub fn set_reason(&self, reason: CloseReason) {
-		self.close_reason.store(reason.into(), Ordering::Relaxed);
+		self.close_reason
+			.store(u16::from(u8::from(reason)), Ordering::Relaxed);
 	}
 }
 
-pub(crate) trait MultiplexorActor<W: TransportWrite>: Send {
+pub(crate) trait MultiplexorActor: Send {
 	fn handle_connect_packet(
 		&mut self,
-		stream: MuxStream<W>,
+		stream: MuxStream,
 		pkt: ConnectPacket,
 	) -> Result<(), WispError>;
 
@@ -164,16 +184,21 @@ pub(crate) trait MultiplexorActor<W: TransportWrite>: Send {
 	fn get_flow_control(ty: StreamType, flow_stream_types: &[u8]) -> FlowControl;
 }
 
-struct MuxStart<R: TransportRead, W: TransportWrite> {
-	rx: R,
+pub(crate) struct MuxInner<R: TransportRead, W: TransportWrite, M: MultiplexorActor> {
 	downgrade: Option<Packet<'static>>,
-	extensions: Vec<AnyProtocolExtension>,
-	actor_rx: flume::Receiver<WsEvent<W>>,
-}
 
-pub(crate) struct MuxInner<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> {
-	start: Option<MuxStart<R, W>>,
-	tx: LockedWebSocketWrite<W>,
+	rx: R,
+	tx: W,
+	tx_dirty: bool,
+	tx_buf: VecDeque<PumpPending>,
+	tx_flush: VecDeque<FlushPending>,
+
+	stream_chan: StreamChanRecv,
+
+	actor_rx: flume::r#async::RecvStream<'static, WsEvent>,
+	actor_tx: flume::Sender<WsEvent>,
+
+	extensions: Vec<AnyProtocolExtension>,
 	flow_stream_types: Box<[u8]>,
 
 	mux: M,
@@ -181,20 +206,18 @@ pub(crate) struct MuxInner<R: TransportRead, W: TransportWrite, M: MultiplexorAc
 	streams: StreamMap,
 	current_id: u32,
 	buffer_size: u32,
-
-	actor_tx: flume::Sender<WsEvent<W>>,
 }
 
-pub(crate) struct MuxInnerResult<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> {
+pub(crate) struct MuxInnerResult<R: TransportRead, W: TransportWrite, M: MultiplexorActor> {
 	pub mux: MuxInner<R, W, M>,
-	pub actor_tx: flume::Sender<WsEvent<W>>,
+	pub actor_tx: flume::Sender<WsEvent>,
 }
 
-impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> MuxInner<R, W, M> {
+impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor> MuxInner<R, W, M> {
 	#[expect(clippy::new_ret_no_self)]
 	pub fn new(
 		rx: R,
-		tx: LockedWebSocketWrite<W>,
+		tx: W,
 		mux: M,
 		downgrade: Option<Packet<'static>>,
 		extensions: Vec<AnyProtocolExtension>,
@@ -212,13 +235,20 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> MuxInner<R, W,
 		MuxInnerResult {
 			actor_tx: actor_tx.clone(),
 			mux: Self {
-				start: Some(MuxStart {
-					rx,
-					downgrade,
-					extensions,
-					actor_rx,
-				}),
+				downgrade,
+
+				rx,
 				tx,
+				tx_dirty: false,
+				tx_buf: VecDeque::new(),
+				tx_flush: VecDeque::new(),
+
+				stream_chan: StreamChanRecv::new(),
+
+				actor_rx: actor_rx.into_stream(),
+				actor_tx,
+
+				extensions,
 				flow_stream_types: flow_extensions,
 
 				mux,
@@ -226,143 +256,185 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> MuxInner<R, W,
 				streams: StreamMap::default(),
 				current_id: 0,
 				buffer_size,
-
-				actor_tx,
 			},
 		}
 	}
 
 	pub async fn into_future(mut self) -> Result<(), WispError> {
-		let ret = self.entry().await;
+		let ret = self.pump().await;
 
 		for stream in self.streams.drain() {
-			Self::close_stream(
-				stream.1,
-				ClosePacket {
-					reason: CloseReason::Unknown,
-				},
-			);
+			Self::close_stream(stream.1, CloseReason::Unknown);
 		}
 
-		self.tx.lock().await;
-		let _ = self.tx.get().close().await;
-		self.tx.unlock();
+		let _ = self.tx.flush().await;
+		let _ = self.tx.close().await;
 
 		ret
 	}
 
-	async fn entry(&mut self) -> Result<(), WispError> {
-		let MuxStart {
-			rx,
-			downgrade,
-			extensions,
-			actor_rx,
-		} = self.start.take().ok_or(WispError::MuxTaskStarted)?;
+	async fn pump(&mut self) -> Result<(), WispError> {
+		if let Some(packet) = self.downgrade.take()
+			&& self.handle_packet(packet)?
+		{
+			return Ok(());
+		}
 
-		if let Some(packet) = downgrade {
-			if self.handle_packet(packet)? {
-				return Ok(());
+		'outer: loop {
+			match poll_fn(|cx| self.poll_pump(cx)).await? {
+				PumpEvent::Extension(ty, stream_id, packet) => {
+					for extension in &mut self.extensions {
+						if extension.get_supported_packets().contains(&ty) {
+							extension
+								.handle_packet(ty, stream_id, packet, &mut self.rx, &mut self.tx)
+								.await?;
+							continue 'outer;
+						}
+					}
+					return Err(WispError::InvalidPacketType(ty));
+				}
+				PumpEvent::Ended => {
+					return Ok(());
+				}
+			}
+		}
+	}
+
+	fn poll_pump(&mut self, cx: &mut Context<'_>) -> Poll<Result<PumpEvent, WispError>> {
+		while let Poll::Ready(Some(e)) = self.actor_rx.poll_next_unpin(cx) {
+			match e {
+				WsEvent::CreateStream(connect, cb) => {
+					let Some(stream_id) = self.current_id.checked_add(1) else {
+						let _ = cb.send(Err(WispError::MaxStreamCountReached));
+						continue;
+					};
+					self.current_id = stream_id;
+					let stream = self.add_stream(stream_id, connect.stream_type);
+
+					self.tx_buf.push_back(PumpPending::Connect(
+						Packet {
+							stream_id,
+							packet_type: PacketType::Connect(connect),
+						}
+						.encode(),
+						stream,
+						cb,
+					));
+				}
+				WsEvent::Continue(id, packet) => {
+					if self.streams.contains_key(&id) {
+						self.tx_buf.push_back(PumpPending::Continue(
+							Packet {
+								stream_id: id,
+								packet_type: PacketType::Continue(packet),
+							}
+							.encode(),
+						));
+					}
+				}
+				WsEvent::EndFut(reason) => {
+					if let Some(reason) = reason {
+						self.tx_buf
+							.push_back(PumpPending::EndFut(Packet::new_close(0, reason).encode()));
+					} else {
+						return Poll::Ready(Ok(PumpEvent::Ended));
+					}
+				}
 			}
 		}
 
-		let read_stream = pin!(unfold(
-			(rx, self.tx.clone(), extensions),
-			|(mut rx, mut tx, mut extensions)| async {
-				let ret: Result<Option<WsEvent<W>>, WispError> = async {
-					if let Some(msg) = rx.next().await {
-						match MaybeExtensionPacket::decode(msg?, &mut extensions, &mut rx, &mut tx)
-							.await?
-						{
-							MaybeExtensionPacket::Packet(x) => Ok(Some(WsEvent::WispMessage(x))),
-							MaybeExtensionPacket::ExtensionHandled => Ok(None),
-						}
-					} else {
-						Ok(None)
+		let mut budget_exhausted = true;
+		for _ in 0..16 {
+			match self.rx.poll_next_unpin(cx).map(|x| {
+				x.map(|x| x.and_then(MaybeExtensionPacket::decode))
+					.transpose()
+			})? {
+				Poll::Ready(Some(MaybeExtensionPacket::Packet(packet))) => {
+					if self.handle_packet(packet)? {
+						return Poll::Ready(Ok(PumpEvent::Ended));
 					}
 				}
-				.await;
-				ret.transpose().map(|x| (x, (rx, tx, extensions)))
-			},
-		));
-
-		let mut stream = select(read_stream, actor_rx.into_stream().map(Ok));
-
-		while let Some(msg) = stream.next().await {
-			match msg? {
-				WsEvent::CreateStream(connect, channel) => {
-					let ret: Result<MuxStream<W>, WispError> = async {
-						let (stream, stream_id) = self.create_stream(connect.stream_type)?;
-
-						self.tx.lock().await;
-						self.tx
-							.get()
-							.send(
-								Packet {
-									stream_id,
-									packet_type: PacketType::Connect(connect),
-								}
-								.encode(),
-							)
-							.await?;
-						self.tx.unlock();
-
-						Ok(stream)
-					}
-					.await;
-					let _ = channel.send(ret);
+				Poll::Ready(Some(MaybeExtensionPacket::Extension(ty, stream_id, packet))) => {
+					return Poll::Ready(Ok(PumpEvent::Extension(ty, stream_id, packet)));
 				}
-				WsEvent::Close(id, close, channel) => {
-					if let Some(stream) = self.streams.remove(&id) {
-						Self::close_stream(stream, close);
-						let pkt = Packet {
-							stream_id: id,
-							packet_type: PacketType::Close(close),
-						}
-						.encode();
-
-						self.tx.lock().await;
-						let ret = self.tx.get().send(pkt).await;
-						self.tx.unlock();
-
-						let _ = channel.send(ret);
-					} else {
-						let _ = channel.send(Err(WispError::InvalidStreamId(id)));
-					}
+				Poll::Ready(None) => {
+					return Poll::Ready(Ok(PumpEvent::Ended));
 				}
-				WsEvent::EndFut(x) => {
-					if let Some(reason) = x {
-						self.tx.lock().await;
-						let _ = self
-							.tx
-							.get()
-							.send(Packet::new_close(0, reason).encode())
-							.await;
-						self.tx.unlock();
-					}
+				Poll::Pending => {
+					budget_exhausted = false;
 					break;
 				}
-				WsEvent::WispMessage(packet) => {
-					let should_break = self.handle_packet(packet)?;
-					if should_break {
-						break;
+			}
+		}
+		if budget_exhausted {
+			// reschedule since we may have more to read
+			cx.waker().wake_by_ref();
+		}
+
+		while let Poll::Ready(()) = self.tx.poll_ready_unpin(cx)? {
+			if let Some(control_message) = self.tx_buf.pop_front() {
+				match control_message {
+					PumpPending::Connect(msg, stream, cb) => {
+						self.tx.start_send_unpin(msg)?;
+						self.tx_dirty = true;
+						let _ = cb.send(Ok(stream));
+					}
+					PumpPending::Continue(msg) => {
+						self.tx.start_send_unpin(msg)?;
+						self.tx_dirty = true;
+					}
+					PumpPending::EndFut(msg) => {
+						self.tx.start_send_unpin(msg)?;
+						self.tx_dirty = true;
+						return Poll::Ready(Ok(PumpEvent::Ended));
+					}
+				}
+			} else {
+				match self.stream_chan.poll_next_unpin(cx) {
+					Poll::Ready(Some(StreamChanEvent::Packet(id, _, packet))) => {
+						if self.streams.contains_key(&id) {
+							self.tx.start_send_unpin(packet)?;
+							self.tx_dirty = true;
+						}
+					}
+					Poll::Ready(Some(StreamChanEvent::Close(id, reason, cb))) => {
+						if let Some(stream) = self.streams.remove(&id) {
+							Self::close_stream(stream, reason);
+							self.tx
+								.start_send_unpin(Packet::new_close(id, reason).encode())?;
+							self.tx_dirty = true;
+							self.tx_flush.push_back(FlushPending::Close(cb));
+						} else {
+							let _ = cb.send(Ok(()));
+						}
+					}
+					Poll::Ready(None) => return Poll::Ready(Ok(PumpEvent::Ended)),
+					Poll::Pending => break,
+				}
+			}
+			self.stream_chan.notify_sent();
+		}
+
+		if self.tx_dirty
+			&& let Poll::Ready(()) = self.tx.poll_flush_unpin(cx)?
+		{
+			self.tx_dirty = false;
+			for item in self.tx_flush.drain(..) {
+				match item {
+					FlushPending::Close(cb) => {
+						let _ = cb.send(Ok(()));
 					}
 				}
 			}
 		}
+		if !self.tx_dirty {
+			self.stream_chan.notify_flushed();
+		}
 
-		Ok(())
+		Poll::Pending
 	}
 
-	fn create_stream(&mut self, ty: StreamType) -> Result<(MuxStream<W>, u32), WispError> {
-		let id = self
-			.current_id
-			.checked_add(1)
-			.ok_or(WispError::MaxStreamCountReached)?;
-		self.current_id = id;
-		Ok((self.add_stream(id, ty), id))
-	}
-
-	fn add_stream(&mut self, id: u32, ty: StreamType) -> MuxStream<W> {
+	fn add_stream(&mut self, id: u32, ty: StreamType) -> MuxStream {
 		let flow = M::get_flow_control(ty, &self.flow_stream_types);
 		// just drop packets if they go too fast to avoid us buffering
 		let (data_tx, data_rx) = flume::bounded(self.buffer_size as usize);
@@ -374,12 +446,18 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> MuxInner<R, W,
 		};
 		self.streams.insert(id, val);
 
-		MuxStream::new(data_rx, self.actor_tx.clone(), self.tx.clone(), info)
+		MuxStream::new(
+			data_rx,
+			self.actor_tx.clone(),
+			self.stream_chan.new_send(id),
+			info,
+		)
 	}
 
-	fn close_stream(stream: StreamMapValue, close: ClosePacket) {
+	fn close_stream(stream: StreamMapValue, reason: CloseReason) {
+		stream.info.set_reason(reason);
+		stream.info.flow_wake();
 		drop(stream.stream);
-		stream.info.set_reason(close.reason);
 	}
 
 	fn handle_packet(&mut self, packet: Packet<'static>) -> Result<bool, WispError> {
@@ -406,19 +484,17 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor<W>> MuxInner<R, W,
 				Ok(false)
 			}
 
-			P::Close(close) => Ok(self.handle_close_packet(packet.stream_id, close)),
-		}
-	}
+			P::Close(close) => {
+				if packet.stream_id == 0 {
+					return Ok(true);
+				}
 
-	fn handle_close_packet(&mut self, stream_id: u32, close: ClosePacket) -> bool {
-		if stream_id == 0 {
-			return true;
-		}
+				if let Some(stream) = self.streams.remove(&packet.stream_id) {
+					Self::close_stream(stream, close.reason);
+				}
 
-		if let Some(stream) = self.streams.remove(&stream_id) {
-			Self::close_stream(stream, close);
+				Ok(false)
+			}
 		}
-
-		false
 	}
 }

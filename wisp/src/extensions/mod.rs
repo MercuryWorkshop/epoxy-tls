@@ -125,11 +125,12 @@ pub trait ProtocolExtension: std::fmt::Debug + Sync + Send + 'static {
 	async fn handle_packet(
 		&mut self,
 		packet_type: u8,
+		stream_id: u32,
 		packet: Bytes,
 		read: &mut dyn TransportRead,
 		write: &mut dyn TransportWrite,
 	) -> Result<(), WispError> {
-		let _ = (packet_type, packet, read, write);
+		let _ = (packet_type, stream_id, packet, read, write);
 		Ok(())
 	}
 
