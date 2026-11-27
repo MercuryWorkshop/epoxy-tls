@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::atomic::Ordering, time::Duration};
 
 use futures::{SinkExt, channel::oneshot};
 
@@ -208,7 +208,7 @@ impl Multiplexor<ClientImpl> {
 		host: String,
 		port: u16,
 	) -> Result<MuxStream, WispError> {
-		if self.actor_tx.is_disconnected() {
+		if self.closed.load(Ordering::SeqCst) {
 			return Err(WispError::MuxTaskEnded);
 		}
 
@@ -235,6 +235,10 @@ impl Multiplexor<ClientImpl> {
 			))
 			.await
 			.map_err(|_| WispError::MuxMessageFailedToSend)?;
+		// recheck after the send just in case
+		if self.closed.load(Ordering::SeqCst) {
+			return Err(WispError::MuxTaskEnded);
+		}
 		rx.await.map_err(|_| WispError::MuxMessageFailedToRecv)?
 	}
 }

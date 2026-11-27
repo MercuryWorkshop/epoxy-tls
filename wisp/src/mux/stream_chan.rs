@@ -2,9 +2,9 @@ use std::{
 	pin::Pin,
 	sync::{
 		Arc, Mutex,
-		atomic::{AtomicU64, AtomicUsize, Ordering},
+		atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 	},
-	task::{Context, Poll, ready},
+	task::{Context, Poll, Waker, ready},
 };
 
 use futures::{FutureExt, Sink, Stream, StreamExt, channel::oneshot};
@@ -39,6 +39,8 @@ struct StreamChan {
 	flush_waiters: Mutex<WaiterList>,
 	flush_queued: AtomicU64,
 	flushed: AtomicU64,
+
+	closed: AtomicBool,
 }
 
 pub struct StreamChanRecv {
@@ -51,6 +53,39 @@ pub struct StreamChanRecv {
 }
 impl Drop for StreamChanRecv {
 	fn drop(&mut self) {
+		self.close();
+	}
+}
+impl StreamChanRecv {
+	pub fn new() -> Self {
+		let (tx, rx) = flume::unbounded();
+		Self {
+			state: Arc::new(StreamChan {
+				send_waiters: Mutex::new(WaiterList::new()),
+				to_send: AtomicUsize::new(0),
+
+				flush_waiters: Mutex::new(WaiterList::new()),
+				flush_queued: AtomicU64::new(0),
+				flushed: AtomicU64::new(0),
+
+				closed: AtomicBool::new(false),
+			}),
+			chan: rx.into_stream(),
+			tx,
+
+			to_send: 0,
+			to_flush: 0,
+		}
+	}
+
+	pub fn close(&mut self) {
+		self.state.closed.store(true, Ordering::SeqCst);
+
+		let mut cx = Context::from_waker(Waker::noop());
+		while let Poll::Ready(Some(event)) = self.chan.poll_next_unpin(&mut cx) {
+			drop(event);
+		}
+
 		let mut locked = self
 			.state
 			.send_waiters
@@ -71,26 +106,6 @@ impl Drop for StreamChanRecv {
 		drop(locked);
 		for waker in wakers {
 			waker.wake();
-		}
-	}
-}
-impl StreamChanRecv {
-	pub fn new() -> Self {
-		let (tx, rx) = flume::unbounded();
-		Self {
-			state: Arc::new(StreamChan {
-				send_waiters: Mutex::new(WaiterList::new()),
-				to_send: AtomicUsize::new(0),
-
-				flush_waiters: Mutex::new(WaiterList::new()),
-				flush_queued: AtomicU64::new(0),
-				flushed: AtomicU64::new(0),
-			}),
-			chan: rx.into_stream(),
-			tx,
-
-			to_send: 0,
-			to_flush: 0,
 		}
 	}
 
@@ -178,6 +193,7 @@ impl Stream for StreamChanRecv {
 
 fn poll_close_impl(
 	id: u32,
+	state: &StreamChan,
 	chan: &mut flume::Sender<StreamChanEvent>,
 	slot: &mut Option<oneshot::Receiver<Result<(), WispError>>>,
 	reason: CloseReason,
@@ -191,13 +207,18 @@ fn poll_close_impl(
 		let (tx, rx) = oneshot::channel();
 		chan.try_send(StreamChanEvent::Close(id, reason, tx))
 			.map_err(|_| WispError::MuxTaskEnded)?;
+		// recheck after the send just in case
+		if state.closed.load(Ordering::SeqCst) {
+			return Poll::Ready(Err(WispError::MuxTaskEnded));
+		}
 		slot.replace(rx);
-		poll_close_impl(id, chan, slot, reason, cx)
+		poll_close_impl(id, state, chan, slot, reason, cx)
 	}
 }
 
 pub struct StreamChanCloser {
 	stream_id: u32,
+	state: Arc<StreamChan>,
 	chan: flume::Sender<StreamChanEvent>,
 	close_slot: Option<oneshot::Receiver<Result<(), WispError>>>,
 }
@@ -209,6 +230,7 @@ impl StreamChanCloser {
 	) -> Poll<Result<(), WispError>> {
 		poll_close_impl(
 			self.stream_id,
+			&self.state,
 			&mut self.chan,
 			&mut self.close_slot,
 			reason,
@@ -220,6 +242,7 @@ impl Clone for StreamChanCloser {
 	fn clone(&self) -> Self {
 		Self {
 			stream_id: self.stream_id,
+			state: self.state.clone(),
 			chan: self.chan.clone(),
 			close_slot: None,
 		}
@@ -243,6 +266,7 @@ impl StreamChanSend {
 	pub fn get_closer(&self) -> StreamChanCloser {
 		StreamChanCloser {
 			stream_id: self.stream_id,
+			state: self.state.clone(),
 			chan: self.chan.clone(),
 			close_slot: None,
 		}
@@ -269,6 +293,7 @@ impl StreamChanSend {
 	) -> Poll<Result<(), WispError>> {
 		poll_close_impl(
 			self.stream_id,
+			&self.state,
 			&mut self.chan,
 			&mut self.close_slot,
 			reason,
@@ -329,7 +354,7 @@ impl Sink<PayloadRef<'_>> for StreamChanSend {
 			return Poll::Ready(Ok(()));
 		}
 
-		if this.chan.is_disconnected() {
+		if this.state.closed.load(Ordering::Relaxed) {
 			locked.take_and_remove(&mut this.send_waker);
 			return Poll::Ready(Err(WispError::MuxTaskEnded));
 		}
@@ -378,7 +403,7 @@ impl Sink<PayloadRef<'_>> for StreamChanSend {
 			return Poll::Ready(Ok(()));
 		}
 
-		if this.chan.is_disconnected() {
+		if this.state.closed.load(Ordering::Relaxed) {
 			locked.take_and_remove(&mut this.flush_waker);
 			return Poll::Ready(Err(WispError::MuxTaskEnded));
 		}

@@ -18,7 +18,7 @@ use super::{
 };
 
 pub(crate) struct ServerActor {
-	stream_tx: flume::Sender<(ConnectPacket, MuxStream)>,
+	stream_tx: Option<flume::Sender<(ConnectPacket, MuxStream)>>,
 }
 
 impl MultiplexorActor for ServerActor {
@@ -28,8 +28,14 @@ impl MultiplexorActor for ServerActor {
 		pkt: ConnectPacket,
 	) -> Result<(), WispError> {
 		self.stream_tx
+			.as_ref()
+			.ok_or(WispError::MuxTaskEnded)?
 			.send((pkt, stream))
 			.map_err(|_| WispError::MuxMessageFailedToSend)
+	}
+
+	fn shutdown(&mut self) {
+		self.stream_tx = None;
 	}
 
 	fn handle_data_packet(
@@ -38,10 +44,10 @@ impl MultiplexorActor for ServerActor {
 		pkt: Payload,
 		streams: &mut StreamMap,
 	) -> Result<(), WispError> {
-		if let Some(stream) = streams.get(&id) {
-			if stream.stream.try_send(pkt).is_ok() {
-				stream.info.flow_dec();
-			}
+		if let Some(stream) = streams.get(&id)
+			&& stream.stream.try_send(pkt).is_ok()
+		{
+			stream.info.flow_dec();
 		}
 		Ok(())
 	}
@@ -181,7 +187,9 @@ impl Multiplexor<ServerImpl> {
 			buffer_size,
 			stream_rx,
 		};
-		let actor = ServerActor { stream_tx };
+		let actor = ServerActor {
+			stream_tx: Some(stream_tx),
+		};
 
 		Self::create::<R, W, NoTimer>(rx, tx, wisp_v2, required_extensions, None, mux, actor).await
 	}
@@ -206,7 +214,9 @@ impl Multiplexor<ServerImpl> {
 			buffer_size,
 			stream_rx,
 		};
-		let actor = ServerActor { stream_tx };
+		let actor = ServerActor {
+			stream_tx: Some(stream_tx),
+		};
 
 		Self::create(
 			rx,

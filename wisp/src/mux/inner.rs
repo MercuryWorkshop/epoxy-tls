@@ -3,9 +3,9 @@ use std::{
 	future::poll_fn,
 	sync::{
 		Arc, Mutex,
-		atomic::{AtomicU16, AtomicU32, Ordering},
+		atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering},
 	},
-	task::{Context, Poll},
+	task::{Context, Poll, Waker},
 };
 
 use futures::{SinkExt, StreamExt, channel::oneshot};
@@ -182,6 +182,8 @@ pub(crate) trait MultiplexorActor: Send {
 	) -> Result<(), WispError>;
 
 	fn get_flow_control(ty: StreamType, flow_stream_types: &[u8]) -> FlowControl;
+
+	fn shutdown(&mut self) {}
 }
 
 pub(crate) struct MuxInner<R: TransportRead, W: TransportWrite, M: MultiplexorActor> {
@@ -197,6 +199,7 @@ pub(crate) struct MuxInner<R: TransportRead, W: TransportWrite, M: MultiplexorAc
 
 	actor_rx: flume::r#async::RecvStream<'static, WsEvent>,
 	actor_tx: flume::Sender<WsEvent>,
+	closed: Arc<AtomicBool>,
 
 	extensions: Vec<AnyProtocolExtension>,
 	flow_stream_types: Box<[u8]>,
@@ -208,9 +211,16 @@ pub(crate) struct MuxInner<R: TransportRead, W: TransportWrite, M: MultiplexorAc
 	buffer_size: u32,
 }
 
+impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor> Drop for MuxInner<R, W, M> {
+	fn drop(&mut self) {
+		self.shutdown();
+	}
+}
+
 pub(crate) struct MuxInnerResult<R: TransportRead, W: TransportWrite, M: MultiplexorActor> {
 	pub mux: MuxInner<R, W, M>,
 	pub actor_tx: flume::Sender<WsEvent>,
+	pub closed: Arc<AtomicBool>,
 }
 
 impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor> MuxInner<R, W, M> {
@@ -224,6 +234,7 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor> MuxInner<R, W, M>
 		buffer_size: u32,
 	) -> MuxInnerResult<R, W, M> {
 		let (actor_tx, actor_rx) = flume::unbounded();
+		let closed = Arc::new(AtomicBool::new(false));
 
 		let flow_extensions = extensions
 			.iter()
@@ -234,6 +245,7 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor> MuxInner<R, W, M>
 
 		MuxInnerResult {
 			actor_tx: actor_tx.clone(),
+			closed: closed.clone(),
 			mux: Self {
 				downgrade,
 
@@ -247,6 +259,7 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor> MuxInner<R, W, M>
 
 				actor_rx: actor_rx.into_stream(),
 				actor_tx,
+				closed,
 
 				extensions,
 				flow_stream_types: flow_extensions,
@@ -263,14 +276,44 @@ impl<R: TransportRead, W: TransportWrite, M: MultiplexorActor> MuxInner<R, W, M>
 	pub async fn into_future(mut self) -> Result<(), WispError> {
 		let ret = self.pump().await;
 
-		for stream in self.streams.drain() {
-			Self::close_stream(stream.1, CloseReason::Unknown);
-		}
+		self.shutdown();
 
 		let _ = self.tx.flush().await;
 		let _ = self.tx.close().await;
 
 		ret
+	}
+
+	/// Idempotent: runs at the end of `into_future` and again from `Drop`.
+	fn shutdown(&mut self) {
+		self.closed.store(true, Ordering::SeqCst);
+
+		self.stream_chan.close();
+
+		for stream in self.streams.drain() {
+			Self::close_stream(stream.1, CloseReason::Unknown);
+		}
+
+		let mut cx = Context::from_waker(Waker::noop());
+		while let Poll::Ready(Some(event)) = self.actor_rx.poll_next_unpin(&mut cx) {
+			if let WsEvent::CreateStream(_, cb) = event {
+				let _ = cb.send(Err(WispError::MuxTaskEnded));
+			}
+		}
+		for pending in self.tx_buf.drain(..) {
+			if let PumpPending::Connect(_, _, cb) = pending {
+				let _ = cb.send(Err(WispError::MuxTaskEnded));
+			}
+		}
+		for pending in self.tx_flush.drain(..) {
+			match pending {
+				FlushPending::Close(cb) => {
+					let _ = cb.send(Err(WispError::MuxTaskEnded));
+				}
+			}
+		}
+
+		self.mux.shutdown();
 	}
 
 	async fn pump(&mut self) -> Result<(), WispError> {

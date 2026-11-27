@@ -1,6 +1,7 @@
 use std::{
 	future::Future,
 	pin::{Pin, pin},
+	sync::{Arc, atomic::AtomicBool},
 	time::Duration,
 };
 
@@ -141,6 +142,7 @@ pub struct Multiplexor<M: MultiplexorImpl> {
 	supported_extensions: Vec<AnyProtocolExtension>,
 
 	actor_tx: flume::Sender<WsEvent>,
+	closed: Arc<AtomicBool>,
 }
 
 #[expect(private_bounds)]
@@ -176,7 +178,11 @@ impl<M: MultiplexorImpl> Multiplexor<M> {
 		};
 		let (extensions, extra_packet) = handshake_result.kind.into_parts();
 
-		let MuxInnerResult { mux, actor_tx } = MuxInner::new(
+		let MuxInnerResult {
+			mux,
+			actor_tx,
+			closed,
+		} = MuxInner::new(
 			rx,
 			tx,
 			actor,
@@ -193,6 +199,7 @@ impl<M: MultiplexorImpl> Multiplexor<M> {
 				supported_extensions: extensions,
 
 				actor_tx,
+				closed,
 			},
 			Box::pin(mux.into_future()),
 		))
