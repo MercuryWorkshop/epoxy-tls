@@ -47,7 +47,7 @@ impl MultiplexorActor for ServerActor {
 		if let Some(stream) = streams.get(&id)
 			&& stream.stream.try_send(pkt).is_ok()
 		{
-			stream.info.flow_dec();
+			stream.info.flow_sub(1);
 		}
 		Ok(())
 	}

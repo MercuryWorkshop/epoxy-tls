@@ -68,7 +68,8 @@ impl Stream for MuxStreamRead {
 				let _ = self.actor_tx.send(WsEvent::Continue(
 					self.info.id,
 					ContinuePacket {
-						buffer_remaining: self.info.flow_add(self.read_cnt),
+						#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+						buffer_remaining: self.info.flow_add(self.read_cnt).max(0) as u32,
 					},
 				));
 
@@ -127,10 +128,9 @@ impl MuxStreamWrite {
 
 	pub(crate) fn start_send_ref(&mut self, item: PayloadRef<'_>) -> Result<(), WispError> {
 		if self.info.flow_status == FlowControl::EnabledTrackAmount {
-			debug_assert!(!self.info.flow_empty());
-			self.info.flow_dec();
+			self.info.flow_sub(1);
 		}
-		self.chan.start_send_unpin(item.into())
+		self.chan.start_send_unpin(item)
 	}
 }
 

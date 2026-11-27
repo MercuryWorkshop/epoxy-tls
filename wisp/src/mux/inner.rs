@@ -3,7 +3,7 @@ use std::{
 	future::poll_fn,
 	sync::{
 		Arc, Mutex,
-		atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering},
+		atomic::{AtomicBool, AtomicI64, AtomicU16, Ordering},
 	},
 	task::{Context, Poll, Waker},
 };
@@ -76,7 +76,7 @@ pub(crate) struct StreamInfo {
 
 	pub flow_status: FlowControl,
 	pub target_flow_control: u32,
-	flow_control: AtomicU32,
+	flow_control: AtomicI64,
 	close_reason: AtomicU16,
 	flow_waker: Mutex<Waiter>,
 }
@@ -94,36 +94,23 @@ impl StreamInfo {
 
 			flow_status,
 			target_flow_control: target,
-			flow_control: AtomicU32::new(buffer_size),
+			flow_control: AtomicI64::new(buffer_size.into()),
 			flow_waker: Mutex::new(Waiter::Woken),
 			close_reason: AtomicU16::new(CLOSE_REASON_NOT_CLOSED),
 		}
 	}
 
 	pub fn flow_set(&self, amt: u32) {
-		self.flow_control.store(amt, Ordering::Relaxed);
+		self.flow_control.store(amt.into(), Ordering::Relaxed);
 	}
-	pub fn flow_add(&self, amt: u32) -> u32 {
-		let new = self
-			.flow_control
-			.load(Ordering::Relaxed)
-			.saturating_add(amt);
-		self.flow_control.store(new, Ordering::Relaxed);
-		new
+	pub fn flow_add(&self, amt: u32) -> i64 {
+		self.flow_control.fetch_add(amt.into(), Ordering::Relaxed) + i64::from(amt)
 	}
-	pub fn flow_sub(&self, amt: u32) -> u32 {
-		let new = self
-			.flow_control
-			.load(Ordering::Relaxed)
-			.saturating_sub(amt);
-		self.flow_control.store(new, Ordering::Relaxed);
-		new
-	}
-	pub fn flow_dec(&self) {
-		self.flow_sub(1);
+	pub fn flow_sub(&self, amt: u32) -> i64 {
+		self.flow_control.fetch_sub(amt.into(), Ordering::Relaxed) - i64::from(amt)
 	}
 	pub fn flow_empty(&self) -> bool {
-		self.flow_control.load(Ordering::Relaxed) == 0
+		self.flow_control.load(Ordering::Relaxed) <= 0
 	}
 
 	pub fn flow_register(&self, cx: &mut Context<'_>) {
